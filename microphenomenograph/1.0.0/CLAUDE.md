@@ -1,5 +1,7 @@
 # microphenomenograph plugin
 
+_Last updated: 2026-05-17_
+
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
 ## Pipeline overview
