@@ -1,0 +1,92 @@
+---
+title: "kappa"
+author: "Kev Sheldrake"
+date: "2024-09-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+if ("xfun" %in% row.names(installed.packages()) == FALSE) {
+  install.packages("xfun")
+}
+
+xfun::pkg_attach(
+  c(
+    "tidyverse",
+    "magrittr",
+    "bayesplay",
+    "knitr",
+    "effsize",
+    "weights",
+    "kableExtra",
+    "LaplacesDemon"
+  ),
+  install = TRUE
+)
+```
+# Load the data
+```{r load the data}
+yesesvi.df <- readr::read_csv("yesesvi-diachronic-analysis.csv", skip = 1, col_names = TRUE, show_col_type = FALSE)
+kev.df <- readr::read_csv("kev-diachronic-analysis.csv", col_names = TRUE, show_col_type = FALSE)
+yesesvi.syn.df <- readr::read_csv("yesesvi-synchronic-analysis.csv", skip = 1, col_names = TRUE, show_col_type = FALSE)
+kev.syn.df <- readr::read_csv("kev-synchronic-analysis.csv", col_names = TRUE, show_col_type = FALSE)
+```
+# Recode the data
+```{r recode data}
+yesesvi.df <- yesesvi.df %>% dplyr::mutate(`#` = recode(`#`, '22' = '22.1', '22a' = '22.2', '22b' = '22.3', '15' = '15.2', '15a' = '15.1'))
+yesesvi.syn.df <- yesesvi.syn.df %>% dplyr::mutate(`#` = recode(`#`, '22' = '22.1', '22a' = '22.2', '22b' = '22.3', '15' = '15.2', '15a' = '15.1'))
+yesesvi.df <- yesesvi.df %>% dplyr::mutate(Moment = as.character(Moment))
+yesesvi.df <- yesesvi.df %>% dplyr::mutate(Moment = recode(Moment, '6' = '7'))
+kev.df <- kev.df %>% dplyr::mutate(`#` = as.character(`#`))
+kev.syn.df <- kev.syn.df %>% dplyr::mutate(`#` = as.character(`#`))
+kev.syn.df <- kev.syn.df %>% dplyr::filter(ISUnum > 0)
+kev.syn.df <- kev.syn.df %>% dplyr::mutate(ISUnum = as.character(ISUnum))
+```
+# Remove experimenter utterances
+```{r remove experimenter utterances}
+yesesvi.df <- yesesvi.df %>% dplyr::filter(! `#` %in% c('10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'))
+kev.df <- kev.df %>% dplyr::filter(! `#` %in% c('10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'))
+yesesvi.syn.df <- yesesvi.syn.df %>% dplyr::filter(! `#` %in% c('10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'))
+kev.syn.df <- kev.syn.df %>% dplyr::filter(! `#` %in% c('10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'))
+```
+# Calculate utterance totals
+```{r get totals}
+uttnums <- str_unique(c(yesesvi.df$`#`, kev.df$`#`))
+uttnums.syn <- str_unique(c(yesesvi.syn.df$`#`, kev.syn.df$`#`))
+```
+# Calculate
+```{r}
+agree <- 0
+expected <- 0
+for (category in c(1,2,3,4,5,6,7)) {
+  agree <- agree + length(intersect((kev.df %>% dplyr::filter(Moment == as.character(category)))$`#`, (yesesvi.df %>% dplyr::filter(Moment == as.character(category)))$`#`))
+  expected <- expected + (length((kev.df %>% dplyr::filter(Moment == as.character(category)))$`#`) * length((yesesvi.df %>% dplyr::filter(Moment == as.character(category)))$`#`))
+}
+```
+
+```{r}
+agree.syn <- 0
+expected.syn <- 0
+for (category in c(1,2,3,4,5,6,7,8,9)) {
+  agree.syn <- agree.syn + length(intersect((kev.syn.df %>% dplyr::filter(ISUnum == as.character(category)))$`#`, (yesesvi.syn.df %>% dplyr::filter(ISUnum == as.character(category)))$`#`))
+  expected.syn <- expected.syn + (length((kev.syn.df %>% dplyr::filter(ISUnum == as.character(category)))$`#`) * length((yesesvi.syn.df %>% dplyr::filter(ISUnum == as.character(category)))$`#`))
+}
+```
+
+```{r}
+expfreq <- expected / length(uttnums)
+kappa <- (agree - expfreq) / (length(uttnums) - expfreq)
+expfreq.syn <- expected.syn / length(uttnums.syn)
+kappa.syn <- (agree.syn - expfreq.syn) / (length(uttnums.syn) - expfreq.syn)
+```
+# Conclusions
+For the diachronic analysis, Cohen's kappa = `r round(kappa, 2)`, which implies strong agreement and is typically considered adequate. For the synchronic analysis, Cohen's kappa = `r round(kappa.syn, 2)`, which implies moderate agreement and is typically considered adequate (McHugh, 2012).
+
+The calculation is based on the description here: https://psych.unl.edu/psycrs/handcomp/hckappa.PDF
+
+# References
+McHugh, M. L. (2012). Interrater reliability: the kappa statistic. Biochemia medica, 22(3), 276-282.

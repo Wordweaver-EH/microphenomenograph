@@ -1,0 +1,124 @@
+---
+title: "Means"
+author: "Kev Sheldrake"
+date: "2024-10-04"
+output: html_document
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+if ("xfun" %in% row.names(installed.packages()) == FALSE) {
+  install.packages("xfun")
+}
+
+xfun::pkg_attach(
+  c(
+    "tidyverse",
+    "magrittr",
+    "bayesplay",
+    "knitr",
+    "effsize",
+    "weights",
+    "kableExtra",
+    "LaplacesDemon"
+  ),
+  install = TRUE
+)
+```
+
+```{r}
+engage.img.1.h <- readr::read_csv("global synchronic analysis pt1/Engages Imagination High Response.csv", col_names = TRUE, show_col_type = FALSE)
+engage.img.1.m <- readr::read_csv("global synchronic analysis pt1/Engages Imagination Moderate Response.csv", col_names = TRUE, show_col_type = FALSE)
+engage.img.1.l <- readr::read_csv("global synchronic analysis pt1/Engages Imagination Low Response.csv", col_names = TRUE, show_col_type = FALSE)
+engage.img.2.h <- readr::read_csv("global synchronic analysis pt2/Engages Imagination High Response.csv", col_names = TRUE, show_col_type = FALSE)
+engage.img.2.m <- readr::read_csv("global synchronic analysis pt2/Engages Imagination Moderate Response.csv", col_names = TRUE, show_col_type = FALSE)
+engage.img.2.l <- readr::read_csv("global synchronic analysis pt2/Engages Imagination Low Response.csv", col_names = TRUE, show_col_type = FALSE)
+
+felt.eff.1.h <- readr::read_csv("global synchronic analysis pt1/Felt Effect High Response.csv", col_names = TRUE, show_col_type = FALSE)
+felt.eff.1.m <- readr::read_csv("global synchronic analysis pt1/Felt Effect Moderate Response.csv", col_names = TRUE, show_col_type = FALSE)
+felt.eff.1.l <- readr::read_csv("global synchronic analysis pt1/Felt Effect Low Response.csv", col_names = TRUE, show_col_type = FALSE)
+felt.eff.2.h <- readr::read_csv("global synchronic analysis pt2/Felt Effect High Response.csv", col_names = TRUE, show_col_type = FALSE)
+felt.eff.2.m <- readr::read_csv("global synchronic analysis pt2/Felt Effect Moderate Response.csv", col_names = TRUE, show_col_type = FALSE)
+felt.eff.2.l <- readr::read_csv("global synchronic analysis pt2/Felt Effect Low Response.csv", col_names = TRUE, show_col_type = FALSE)
+```
+
+```{r}
+summary_row <- function(tib, idu, scorecat, numS1, numS2, numS3) {
+  extraS1 <- numS1 - (tib %>% dplyr::filter(Suggestion == 1) %>% dplyr::group_by(Participant) %>% dplyr::summarise(n = n()) %>% dplyr::summarise(count = n()))$count
+  extraS2 <- numS2 - (tib %>% dplyr::filter(Suggestion == 2) %>% dplyr::group_by(Participant) %>% dplyr::summarise(n = n()) %>% dplyr::summarise(count = n()))$count
+  extraS3 <- numS3 - (tib %>% dplyr::filter(Suggestion == 3) %>% dplyr::group_by(Participant) %>% dplyr::summarise(n = n()) %>% dplyr::summarise(count = n()))$count
+  new_tib <- tib %>% dplyr::group_by(Suggestion, Participant) %>% dplyr::summarise(n = n(), .groups = "drop_last") %>% dplyr::select(Suggestion, n) %>% dplyr::ungroup(Suggestion)
+  if (extraS1 > 0) {
+    for (x in seq(extraS1)) {
+      new_tib <- new_tib %>% add_row(Suggestion = 1, n = 0)
+    }
+  }
+  if (extraS2 > 0) {
+    for (x in seq(extraS2)) {
+      new_tib <- new_tib %>% add_row(Suggestion = 2, n = 0)
+    }
+  }
+  if (extraS3 > 0) {
+    for (x in seq(extraS3)) {
+      new_tib <- new_tib %>% add_row(Suggestion = 3, n = 0)
+    }
+  }
+  utt <- (tib %>% count())$n
+  new_tib %>% dplyr::summarise(idu = idu, scorecat = scorecat, utt = utt, tot = n(), mean = mean(n), sd = sd(n), .groups = "drop_last")
+}
+```
+
+
+```{r}
+eng.img <- "Engages imagination"
+felt.eff <- "Felt effect"
+engage.img.1.h.sum <- summary_row(engage.img.1.h, eng.img, "High", 5, 3, 2)
+engage.img.1.m.sum <- summary_row(engage.img.1.m, eng.img, "Moderate", 2, 1, 0)
+engage.img.1.l.sum <- summary_row(engage.img.1.l, eng.img, "Low", 0, 3, 5)
+
+felt.eff.1.h.sum <- summary_row(felt.eff.1.h, felt.eff, "High", 5, 3, 2)
+felt.eff.1.m.sum <- summary_row(felt.eff.1.m, felt.eff, "Moderate", 2, 1, 0)
+felt.eff.1.l.sum <- summary_row(felt.eff.1.l, felt.eff, "Low", 0, 3, 5)
+
+engage.img.2.h.sum <- summary_row(engage.img.2.h, eng.img, "High", 2, 0, 1)
+engage.img.2.m.sum <- summary_row(engage.img.2.m, eng.img, "Moderate", 3, 3, 0)
+engage.img.2.l.sum <- summary_row(engage.img.2.l, eng.img, "Low", 1, 3, 5)
+
+felt.eff.2.h.sum <- summary_row(felt.eff.2.h, felt.eff, "High", 2, 0, 1)
+felt.eff.2.m.sum <- summary_row(felt.eff.2.m, felt.eff, "Moderate", 3, 3, 0)
+felt.eff.2.l.sum <- summary_row(felt.eff.2.l, felt.eff, "Low", 1, 3, 5)
+
+table1.df <- data.frame(`IDU` = rep(NA, 6), `Score category` = rep(NA, 6), `Utterances` = rep(NA, 6), `Suggestion sessions` = rep(NA, 6), `Mean utterances per session` = rep(NA, 6), `SD utterances per session` = rep(NA, 6))
+table1.df[1, ] <- engage.img.1.h.sum
+table1.df[2, ] <- engage.img.1.m.sum
+table1.df[3, ] <- engage.img.1.l.sum
+table1.df[4, ] <- felt.eff.1.h.sum
+table1.df[5, ] <- felt.eff.1.m.sum
+table1.df[6, ] <- felt.eff.1.l.sum
+
+table4.df <- data.frame(`IDU` = rep(NA, 6), `Score category` = rep(NA, 6), `Utterances` = rep(NA, 6), `Suggestion sessions` = rep(NA, 6), `Mean utterances per session` = rep(NA, 6), `SD utterances per session` = rep(NA, 6))
+table4.df[1, ] <- engage.img.2.h.sum
+table4.df[2, ] <- engage.img.2.m.sum
+table4.df[3, ] <- engage.img.2.l.sum
+table4.df[4, ] <- felt.eff.2.h.sum
+table4.df[5, ] <- felt.eff.2.m.sum
+table4.df[6, ] <- felt.eff.2.l.sum
+```
+
+```{r}
+as_tibble(table1.df) %>% dplyr::mutate(
+  mean.Str = round(Mean.utterances.per.session, digits = 2),
+  sd.Str = round(SD.utterances.per.session, digits = 2)
+) %>% dplyr::select(c("IDU", "Score.category", "Utterances", "Suggestion.sessions", "mean.Str", "sd.Str")) %>%
+  kableExtra::kbl(col.names = c("IDU", "Score category", "Utterances", "Suggestion sessions", "Mean utterances per suggestion", "*SD*"), align = "cccccc") %>% collapse_rows(columns = 1, valign = 'middle') %>% kable_styling()
+as_tibble(table4.df) %>% dplyr::mutate(
+  mean.Str = round(Mean.utterances.per.session, digits = 2),
+  sd.Str = round(SD.utterances.per.session, digits = 2)
+) %>% dplyr::select(c("IDU", "Score.category", "Utterances", "Suggestion.sessions", "mean.Str", "sd.Str")) %>%
+  kableExtra::kbl(col.names = c("IDU", "Score category", "Utterances", "Suggestion sessions", "Mean utterances per suggestion", "*SD*"), align = "cccccc") %>% collapse_rows(columns = 1, valign = 'middle') %>% kable_styling()
+```
+
