@@ -118,6 +118,34 @@ Output format:
 
 Every row MUST include source participant and source suggestion — this is a hard requirement.
 
+### Hypothesis generation
+
+Read the global synchronic patterns and the causal framing context. For each pattern
+that appears across multiple participants in the same score category:
+
+1. Identify the independent variable (IV) — what varies (e.g., hypnotic suggestibility score)
+2. Identify the dependent variable (DV) — what the pattern describes (e.g., felt sense of automaticity)
+3. Describe the pattern — the qualitative relationship observed
+4. Assign Pearl ladder rung:
+   - Rung 1 (Association): "Participants who score high are more likely to report X"
+   - Rung 2 (Intervention): "If we intervene to change X, Y would change"
+   - Rung 3 (Counterfactual): "Had the participant not received the suggestion, they would not have experienced X"
+5. Assign confidence 1–5
+6. List source IDUs/ISUs (participant + IDU/ISU name)
+7. Suggest a quantitative follow-up test
+
+If no cross-participant patterns exist, write:
+```markdown
+## No Hypotheses Generated
+
+No consistent cross-participant patterns were identified in the global synchronic analysis.
+This may indicate: (a) high individual variation, (b) insufficient participants for pattern
+detection, or (c) the patterns are idiosyncratic to individual experiences.
+
+Suggested next step: Review the global synchronic analysis for qualitative themes that
+did not meet the cross-participant threshold.
+```
+
 ## Reasoning
 
 Before your output, write a `## Reasoning` section explaining:
