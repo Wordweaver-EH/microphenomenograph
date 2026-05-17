@@ -33,6 +33,7 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **microphenomenograph.AC3.3 Success:** Confidence score 1–5 present for every IDU
 - **microphenomenograph.AC3.4 Failure:** IDUs with confidence < 3 or `flag_for_review=true` appear in `.mpi/review-queue.md`
 - **microphenomenograph.AC3.5 Edge:** Transcript with single IDU produces single-row table without error
+- **microphenomenograph.AC3.6 Integrity:** Phase 2 OSF transcripts produce diachronic outputs structurally consistent with Phase 2 reference analyses; no Phase 2 analysis file is present in the few-shot pool passed to `mpi-analyst`
 
 ### microphenomenograph.AC4: Synchronic analysis produces correct output
 - **microphenomenograph.AC4.1 Success:** Each diachronic output produces `analyses/pNsN-synchronic.md` with ISU table
@@ -50,9 +51,9 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **microphenomenograph.AC6.3 Edge:** No cross-participant patterns found produces explicit "no hypothesis" output rather than empty file
 
 ### microphenomenograph.AC7: Kappa reports correct agreement
-- **microphenomenograph.AC7.1 Success:** Overall Cohen's κ matches R reference output (`kappa.Rmd`) within ±0.01 on OSF inter-rater data
-- **microphenomenograph.AC7.2 Success:** Per-IDU κ breakdown reported
-- **microphenomenograph.AC7.3 Failure:** κ < 0.61 items flagged in output (manual threshold: κ > .6)
+- **microphenomenograph.AC7.1 Success:** Diachronic κ and synchronic κ each match `kappa.Rmd` reference output within ±0.01 on OSF inter-rater data (2-rater, per-utterance category agreement)
+- **microphenomenograph.AC7.2 Success:** κ reported separately for diachronic stage and synchronic stage (matching the two-stage structure of `kappa.Rmd`)
+- **microphenomenograph.AC7.3 Failure:** Overall κ < 0.61 for any stage triggers a pipeline-level adequacy warning (manual threshold κ > .6 applies to the whole calibration set, not individual utterances)
 - **microphenomenograph.AC7.4 Edge:** Missing utterance annotations in one analyst's file handled without crash
 
 ### microphenomenograph.AC8: Yolo mode is automated and resumable
@@ -77,7 +78,7 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **Generic synchronic**: Cross-participant aggregation of ISUs; identifies structural themes recurring across participants.
 - **Global synchronic**: A further-abstracted synthesis of generic synchronic output referencing source participant and suggestion for every row; the final cross-participant structural stage before hypothesis generation.
 - **Pearl ladder rung**: A level of causal reasoning from Judea Pearl's causal hierarchy (association, intervention, counterfactual); used to classify the causal strength of each generated hypothesis.
-- **Cohen's kappa (κ)**: The inter-rater reliability statistic used throughout this pipeline; computed via Python `sklearn.metrics.cohen_kappa_score`. The manual specifies κ > .6 as the adequacy threshold; items below that are flagged for review.
+- **Cohen's kappa (κ)**: The inter-rater reliability statistic used throughout this pipeline; computed via Python `sklearn.metrics.cohen_kappa_score` on two-rater, per-utterance category assignments. The `kappa.Rmd` OSF reference computes one overall κ for diachronic and one for synchronic stages. The manual specifies κ > .6 as the adequacy threshold; overall stage κ below that triggers a pipeline-level warning.
 - **CoT (Chain-of-Thought)**: A prompting technique instructing the model to produce explicit step-by-step reasoning before a final answer; used in the analyst agent to improve coding fidelity.
 - **Confidence-Diversity routing**: Items with confidence ≥ 3 and `flag_for_review=false` are auto-accepted; others are diverted to `.mpi/review-queue.md` for human review.
 - **OSF**: Open Science Framework; source of the bundled example/test dataset of real transcripts and completed analyses.
@@ -235,12 +236,12 @@ The analysis prompt architecture follows patterns validated in published LLM qua
 **Goal:** Compare two analysts' outputs and report Cohen's κ per stage and per IDU/ISU, matching the manual's κ > .6 threshold.
 
 **Components:**
-- `skills/mpi-kappa/SKILL.md` — accepts two analysis directories, parses markdown tables by utterance number into label arrays, calls Python `sklearn.metrics.cohen_kappa_score`, reports overall κ and per-IDU/ISU breakdown; flags κ < 0.61
-- Python helper script `scripts/kappa.py` — handles label alignment, missing annotations, and per-IDU breakdown; output matches `Inter-rater Reliability/kappa.Rmd` reference
+- `skills/mpi-kappa/SKILL.md` — accepts two analysis directories, parses markdown tables by utterance number into per-utterance category label arrays (Moment for diachronic, ISUnum for synchronic), calls Python `sklearn.metrics.cohen_kappa_score`, reports overall κ per stage; emits pipeline-level warning if κ < 0.61
+- Python helper script `scripts/kappa.py` — 2-rater, per-utterance κ; handles label alignment and missing utterances; output matches `Inter-rater Reliability/kappa.Rmd` (which also computes one κ per stage)
 
 **Dependencies:** Phase 4 (needs analysis outputs to compare)
 
-**Done when:** κ computed correctly against OSF `kappa.Rmd` reference within ±0.01; per-IDU breakdown produced; κ < 0.61 items flagged; missing annotations handled without crash
+**Done when:** Diachronic κ and synchronic κ each match `kappa.Rmd` output within ±0.01; κ < 0.61 stages produce warning; missing annotations handled without crash
 <!-- END_PHASE_7 -->
 
 <!-- START_PHASE_8 -->
