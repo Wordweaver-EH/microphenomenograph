@@ -1,0 +1,13 @@
+{
+    "name": "microphenomenograph",
+    "description": "Microphenomenological Interview (MPI) analysis pipeline following Sheldrake & Dienes (2025). Orchestrates diachronic coding, synchronic structuring, cross-participant aggregation, and causal hypothesis generation.",
+    "version": "1.0.0",
+    "author": {
+        "name": "Kev Sheldrake",
+        "email": "enigman.kk@gmail.com"
+    },
+    "homepage": "https://github.com/enigman/microphenomenograph",
+    "repository": "https://github.com/enigman/microphenomenograph",
+    "license": "UNLICENSED",
+    "keywords": ["mpi", "microphenomenology", "qualitative-analysis", "claude-code"]
+}
