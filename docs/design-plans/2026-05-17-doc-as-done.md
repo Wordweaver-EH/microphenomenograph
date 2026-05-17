@@ -15,10 +15,10 @@ Three granularity and fidelity decisions distinguish this design from the previo
 3. Per-analytic-unit decisions (each IDU/ISU coding call, manifest mutation, commit, flag) are logged to a structured `.mpi/audit.jsonl`; `.mpi/reasoning.log` is rendered on demand from the JSONL by `mpi_step.py render`.
 4. An end-to-end pipeline test runs `/mpi all` on a tiny fixture corpus and asserts every expected on-disk artifact lands.
 5. Downstream skills fail-fast when upstream artifacts are missing/malformed — never synthesize replacements.
-6. **Step granularity matches the manual_kev.md (Sheldrake & Dienes 2025) simplified procedure.** Diachronic decomposes into criteria-grouping → criteria-revision → IDU-naming-ordering (3 substeps; no sub-phase identification — the manual explicitly excludes it). Synchronic decomposes into theme-grouping-within-IDU → ISU-naming → ISU-2nd-level-grouping (3 substeps, iterated **per IDU**). Generic diachronic decomposes into participant-row-assembly → group-coding → pattern-identification (3 substeps, scoped per IV category). Generic synchronic operates on worksheets per (event × IV-category × generic-IDU-of-interest) with worksheet-assembly → ISU-2nd-level-grouping (2 substeps per worksheet). Global synchronic groups ISUs across events per (generic-IDU × IV-category). Hypothesis generation is one global substep. Each substep closes its own four-part transaction.
+6. **Step granularity matches the manual_kev.md (Sheldrake & Dienes 2025) simplified procedure, and each substep is LLM-atomic.** LLM substeps are sized to fit one focused subagent call; mechanical reshape operations (copy/sort/colour-code) are orchestrator-only and do NOT invoke the LLM or produce a prompt-capture artifact. Diachronic: `criteria_grouping` (LLM, per participant), `criteria_revision` (LLM, per participant, **one revision pass per close** — convergence decision is an explicit artifact field), `idu_naming_ordering` (LLM, per participant). Synchronic: `theme_grouping_within_idu` (LLM, **per IDU**), `isu_naming` (LLM, per IDU), `isu_second_level_grouping` (LLM, per IDU). Generic diachronic: `participant_row_assembly` (orchestrator, per event × IV category), `group_coding` (orchestrator + colour-by-similarity heuristic, per event × IV category), `pattern_identification` (LLM, per event × IV category — looks for patterns across the IV-grouped colour-coded rows for that event). Generic synchronic: `worksheet_assembly` (orchestrator, per event × IV category × generic-IDU), `isu_second_level_grouping` (LLM, per worksheet). Global synchronic: one LLM substep per (generic-IDU × IV category). Hypothesis generation: one LLM substep, global. Every substep — LLM or orchestrator — closes its own four-part transaction.
 7. **Every LLM call is captured as a replayable artifact.** Each substep that invokes an LLM writes `analyses/<scope>-<stage>.<substep>.prompt.json` containing the exact prompt, response, model id, finish reason, and token counts. Audit events reference this file by path so the analytic decision can be replayed offline.
 
-8. **Cohen's κ is a methodological gate, not a status utility.** Per manual_kev.md, both diachronic and synchronic results must achieve κ > 0.6 against an independent second analyst before any cross-participant stage may run. The pipeline enforces this: the `kappa_gate` stage produces an `independent_analyst` artifact (alternate-model or alternate-prompt-variant analysis) and an `agreement_computation` artifact (κ value with confidence interval); cross-participant stages refuse to start if `kappa_gate.status != "passed"` in the manifest.
+8. **Cohen's κ is a one-shot setup sanity check, not a per-run gate.** Per manual_kev.md, κ > 0.6 is a training-time check on **one sample** between the primary analyst and an independent second analyst; the manual says "an example should be used to compare the analyses … continue training until κ > .6", not "block every production run". The pipeline reflects this: a single `mpi-kappa calibrate` invocation produces an independent second analysis of one selected (participant, stage) pair using an alternate agent (different model or prompt variant), computes κ, and writes the result as setup evidence into `.mpi/kappa_calibration.json`. Cross-participant stages emit a **warning** if κ < 0.6 or if no calibration has been run, but do not block — yolo runs to completion regardless. Users who want strict blocking can pass `--strict-kappa` to opt in.
 
 ## Acceptance Criteria
 
@@ -72,7 +72,7 @@ Three granularity and fidelity decisions distinguish this design from the previo
 
 ### doc-as-done.AC10: Substep granularity replaces stage granularity
 - **doc-as-done.AC10.1 Success:** The manifest's per-participant `stages.<stage>` entry contains a `substeps: {<substep>: {status, output_paths[]}}` map; stage `status` is derived from substep statuses (all done → done; any flagged → flagged; any error → error).
-- **doc-as-done.AC10.2 Success:** `mpi_step.py close --substep <S2>` enforces the substep DAG — closing `diachronic.refined_du` is rejected if `diachronic.du` is not `done`.
+- **doc-as-done.AC10.2 Success:** `mpi_step.py close --substep <S2>` enforces the substep DAG — closing `diachronic.idu_naming_ordering` is rejected if `diachronic.criteria_revision` is not `done`.
 - **doc-as-done.AC10.3 Success:** Each (stage, substep) pair has its own schema in `_mpi_schemas.py`; helper invokes the schema matching the `--substep` flag.
 - **doc-as-done.AC10.4 Success:** `agents/mpi-analyst.md` Persistence subsection enumerates all 6 mpi-analyst substeps (3 diachronic per participant + 3 synchronic per IDU) with per-substep artifact paths and the manual-native substep names (`criteria_grouping`, `criteria_revision`, `idu_naming_ordering`, `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping`).
 - **doc-as-done.AC10.5 Success:** `agents/mpi-cross-analyst.md` Persistence subsection enumerates all 8 cross-analyst substeps (3 generic_diachronic per IV category + 2 generic_synchronic per worksheet cell + global_synchronic + hypothesis + the kappa gate's `independent_analyst` half) with the manual-native names (`participant_row_assembly`, `group_coding`, `pattern_identification`, `worksheet_assembly`, `isu_second_level_grouping`).
@@ -89,10 +89,23 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC12.2 Success:** Synchronic schema preserves three distinct fields per ISU row: `criteria` (string), `isu_name` (string), `isu_second_level_of_abstraction` (string or empty). Generic-synchronic and global-synchronic schemas preserve `isu_second_level_of_abstraction` as a distinct column through aggregation.
 - **doc-as-done.AC12.3 Success:** If `synchronic.theme_grouping_within_idu` flags `temporal_order_within_idu: true` for a given IDU, the orchestrator schedules and the agent re-closes `diachronic.criteria_revision` for that participant; the manifest records the return edge as an `idu_split_after_synchronic` audit event with both substep span_ids referenced.
 
-### doc-as-done.AC13: Kappa is a methodological gate
-- **doc-as-done.AC13.1 Success:** `kappa_gate.independent_analyst` substep produces a second independent analysis (alternate model or alternate prompt variant) under `analyses/independent/<scope>-<stage>.{json,md,prompt.json}` for each gated stage (diachronic, synchronic).
-- **doc-as-done.AC13.2 Success:** `kappa_gate.agreement_computation` substep emits a JSON artifact containing `{kappa: float, ci_lower, ci_upper, n_units, outcome: "passed"|"failed"}` where `outcome = "passed"` iff `kappa > 0.6`; the manifest's `kappa_gate.<stage>.outcome` mirrors this value.
-- **doc-as-done.AC13.3 Failure:** Any cross-participant skill invoked while `kappa_gate.<upstream_stage>.outcome != "passed"` exits with a named ERROR and produces zero artifacts; the manifest is unchanged.
+### doc-as-done.AC13: Kappa calibration is one-shot setup evidence (not a per-run gate)
+- **doc-as-done.AC13.1 Success:** `mpi-kappa calibrate` runs on a single chosen `(participant, stage)` pair, produces the alternate analysis under `analyses/independent/<pNsN>-<stage>.{json,md,prompt.json}` plus `.mpi/kappa_calibration.json`, and emits one `kappa_calibration` audit event.
+- **doc-as-done.AC13.2 Success:** Cross-participant skills emit a `kappa_warning` audit event at stage start if `.mpi/kappa_calibration.json` is missing or its `outcome == "low"`. They proceed and produce their artifacts normally — no blocking.
+- **doc-as-done.AC13.3 Success:** When `/mpi all --strict-kappa` is passed and calibration is missing or low, cross-participant stages exit with a named ERROR before producing any artifacts.
+- **doc-as-done.AC13.4 Success:** `kappa_calibration.json` contains `{participant, stage, primary_model, alternate_model, kappa, ci_lower, ci_upper, n_units, threshold: 0.6, outcome: "passed"|"low", timestamp}`.
+
+### doc-as-done.AC14: Yolo execution is fully auditable on disk
+- **doc-as-done.AC14.1 Success:** A skipped substep emits a `stage_blocked` audit event with `mpi.blocked_reason` and the upstream `event_id`; absence of an artifact alone is never the only trace.
+- **doc-as-done.AC14.2 Success:** Each `/mpi all` run has a single `trace_id` (UUID4) persisted at `.mpi/run_id`; resumed runs reuse it.
+- **doc-as-done.AC14.3 Failure:** Helper refuses to `close` when the worktree has uncommitted files outside `analyses/` and `.mpi/`; emits `dirty_worktree_refused` and exits non-zero.
+- **doc-as-done.AC14.4 Failure:** A simulated `git commit` failure after audit + manifest write triggers a manifest rollback and a `commit_failed` audit event; artifact files remain, manifest reverts, next run re-closes.
+- **doc-as-done.AC14.5 Failure:** A close invocation missing `--prompt-artifact` for an LLM substep, or with a prompt.json that fails schema validation, is rejected before any state mutation.
+
+### doc-as-done.AC15: LLM substeps and orchestrator substeps are clearly distinguished
+- **doc-as-done.AC15.1 Success:** Each substep schema declares `actor_kind: "subagent"|"orchestrator"`. Subagent substeps require `--prompt-artifact`; orchestrator substeps reject `--prompt-artifact` (the audit event records `actor.kind: orchestrator` and no `mpi.prompt_artifact_path`).
+- **doc-as-done.AC15.2 Success:** `generic_diachronic.{participant_row_assembly, group_coding}` and `generic_synchronic.worksheet_assembly` execute without LLM calls (no prompt artifact, no model field in audit). `generic_diachronic.pattern_identification` and `generic_synchronic.isu_second_level_grouping` execute via subagent.
+- **doc-as-done.AC15.3 Success:** `diachronic.criteria_revision` artifact JSON contains a `convergence: {decision, reason}` field. Orchestrator dispatches further `criteria_revision` substeps only while `decision == "more_revision_needed"`, capped at 5 passes (emits `revision_cap_reached` if hit).
 
 ## Glossary
 
@@ -111,8 +124,8 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **Subagent**: A Claude agent instance (`mpi-analyst` or `mpi-cross-analyst`) dispatched by the orchestrator to perform per-participant or cross-participant analysis. Previously read-only; this design gives them `Write` and `Bash` so they own their own persistence.
 - **Yolo mode**: The pipeline's fully-automated execution mode (invoked via `/mpi all`) in which git commits are created without user confirmation after each stage.
 - **`trace_id` / `span_id`**: Identifiers propagated across all audit events in a single pipeline run. `trace_id` is constant for the run; each event gets a unique `event_id` (UUID4).
-- **Substep**: The methodology's natural unit of analytic work, finer than a stage. E.g., `diachronic` decomposes into `segment`, `du`, `refined_du`, `phases`. Substep IDs follow the form `<stage>.<substep>`. Each substep closes its own four-part transaction and is independently resumable.
-- **Substep DAG**: The directed graph of substep prerequisites (e.g., `diachronic.refined_du` requires `diachronic.du: done`). Encoded in `_mpi_schemas.py` and enforced by `mpi_step.py close` pre-checks.
+- **Substep**: The methodology's natural unit of analytic work, finer than a stage. E.g., `diachronic` decomposes into `criteria_grouping`, `criteria_revision`, `idu_naming_ordering`. Substep IDs follow the form `<stage>.<substep>`. Each substep closes its own four-part transaction and is independently resumable.
+- **Substep DAG**: The directed graph of substep prerequisites (e.g., `diachronic.idu_naming_ordering` requires `diachronic.criteria_revision: done`). Encoded in `_mpi_schemas.py` and enforced by `mpi_step.py close` pre-checks.
 - **Prompt-capture artifact (`.prompt.json`)**: Per-substep file containing the exact LLM prompt, response, model id, finish reason, and token counts. Enables offline replay of any analytic decision; fabrication becomes detectable by comparison rather than only by rule.
 - **µ-PATH (Wordweaver-EH/upath)**: A same-domain microphenomenological analysis pipeline whose substep granularity and per-step JSON-output convention inspired this design's substep model. µ-PATH itself encodes the Valenzuela-Moguillansky & Vásquez-Rosati 2019 procedure, which differs from manual_kev.md (used here) in important ways — µ-PATH produces phases/sub-phases and DU/refined-DU/SSS/GSS outputs that this manual deliberately excludes.
 - **manual_kev.md**: The Sheldrake & Dienes (2025) simplified procedure used as this pipeline's source of truth. Defines IDU, ISU, ISU 2nd Level of Abstraction as the analytic columns; excludes diachronic sub-phase identification; requires Cohen's κ > 0.6 against an independent second analyst before relying on results.
@@ -132,8 +145,8 @@ Every MPI pipeline step — whether executed by a subagent or by the orchestrato
 | `diachronic` | `criteria_grouping`, `criteria_revision`, `idu_naming_ordering` | per participant |
 | `synchronic` | `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping` | per participant × **per IDU** |
 | `kappa_gate` | `independent_analyst`, `agreement_computation` | per stage (diachronic, synchronic) |
-| `generic_diachronic` | `participant_row_assembly`, `group_coding`, `pattern_identification` | per IV category |
-| `generic_synchronic` | `worksheet_assembly`, `isu_second_level_grouping` | per (event × IV category × generic-IDU-of-interest) |
+| `generic_diachronic` | `participant_row_assembly` (orch), `group_coding` (orch), `pattern_identification` (LLM) | per event × IV category |
+| `generic_synchronic` | `worksheet_assembly` (orch), `isu_second_level_grouping` (LLM) | per (event × IV category × generic-IDU-of-interest) |
 | `global_synchronic` | one | per (generic-IDU × IV category) |
 | `hypothesis` | one | global |
 
@@ -149,7 +162,7 @@ Substep IDs follow the form `<stage>.<substep>` (e.g., `diachronic.idu_naming_or
 Scope identifiers (`<scope>`):
 - `pNsN` — per-participant work (transcript_prep, diachronic substeps)
 - `pNsN-iduN` — per-IDU synchronic substeps (replaces an earlier draft's per-phase scoping; the manual is per-IDU)
-- `cat-<low|moderate|high>` — per-IV-category generic_diachronic substeps
+- `event<E>-cat-<C>` — per (event × IV category) generic_diachronic substeps
 - `event<E>-cat-<C>-gidu<G>` — per (event × IV category × generic-IDU-of-interest) for generic_synchronic worksheets
 - `gidu<G>-cat-<C>` — per (generic-IDU × IV category) for global_synchronic
 - `global` — for hypothesis and stage-level kappa_gate
@@ -205,7 +218,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Components:**
 - `mpi_step.py close` function — accepts `--stage`, `--substep`, `--scope`, `--artifact` (json + md + prompt.json), `--units-json`, `--reason`, `--status`; performs pre-checks (manifest exists, all three artifact files exist + non-empty, upstream substep prerequisites done, units-json validates), then audit append, then manifest write, then `git add` + `git commit`
-- Per-(stage, substep) prerequisite DAG hardcoded in `_mpi_schemas.py` — `diachronic.du` requires `diachronic.segment: done`; `synchronic.groups` per phase requires `diachronic.phases: done`; etc.
+- Per-(stage, substep) prerequisite DAG hardcoded in `_mpi_schemas.py` — `diachronic.criteria_revision` requires `diachronic.criteria_grouping: done`; `diachronic.idu_naming_ordering` requires `diachronic.criteria_revision: done`; `synchronic.theme_grouping_within_idu` per IDU requires `diachronic.idu_naming_ordering: done` for that participant; etc.
 - Manifest schema extended: each participant entry's `stages.<stage>` now contains a `substeps: {<substep>: {status, output_paths[]}}` map; stage `status` is derived (all substeps done → stage done, any flagged → stage flagged)
 - Commit message format: `mpi: <actor> <stage>.<substep> <scope> (<N>units <K>flagged)`
 - Test cases in `test_mpi_step.py`: happy path per substep, missing artifact rejection, malformed units rejection, missing-upstream-substep rejection, partial-failure cleanup
@@ -238,7 +251,8 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Components:**
 - `microphenomenograph/1.0.0/scripts/_mpi_schemas.py` — expanded module exporting one schema per `(stage, substep)`. Schemas use plain Python dicts (no jsonschema dep); fields enumerate required keys, allowed types, and value bounds.
-- Coverage: `transcript_prep`; `diachronic.{criteria_grouping, criteria_revision, idu_naming_ordering}`; `synchronic.{theme_grouping_within_idu, isu_naming, isu_second_level_grouping}` iterated per IDU; `kappa_gate.{independent_analyst, agreement_computation}` per gated stage; `generic_diachronic.{participant_row_assembly, group_coding, pattern_identification}` per IV category; `generic_synchronic.{worksheet_assembly, isu_second_level_grouping}` per (event × IV category × generic-IDU); `global_synchronic`; `hypothesis`. Schemas preserve `criteria`, `isu_name`, `isu_second_level_of_abstraction` as distinct fields throughout synchronic-family substeps.
+- Coverage: `transcript_prep`; `diachronic.{criteria_grouping, criteria_revision, idu_naming_ordering}`; `synchronic.{theme_grouping_within_idu, isu_naming, isu_second_level_grouping}` iterated per IDU; `generic_diachronic.{participant_row_assembly, group_coding, pattern_identification}` per (event × IV category); `generic_synchronic.{worksheet_assembly, isu_second_level_grouping}` per (event × IV category × generic-IDU); `global_synchronic`; `hypothesis`; `kappa_calibration` (Phase 13). Schemas preserve `criteria`, `isu_name`, `isu_second_level_of_abstraction` as distinct fields throughout synchronic-family substeps.
+- **Convergence-decision contract.** `diachronic.criteria_revision` represents **one revision pass**. Its schema requires a `convergence: {decision: "more_revision_needed"|"converged", reason: "<one sentence>"}` field. The orchestrator dispatches subsequent `criteria_revision` substeps until `decision == "converged"`, with a hard cap (default 5 passes) emitting a `revision_cap_reached` audit event if hit. This makes the "iterate until no further improvements can be made" instruction from manual_kev.md observable on disk: each pass is its own close with its own commit, and the convergence decision is a first-class artifact field, not a hidden LLM stop condition.
 - Validator function `validate_units(stage, substep, payload) -> list[Error]` returns named errors on missing required keys, unknown keys (strict mode), bad types, out-of-range values, or schema-version mismatch.
 - Test cases: each schema accepts a canonical positive fixture and rejects a curated set of malformed fixtures (drift names, type errors, range errors).
 
@@ -258,9 +272,9 @@ This design has **13 phases** total. The writing-plans skill limits implementati
   {
     "schema_version": "1",
     "actor": {"kind": "subagent|orchestrator", "name": "mpi-analyst", "model": "claude-haiku-4-5"},
-    "stage": "diachronic", "substep": "refined_du", "scope": "p1s1",
+    "stage": "diachronic", "substep": "idu_naming_ordering", "scope": "p1s1",
     "prompt": {"system": "...", "user": "...", "tools_available": [...]},
-    "response": {"raw_text": "...", "parsed_units_path": "analyses/p1s1-diachronic.refined_du.json"},
+    "response": {"raw_text": "...", "parsed_units_path": "analyses/p1s1-diachronic.idu_naming_ordering.json"},
     "metadata": {"finish_reason": "end_turn", "usage": {"input_tokens": 0, "output_tokens": 0}, "duration_ms": 0, "timestamp": "..."}
   }
   ```
@@ -276,7 +290,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 <!-- START_PHASE_6 -->
 ### Phase 6: Subagent contract — `mpi-analyst`
 
-**Goal:** `mpi-analyst` self-persists per substep across the diachronic and synchronic stages (segment, du, refined_du, phases; groups, isus, structure per phase).
+**Goal:** `mpi-analyst` self-persists per substep across the diachronic and synchronic stages (`criteria_grouping`, `criteria_revision`, `idu_naming_ordering` per participant; `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping` per IDU).
 
 **Components:**
 - `microphenomenograph/1.0.0/agents/mpi-analyst.md` — `tools:` changes from `Read` to `Read, Write, Bash`
@@ -296,7 +310,8 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Components:**
 - `microphenomenograph/1.0.0/agents/mpi-cross-analyst.md` — `tools:` changes from `Read` to `Read, Write, Bash`
-- "Persistence (mandatory before returning)" subsection enumerates: `generic_diachronic.{participant_row_assembly, group_coding, pattern_identification}` per IV category; `generic_synchronic.{worksheet_assembly, isu_second_level_grouping}` per (event × IV category × generic-IDU-of-interest); `global_synchronic` per (generic-IDU × IV category); `hypothesis` global. Pre-check inside every cross-participant invocation: verify `kappa_gate` is `passed` for the upstream stage; refuse to start otherwise.
+- "Persistence (mandatory before returning)" subsection enumerates the LLM-driven substeps: `generic_diachronic.pattern_identification` per (event × IV category); `generic_synchronic.isu_second_level_grouping` per (event × IV category × generic-IDU-of-interest); `global_synchronic` per (generic-IDU × IV category); `hypothesis` global. The mechanical assembly substeps (`participant_row_assembly`, `group_coding`, `worksheet_assembly`) are orchestrator-only (no LLM, no prompt artifact) — see Phase 9.
+- Pre-check: at stage start, read `.mpi/kappa_calibration.json` if present and surface its `kappa`/`outcome` in the agent's reasoning. Do NOT block; emit `kappa_warning` if missing or low and proceed.
 - Anti-fabrication clause added
 - Per-substep markdown table contract pinned in each cross-participant SKILL.md
 
@@ -333,7 +348,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 - `skills/mpi-generic-synchronic/SKILL.md` — mpi-cross-analyst closes 2 substeps per (event × IV category × generic-IDU-of-interest) (`worksheet_assembly`, `isu_second_level_grouping`); generic-IDU-of-interest list comes from `generic_diachronic.pattern_identification` outputs
 - `skills/mpi-global-synchronic/SKILL.md` — single substep, scoped per (generic-IDU × IV category); ISU 2nd Level of Abstraction preserved as a distinct column
 - `skills/mpi-hypothesis/SKILL.md` — single substep, global; compares patterns across IV levels per the manual
-- `skills/mpi-kappa/SKILL.md` — **NOT read-only any more**; promoted to a methodological gate (see Phase 13). Closes 2 substeps per gated stage (`independent_analyst`, `agreement_computation`); cross-participant skills refuse to start if `kappa_gate` is not `passed`. Old "read-only" framing deleted.
+- `skills/mpi-kappa/SKILL.md` — calibration utility (see Phase 13). Single operation `mpi-kappa calibrate --participant pNsN --stage <S>` runs an alternate-agent analysis on one chosen pair, computes κ, writes `analyses/independent/<scope>-<stage>.{json,md,prompt.json}` and `.mpi/kappa_calibration.json`. Cross-participant skills warn but do not block on low/missing κ unless `--strict-kappa` is set.
 - `skills/mpi-status/SKILL.md` — read-only; closure section explicitly states "no artifact close" but emits a `stage_phase: read` audit event for trace continuity
 
 **Dependencies:** Phase 7.
@@ -390,19 +405,22 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 <!-- END_PHASE_12 -->
 
 <!-- START_PHASE_13 -->
-### Phase 13: Kappa gate as methodological prerequisite
+### Phase 13: Kappa calibration as setup evidence
 
-**Goal:** Enforce manual_kev.md's κ > 0.6 requirement as a hard precondition for cross-participant analysis. `mpi-kappa` is promoted from status utility to methodological gate.
+**Goal:** Implement manual_kev.md's κ > 0.6 check as a **one-shot setup sanity check** (the manual's "an example … continue training until κ > .6"), not a per-run blocker. yolo runs proceed regardless; the result is recorded as evidence in the audit trail and surfaced as a warning if low.
 
 **Components:**
-- `skills/mpi-kappa/SKILL.md` rewritten: defines 2 substeps per gated stage. `kappa_gate.independent_analyst` — produce a second independent analysis of the same transcripts/IDUs using an alternate model (e.g., haiku vs sonnet) or alternate prompt variant; writes artifacts to `analyses/independent/<scope>-<stage>.{json,md,prompt.json}`. `kappa_gate.agreement_computation` — invoke `scripts/kappa.py` to compute Cohen's κ between primary and independent; write a markdown report plus a JSON artifact with `{kappa: float, ci_lower, ci_upper, n_units, outcome: "passed"|"failed"}`; `outcome = passed` iff `kappa > 0.6`.
-- Manifest gains `kappa_gate: {diachronic: {status, outcome}, synchronic: {status, outcome}}`. Cross-participant skill orchestration pre-check refuses to start if either is not `passed`.
-- `mpi-cross-analyst` agent prompt updated to verify the gate before any substep close (Phase 7 references this).
-- `scripts/kappa.py` (already exists) extended only if needed to accept the new artifact layout.
+- `skills/mpi-kappa/SKILL.md` rewritten as a calibration utility. One operation: `mpi-kappa calibrate --participant pNsN --stage diachronic|synchronic [--alternate-model <m>] [--alternate-prompt <variant>]`. Picks one (participant, stage) pair, runs the analysis a second time with the alternate agent, computes Cohen's κ via `scripts/kappa.py`, writes:
+  - `analyses/independent/pNsN-<stage>.{json,md,prompt.json}` — the alternate analysis (with its own prompt-capture artifact for replay)
+  - `.mpi/kappa_calibration.json` — `{participant, stage, primary_model, alternate_model, kappa, ci_lower, ci_upper, n_units, threshold: 0.6, outcome: "passed"|"low", timestamp}`
+  - One audit event `event.action: kappa_calibration` referencing both prompt-capture artifacts
+- Cross-participant skills emit a `kappa_warning` audit event at stage start if `.mpi/kappa_calibration.json` is missing for the upstream stage or `outcome == "low"`. They proceed regardless unless `--strict-kappa` was passed at `/mpi all` invocation, in which case they error.
+- `mpi-cross-analyst` agent prompt updated: read `.mpi/kappa_calibration.json` if present and include its summary in its reasoning; do NOT block on it.
+- `scripts/kappa.py` extended only if its current API doesn't accept the new artifact paths.
 
-**Dependencies:** Phases 8 (per-participant skills produce primary analyses), 9 (cross-participant skills are gated by this).
+**Dependencies:** Phase 6 (mpi-analyst can produce per-substep artifacts that the alternate run also produces).
 
-**Done when:** Running cross-participant skills with `kappa_gate` `pending` or `failed` produces a named ERROR and no artifacts. Running with `kappa_gate` `passed` proceeds normally. Verifies `doc-as-done.AC13.1`, `doc-as-done.AC13.2`, `doc-as-done.AC13.3`.
+**Done when:** `mpi-kappa calibrate` runs end-to-end on a fixture, produces both independent analysis artifacts and `kappa_calibration.json`, and emits a calibration audit event. A yolo run with no calibration completes successfully but emits a `kappa_warning` audit event at each cross-participant stage start. A yolo run with `--strict-kappa` and missing or low κ exits non-zero before any cross-participant artifact is produced. Verifies `doc-as-done.AC13.1`, `doc-as-done.AC13.2`, `doc-as-done.AC13.3`, `doc-as-done.AC13.4`.
 <!-- END_PHASE_13 -->
 
 ## Additional Considerations
@@ -415,6 +433,14 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 The split keeps each plan focused and within the 8-phase budget. Plan 1 leaves the pipeline in a working but incomplete state — the cross-participant skills still pass JSON over the wire as today, and there is no κ gate — so users should not run `/mpi all` between the two plans; only `/mpi diachronic` and `/mpi synchronic` are upgraded after Plan 1.
 
 **Methodology lineage and fidelity check.** A prior draft of this design imported substep names from the µ-PATH pipeline (Wordweaver-EH/upath), which encodes Valenzuela-Moguillansky & Vásquez-Rosati 2019 — a different methodology that produces phases/sub-phases, DU/refined-DU, and SSS/GSS outputs. manual_kev.md is a deliberately simplified variant that omits sub-phase identification and uses IDU + ISU + ISU 2nd Level of Abstraction as its analytic columns. The current substep map is named after the operations manual_kev.md prescribes verbatim. A diff against the prior draft: dropped `diachronic.phases`, `diachronic.du`, `diachronic.refined_du`; renamed `synchronic.{groups,isus,structure}` → `synchronic.{theme_grouping_within_idu, isu_naming, isu_second_level_grouping}` and changed iteration from "per phase" to "per IDU"; replaced `generic_diachronic.{compare, gdus, structure}` with manual-native `participant_row_assembly`/`group_coding`/`pattern_identification`; replaced `generic_synchronic.{sss_grouping, gss_definition}` with `worksheet_assembly`/`isu_second_level_grouping`; promoted `mpi-kappa` from status utility to gated stage.
+
+**Yolo mode auditability.** In `/mpi all --yolo` execution with no human in the loop, every state transition must be reconstructable from on-disk artifacts. Specific yolo-mode requirements:
+
+- **Blocked-state audit events.** When a substep is skipped (because its upstream is `pending` or `failed`), the orchestrator emits a `stage_blocked` audit event with `mpi.blocked_reason: "upstream_pending|upstream_failed|kappa_low_strict|..."` and the upstream's `event_id`. Absence-of-artifact alone is not auditable; the blocked event is the trace.
+- **Run identity.** Each `/mpi all` invocation generates or reuses `.mpi/run_id` (UUID4). The id propagates as `trace_id` on every event for the run. Resumed runs reuse the existing `run_id`; new runs after `git clean` create a new one.
+- **Dirty-worktree behaviour.** Helper `close` refuses to run if `git status --porcelain` shows uncommitted files outside `analyses/` and `.mpi/` at start; logs `dirty_worktree_refused` and exits non-zero. This prevents commits that accidentally include unrelated work.
+- **Commit-failure recovery.** If `git commit` fails after audit + manifest succeed (rare; e.g., pre-commit hook rejects), the helper emits a `commit_failed` audit event, rolls back the manifest write (the on-disk `.mpi/project.json` reverts to its pre-call state via the kept tmp), and exits non-zero. The artifact files remain on disk but unreferenced; the next `/mpi all` will detect them via the manifest `status: pending` and re-close them.
+- **Partial prompt-artifact handling.** If a subagent writes the analysis JSON+md but crashes before writing the prompt artifact, the helper's pre-check rejects the close (`prompt_artifact_missing`). The partial files stay on disk for human inspection; the manifest stays `pending`. Re-running the substep produces a fresh complete triple.
 
 **Shell-quoting risk.** Subagents invoking `python scripts/mpi_step.py close --units-json '<huge json blob>'` would be fragile on Windows. Mitigation: helper accepts `--units-json -` to read from stdin, and accepts `--units-json path/to/file.json` to read from disk. Agent prompt instructs the latter (write `analyses/pNsN-<stage>.units.json` first, then pass the path).
 
