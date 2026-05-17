@@ -5,19 +5,76 @@ user-invocable: false
 ---
 # mpi-init
 
-Scan all `.txt` files in a source transcript directory, copy them into `transcripts/`
-(in the current working directory), parse their headers, and write or update `.mpi/project.json`.
+Bootstrap a self-contained MPI run directory. Every pipeline run lives in its own
+isolated folder containing its own transcripts, manifest, analyses, logs, and git
+history. Runs never share state.
 
-## Source directory
+## Run directory contract
 
-Accept an optional `--transcripts <path>` argument pointing to the source transcript
-directory. If provided:
-1. Create `transcripts/` in CWD if it does not exist
-2. Copy all `.txt` files from `<path>` into `transcripts/` (overwrite if already present)
-3. Proceed with scanning `transcripts/` as normal
+Each run is rooted at a `RUN_DIR` (e.g. `runs/phase1-2026-05-17/`). After init, its
+layout is:
 
-If `--transcripts` is omitted, scan `transcripts/` in the CWD directly (legacy behaviour
-— assumes transcripts are already present).
+```
+RUN_DIR/
+├── transcripts/         # copied from source — never edited in place
+├── analyses/            # all stage outputs land here
+├── .mpi/
+│   ├── project.json     # manifest
+│   └── reasoning.log
+└── .gitignore           # ignores .mpi/
+```
+
+All subsequent `/mpi <stage>` commands MUST be run from inside `RUN_DIR`. The manifest,
+outputs, and git commits are all scoped to that directory.
+
+## Init resolution
+
+`/mpi init` accepts two optional flags:
+- `--run <RUN_DIR>` — path (absolute or CWD-relative) to the run directory to create or
+  resume. If omitted, prompt.
+- `--transcripts <SRC>` — path to source transcripts to copy in. If omitted AND
+  `RUN_DIR/transcripts/` is empty/missing, prompt.
+
+Resolution algorithm:
+
+1. **Determine `RUN_DIR`:**
+   - If `--run` given: use it.
+   - Else: prompt the user with AskUserQuestion:
+     > "Name for this run directory (will be created if absent, e.g.
+     > `runs/phase1-2026-05-17/`):"
+   - If `RUN_DIR` already exists AND contains `.mpi/project.json`: this is a resume —
+     skip the transcripts-copy step and re-scan the existing `transcripts/` only.
+   - If `RUN_DIR` exists but has no manifest: treat as fresh init inside it.
+   - If `RUN_DIR` does not exist: create it.
+
+2. **Determine source transcripts (fresh init only):**
+   - If `--transcripts` given: use it.
+   - Else: prompt:
+     > "Path to source directory of transcript `.txt` files (will be copied into
+     > `RUN_DIR/transcripts/`):"
+   - Validate: path exists, contains ≥1 `.txt` file. Re-prompt on failure with the
+     specific reason.
+
+3. **Copy transcripts:** create `RUN_DIR/transcripts/` if absent, copy every `.txt` from
+   `SRC` into it. Do not modify originals.
+
+4. **Refuse cross-contamination:** if the user supplies a `RUN_DIR` that already
+   contains a non-empty `transcripts/` AND a different `--transcripts` source, STOP and
+   ask whether to (a) overwrite, (b) skip copy and resume, or (c) abort. Never silently
+   overwrite.
+
+5. **Change working directory:** all remaining steps and all downstream `/mpi`
+   subcommands operate with `RUN_DIR` as CWD. Print to the user:
+   > "Run directory: <absolute RUN_DIR>. cd there before running further /mpi commands."
+
+## Auto-created files
+
+Inside `RUN_DIR`:
+- `.mpi/` directory
+- `.mpi/project.json` (manifest, see schema below)
+- `.mpi/reasoning.log` (empty if new)
+- `.gitignore` containing `.mpi/` (if not present)
+- `analyses/` directory (empty, populated by later stages)
 
 ## Header format
 
@@ -43,8 +100,8 @@ Also: `Participant 11, Suggestion 1 modified (Scored 0/5) [...]` → p=11, s=1, 
 
 ## Manifest location
 
-Write `.mpi/project.json` (relative to current working directory). Create `.mpi/` if it
-does not exist. `.mpi/` is gitignored (see `.gitignore`).
+Write `RUN_DIR/.mpi/project.json`. All paths inside the manifest (`transcript_path`,
+`output_path`) are relative to `RUN_DIR`.
 
 ## Manifest schema
 
@@ -108,15 +165,20 @@ This means running init twice never resets completed work.
 
 ## Steps
 
-1. If `--transcripts <path>` was given: create `transcripts/` in CWD if absent, then copy all `.txt` files from `<path>` into it
-2. Create `.mpi/` if not present
-3. Check for existing `.mpi/project.json` and load it if present
-4. List all `.txt` files in `transcripts/`
-5. For each file, read line 1 and parse the header regex
-   - On parse failure: print error and skip this file (do not abort entire run)
-6. Build the participant entry (new or merge with existing)
-7. Write updated manifest to `.mpi/project.json`
-8. Report: "Initialised N participants. M already had completed stages (preserved)."
+1. Resolve `RUN_DIR` per "Init resolution" (flag or prompt). Create if absent.
+2. Resolve source transcripts (fresh init only) and copy `.txt` files into
+   `RUN_DIR/transcripts/`.
+3. Create `RUN_DIR/.mpi/`, `RUN_DIR/analyses/`, `RUN_DIR/.gitignore` (with `.mpi/`) if
+   absent.
+4. Load existing `RUN_DIR/.mpi/project.json` if present (resume case).
+5. List all `.txt` files in `RUN_DIR/transcripts/`.
+6. For each file, read line 1 and parse the header regex.
+   - On parse failure: print error and skip this file (do not abort entire run).
+7. Build the participant entry (new or merge with existing per idempotency rules).
+8. Atomically write manifest: `RUN_DIR/.mpi/project.json.tmp` → rename to
+   `RUN_DIR/.mpi/project.json`.
+9. Report: "Initialised N participants in `<RUN_DIR>`. M already had completed stages
+   (preserved). Run subsequent /mpi commands from `<RUN_DIR>`."
 
 ## Output
 

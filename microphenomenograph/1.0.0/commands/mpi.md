@@ -16,7 +16,7 @@ Microphenomenological Interview (MPI) analysis pipeline.
 
 | Subcommand | Description | Skill |
 |---|---|---|
-| `init [--transcripts <path>]` | Copy transcripts from `<path>`, parse headers, write manifest | mpi-init |
+| `init [--run <dir>] [--transcripts <path>]` | Bootstrap self-contained run directory; copy transcripts, parse headers, write manifest | mpi-init |
 | `status` | Show pipeline progress table | mpi-status |
 | `transcript-prep [pNsN]` | Normalise transcript(s) | mpi-transcript-prep |
 | `diachronic [pNsN]` | Run IDU analysis (per-participant) | mpi-diachronic |
@@ -33,13 +33,25 @@ Microphenomenological Interview (MPI) analysis pipeline.
 | Flag | Applies to | Description |
 |---|---|---|
 | `--yolo` | `init`, `all`, per-stage subcommands | Automated parallel execution; no human confirmation |
-| `--transcripts <path>` | `init` | Source directory to copy transcripts from before initialising |
+| `--run <dir>` | `init` | Run directory to create or resume (prompted if omitted) |
+| `--transcripts <path>` | `init` | Source directory to copy transcripts from (prompted if omitted on fresh init) |
 
 **Example:**
 ```
-/mpi init --yolo --transcripts "osf-archive/Phase 1/transcripts"
+/mpi init --yolo --run runs/phase1 --transcripts "osf-archive/Phase 1/transcripts"
+cd runs/phase1
 /mpi all --yolo
 ```
+
+## Run directory contract
+
+Every run is self-contained in a `RUN_DIR` chosen at init time. After init, all
+subsequent `/mpi` subcommands MUST be invoked with `RUN_DIR` as CWD. The manifest
+(`.mpi/project.json`), transcripts, analyses, reasoning log, and git history are all
+local to that directory. Runs never share state.
+
+If a subcommand is run from a directory without `.mpi/project.json`, print:
+`No .mpi/project.json in CWD. cd into your run directory, or run /mpi init.`
 
 ## Mode
 
@@ -172,5 +184,5 @@ The manifest (`project.json`) is the source of truth. Rules:
 
 ## Prerequisites
 
-All stages other than `init` require `.mpi/project.json` to exist. If missing, print:
-`No .mpi/project.json found. Run /mpi init first.`
+All stages other than `init` require `.mpi/project.json` to exist in CWD. If missing,
+print: `No .mpi/project.json in CWD. cd into your run directory, or run /mpi init.`
