@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "microphenomenograph",
+  "owner": {
+    "name": "Kev Sheldrake",
+    "email": "enigman.kk@gmail.com"
+  },
+  "metadata": {
+    "description": "Marketplace for the microphenomenograph Claude Code plugin",
+    "version": "1.0.0",
+    "pluginRoot": "./microphenomenograph"
+  },
+  "plugins": [
+    {
+      "name": "microphenomenograph",
+      "source": "./microphenomenograph/1.0.0",
+      "description": "Microphenomenological Interview (MPI) analysis pipeline following Sheldrake & Dienes (2025). Orchestrates diachronic coding, synchronic structuring, cross-participant aggregation, and causal hypothesis generation.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Kev Sheldrake",
+        "email": "enigman.kk@gmail.com"
+      },
+      "license": "UNLICENSED",
+      "keywords": ["mpi", "microphenomenology", "qualitative-analysis", "claude-code"],
+      "category": "research"
+    }
+  ]
+}
