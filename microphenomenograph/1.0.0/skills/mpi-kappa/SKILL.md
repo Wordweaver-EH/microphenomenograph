@@ -32,6 +32,8 @@ python microphenomenograph/1.0.0/scripts/kappa.py \
     <dir2>/*-synchronic-analysis.csv
 ```
 
+**Important:** Each glob pattern should match exactly one CSV file per analyst. The execution expects exactly one `*-diachronic-analysis.csv` and one `*-synchronic-analysis.csv` per directory.
+
 **Default (no arguments):** Uses OSF bundled inter-rater data with filenames `kev-diachronic-analysis.csv`,
 `yesesvi-diachronic-analysis.csv`, etc. in `examples/inter-rater/`.
 

@@ -595,6 +595,13 @@ def main():
         return False
 
 
+def test_all() -> None:
+    """Pytest wrapper for orchestration tests."""
+    success = main()
+    if not success:
+        raise AssertionError("Orchestration tests failed")
+
+
 if __name__ == "__main__":
     success = main()
     exit(0 if success else 1)

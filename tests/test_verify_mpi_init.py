@@ -437,6 +437,13 @@ def main():
     return True
 
 
+def test_all() -> None:
+    """Pytest wrapper for mpi-init verification tests."""
+    success = main()
+    if not success:
+        raise AssertionError("MPI init verification tests failed")
+
+
 if __name__ == "__main__":
     success = main()
     exit(0 if success else 1)

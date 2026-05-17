@@ -479,6 +479,13 @@ def run_test_suite() -> bool:
         return False
 
 
+def test_all() -> None:
+    """Pytest wrapper for synchronic logic tests."""
+    success = run_test_suite()
+    if not success:
+        raise AssertionError("Synchronic logic tests failed")
+
+
 if __name__ == "__main__":
     success = run_test_suite()
     sys.exit(0 if success else 1)

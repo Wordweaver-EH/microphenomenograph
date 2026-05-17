@@ -157,6 +157,8 @@ def compute_kappa(assignments_a, assignments_b, categories):
 
     Handles missing utterances: utterances present in one analyst but not the other
     are included in N but contribute 0 to agree for the missing category.
+
+    Note: categories: iterable of int or str; values are coerced to str for comparison.
     """
     all_utts = set(assignments_a.keys()) | set(assignments_b.keys())
     N = len(all_utts)
