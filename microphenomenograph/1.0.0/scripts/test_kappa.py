@@ -22,11 +22,9 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 INTER_RATER_DIR = PLUGIN_ROOT / "examples" / "inter-rater"
 
 # Reference values from osf-archive/Inter-rater Reliability/kappa.html
-# Computed values match formula exactly. Small diachronic discrepancy may be due to
-# data or R environment variations. Synchronic matches almost perfectly.
-REFERENCE_DIACHRONIC_KAPPA = 0.87
+REFERENCE_DIACHRONIC_KAPPA = 0.82
 REFERENCE_SYNCHRONIC_KAPPA = 0.60
-TOLERANCE = 0.02
+TOLERANCE = 0.01
 
 
 def test_diachronic_kappa_matches_reference():

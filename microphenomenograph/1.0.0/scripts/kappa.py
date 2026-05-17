@@ -21,6 +21,7 @@ Output:
 """
 import sys
 import csv
+import math
 from pathlib import Path
 
 
@@ -29,8 +30,8 @@ def load_diachronic(csv_path):
     Load diachronic CSV.
     Returns dict: { utterance_number_str -> moment_str }
     Filters out experimenter utterances by utterance number (BEFORE recoding).
-    Applies recoding for yesesvi utterance numbers and Moment values (AFTER filtering).
-    Skips rows where Moment is empty.
+    Applies recoding for yesesvi files ONLY (identified by 'yesesvi' in filename).
+    Keeps utterances with empty Moment using '' as sentinel so they count toward N.
 
     Note: some diachronic CSVs (e.g. yesesvi) have a preamble row 0 containing
     the participant identifier before the actual header row. Search for the header
@@ -40,11 +41,14 @@ def load_diachronic(csv_path):
     # MUST apply filter BEFORE recoding, so use the original utterance numbers
     experimenter_utts = {'10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'}
 
-    # Recoding for yesesvi utterance numbers (applied AFTER filtering)
-    utt_recode = {'22': '22.1', '22a': '22.2', '22b': '22.3', '15': '15.2', '15a': '15.1'}
+    # Check if this is a yesesvi file to determine if recoding should apply
+    is_yesesvi = 'yesesvi' in str(csv_path).lower()
 
-    # Recoding for yesesvi Moment values
-    moment_recode = {'6': '7'}
+    # Recoding for yesesvi utterance numbers (applied AFTER filtering, yesesvi only)
+    utt_recode = {'22': '22.1', '22a': '22.2', '22b': '22.3', '15': '15.2', '15a': '15.1'} if is_yesesvi else {}
+
+    # Recoding for yesesvi Moment values (yesesvi only)
+    moment_recode = {'6': '7'} if is_yesesvi else {}
 
     assignments = {}
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
@@ -62,16 +66,18 @@ def load_diachronic(csv_path):
     for row in reader:
         utt = str(row.get("#", "")).strip()
         moment = str(row.get("Moment", "")).strip()
-        if not utt or not moment:
+
+        # Skip rows with empty utterance number
+        if not utt:
             continue
 
         # Filter experimenter utterances BEFORE recoding
         if utt in experimenter_utts:
             continue
 
-        # Apply recoding AFTER filtering (for yesesvi, others will pass through unchanged)
+        # Apply recoding AFTER filtering (for yesesvi only, others pass through unchanged)
         utt = utt_recode.get(utt, utt)
-        moment = moment_recode.get(moment, moment)
+        moment = moment_recode.get(moment, moment) if moment else ''
 
         assignments[utt] = moment
     return assignments
@@ -81,15 +87,19 @@ def load_synchronic(csv_path):
     """
     Load synchronic CSV.
     Returns dict: { utterance_number_str -> isunum_str }
-    Applies recoding for yesesvi utterance numbers.
-    Skips rows where ISUnum is empty or <= 0.
+    Applies recoding for yesesvi files ONLY (identified by 'yesesvi' in filename).
+    Keeps utterances with empty ISUnum using '' as sentinel so they count toward N.
+    Skips rows where ISUnum is <= 0 (numeric check only if valid number).
     Filters out experimenter utterances by utterance number.
     """
     # Experimenter utterance numbers to filter (from kappa.Rmd line 53)
     experimenter_utts = {'10', '21', '23', '29', '12', '14', '16', '19', '39', '27', '31', '33', '35', '37', '25'}
 
-    # Recoding for yesesvi utterance numbers
-    utt_recode = {'22': '22.1', '22a': '22.2', '22b': '22.3', '15': '15.2', '15a': '15.1'}
+    # Check if this is a yesesvi file to determine if recoding should apply
+    is_yesesvi = 'yesesvi' in str(csv_path).lower()
+
+    # Recoding for yesesvi utterance numbers (yesesvi only)
+    utt_recode = {'22': '22.1', '22a': '22.2', '22b': '22.3', '15': '15.2', '15a': '15.1'} if is_yesesvi else {}
 
     assignments = {}
     with open(csv_path, encoding="utf-8-sig", newline="") as f:
@@ -107,20 +117,28 @@ def load_synchronic(csv_path):
     for row in reader:
         utt = str(row.get("#", "")).strip()
         isunum = str(row.get("ISUnum", "")).strip()
-        if not utt or not isunum:
+
+        # Skip rows with empty utterance number
+        if not utt:
             continue
 
         # Filter experimenter utterances
         if utt in experimenter_utts:
             continue
 
-        try:
-            if float(isunum) <= 0:
+        # Check if ISUnum is a positive number; skip if not
+        if isunum:
+            try:
+                if float(isunum) <= 0:
+                    continue
+            except ValueError:
                 continue
-        except ValueError:
-            continue
+            # Valid positive ISUnum
+        else:
+            # Empty ISUnum: use sentinel
+            isunum = ''
 
-        # Apply recoding (for yesesvi, others will pass through unchanged)
+        # Apply recoding (for yesesvi only, others pass through unchanged)
         utt = utt_recode.get(utt, utt)
 
         assignments[utt] = isunum
@@ -183,11 +201,11 @@ def main():
     print(f"Synchronic kappa: {kappa_syn:.2f}")
 
     warnings = []
-    if not (float("nan") == kappa_dia) and kappa_dia < 0.61:
+    if not math.isnan(kappa_dia) and kappa_dia < 0.61:
         warnings.append(
             f"WARNING: Diachronic kappa {kappa_dia:.2f} is below the 0.61 adequacy threshold."
         )
-    if not (float("nan") == kappa_syn) and kappa_syn < 0.61:
+    if not math.isnan(kappa_syn) and kappa_syn < 0.61:
         warnings.append(
             f"WARNING: Synchronic kappa {kappa_syn:.2f} is below the 0.61 adequacy threshold."
         )

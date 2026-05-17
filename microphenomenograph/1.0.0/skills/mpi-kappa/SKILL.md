@@ -26,11 +26,20 @@ Run the Python script:
 
 ```bash
 python microphenomenograph/1.0.0/scripts/kappa.py \
-    <dir1>/kev-diachronic-analysis.csv \
-    <dir2>/yesesvi-diachronic-analysis.csv \
-    <dir1>/kev-synchronic-analysis.csv \
-    <dir2>/yesesvi-synchronic-analysis.csv
+    <dir1>/*-diachronic-analysis.csv \
+    <dir2>/*-diachronic-analysis.csv \
+    <dir1>/*-synchronic-analysis.csv \
+    <dir2>/*-synchronic-analysis.csv
 ```
+
+**Default (no arguments):** Uses OSF bundled inter-rater data with filenames `kev-diachronic-analysis.csv`,
+`yesesvi-diachronic-analysis.csv`, etc. in `examples/inter-rater/`.
+
+**User-provided directories:** Should contain `*-diachronic-analysis.csv` and `*-synchronic-analysis.csv`
+files (analyst identifiers in place of `*`).
+
+**Note:** The script automatically detects yesesvi files by filename and applies recoding transformations
+only to those files. Kev files are loaded without recoding.
 
 Wait for exit code:
 - Exit 0: all kappa values ≥ 0.61
