@@ -74,6 +74,14 @@ Score categories:
 - 2–3 → "moderate"
 - 4–5 → "high"
 
+## Mode flag
+
+If `/mpi init --yolo` is passed, set `"mode": "yolo"` in manifest. Default is `"assisted"`.
+
+## Reasoning log initialisation
+
+Create `.mpi/reasoning.log` if it does not exist (empty file). Do not overwrite existing log.
+
 ## Re-run behaviour (idempotency)
 
 If `.mpi/project.json` already exists:
