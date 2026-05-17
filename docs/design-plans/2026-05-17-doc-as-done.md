@@ -6,7 +6,7 @@ This design introduces a "Documentation-as-Done Contract" — a disciplined rule
 
 The driving motivation is a class of failures observed in the current pipeline where subagents returned analysis content through conversation context rather than writing it to disk themselves, creating fragile implicit assumptions about who persists what. The fix gives both subagents (`mpi-analyst` and `mpi-cross-analyst`) `Write` and `Bash` tool grants so they can self-persist artifacts and call the helper directly, collapsing their return value from a large JSON blob to a short status string (`OK` or `ERROR`). Every generative substep also gains an explicit anti-fabrication rule: if upstream artifacts are missing or malformed the substep must return an error rather than synthesizing plausible-looking replacement content. Schema validation inside the helper catches field-name drift (the `idu_name` vs. `title` class of bug) at write time rather than silently propagating it.
 
-Two granularity decisions distinguish this design from the previous stage-level model. First, the unit of "step" is the methodology's natural **substep**, not a stage — diachronic decomposes into segment / DU / refined-DU / phases; synchronic into thematic-groups / ISUs / structure per phase; generic-diachronic into compare / GDUs / structure; generic-synchronic into SSS-grouping / GSS-definition per GDU. This matches the granularity used by the µ-PATH pipeline (Wordweaver-EH/upath) and enables substep-grained resume after partial failures. Second, every LLM-invoking substep writes a **prompt-capture artifact** (`<scope>-<stage>.<substep>.prompt.json`) containing the exact prompt, response, model id, finish reason, and token counts. Audit events reference this file by path so any analytic decision can be replayed offline. Fabrication becomes detectable by replay rather than merely rule-violating.
+Three granularity and fidelity decisions distinguish this design from the previous stage-level model. First, the unit of "step" is the methodology's natural **substep**, not a stage — and the substep names follow manual_kev.md (Sheldrake & Dienes 2025) literally rather than the µ-PATH pipeline (Wordweaver-EH/upath, which encodes a different and less-simplified procedure). Diachronic decomposes into criteria-grouping → criteria-revision → IDU-naming-ordering with no sub-phase identification (the manual explicitly excludes it). Synchronic decomposes into theme-grouping-within-IDU → ISU-naming → ISU-2nd-level-grouping, iterated **per IDU**. Generic and global stages preserve the manual's IV-category × event × generic-IDU worksheet structure. Second, every LLM-invoking substep writes a **prompt-capture artifact** (`<scope>-<stage>.<substep>.prompt.json`) containing the exact prompt, response, model id, finish reason, and token counts. Audit events reference this file by path so any analytic decision can be replayed offline; fabrication becomes detectable by replay rather than merely rule-violating. Third, Cohen's κ is promoted from status utility to **methodological gate** — cross-participant stages refuse to run unless an independent second-analyst pass has been completed and `kappa > 0.6`, mirroring the manual's training-and-comparison requirement.
 
 ## Definition of Done
 
@@ -15,8 +15,10 @@ Two granularity decisions distinguish this design from the previous stage-level 
 3. Per-analytic-unit decisions (each IDU/ISU coding call, manifest mutation, commit, flag) are logged to a structured `.mpi/audit.jsonl`; `.mpi/reasoning.log` is rendered on demand from the JSONL by `mpi_step.py render`.
 4. An end-to-end pipeline test runs `/mpi all` on a tiny fixture corpus and asserts every expected on-disk artifact lands.
 5. Downstream skills fail-fast when upstream artifacts are missing/malformed — never synthesize replacements.
-6. **Step granularity matches the methodology's natural substeps.** Diachronic decomposes into segment → DU → refined-DU → phase identification (4 substeps); synchronic into thematic groups → ISUs → structure (3 substeps, per phase); generic-diachronic into RDU compare → GDU clustering → generic structure (3 substeps); generic-synchronic into SSS-grouping → GSS-definition (2 substeps, per GDU). Each substep closes its own four-part transaction.
-7. **Every LLM call is captured as a replayable artifact.** Each substep that invokes an LLM writes `analyses/pNsN-<substep>.prompt.json` containing the exact prompt, response, model id, finish reason, and token counts. Audit events reference this file by path so the analytic decision can be replayed offline.
+6. **Step granularity matches the manual_kev.md (Sheldrake & Dienes 2025) simplified procedure.** Diachronic decomposes into criteria-grouping → criteria-revision → IDU-naming-ordering (3 substeps; no sub-phase identification — the manual explicitly excludes it). Synchronic decomposes into theme-grouping-within-IDU → ISU-naming → ISU-2nd-level-grouping (3 substeps, iterated **per IDU**). Generic diachronic decomposes into participant-row-assembly → group-coding → pattern-identification (3 substeps, scoped per IV category). Generic synchronic operates on worksheets per (event × IV-category × generic-IDU-of-interest) with worksheet-assembly → ISU-2nd-level-grouping (2 substeps per worksheet). Global synchronic groups ISUs across events per (generic-IDU × IV-category). Hypothesis generation is one global substep. Each substep closes its own four-part transaction.
+7. **Every LLM call is captured as a replayable artifact.** Each substep that invokes an LLM writes `analyses/<scope>-<stage>.<substep>.prompt.json` containing the exact prompt, response, model id, finish reason, and token counts. Audit events reference this file by path so the analytic decision can be replayed offline.
+
+8. **Cohen's κ is a methodological gate, not a status utility.** Per manual_kev.md, both diachronic and synchronic results must achieve κ > 0.6 against an independent second analyst before any cross-participant stage may run. The pipeline enforces this: the `kappa_gate` stage produces an `independent_analyst` artifact (alternate-model or alternate-prompt-variant analysis) and an `agreement_computation` artifact (κ value with confidence interval); cross-participant stages refuse to start if `kappa_gate.status != "passed"` in the manifest.
 
 ## Acceptance Criteria
 
@@ -72,8 +74,8 @@ Two granularity decisions distinguish this design from the previous stage-level 
 - **doc-as-done.AC10.1 Success:** The manifest's per-participant `stages.<stage>` entry contains a `substeps: {<substep>: {status, output_paths[]}}` map; stage `status` is derived from substep statuses (all done → done; any flagged → flagged; any error → error).
 - **doc-as-done.AC10.2 Success:** `mpi_step.py close --substep <S2>` enforces the substep DAG — closing `diachronic.refined_du` is rejected if `diachronic.du` is not `done`.
 - **doc-as-done.AC10.3 Success:** Each (stage, substep) pair has its own schema in `_mpi_schemas.py`; helper invokes the schema matching the `--substep` flag.
-- **doc-as-done.AC10.4 Success:** `agents/mpi-analyst.md` Persistence subsection enumerates all 7 mpi-analyst substeps (4 diachronic + 3 synchronic) with per-substep artifact paths.
-- **doc-as-done.AC10.5 Success:** `agents/mpi-cross-analyst.md` Persistence subsection enumerates all 7 cross-analyst substeps (3 generic_diachronic + 2 generic_synchronic per GDU + global_synchronic + hypothesis).
+- **doc-as-done.AC10.4 Success:** `agents/mpi-analyst.md` Persistence subsection enumerates all 6 mpi-analyst substeps (3 diachronic per participant + 3 synchronic per IDU) with per-substep artifact paths and the manual-native substep names (`criteria_grouping`, `criteria_revision`, `idu_naming_ordering`, `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping`).
+- **doc-as-done.AC10.5 Success:** `agents/mpi-cross-analyst.md` Persistence subsection enumerates all 8 cross-analyst substeps (3 generic_diachronic per IV category + 2 generic_synchronic per worksheet cell + global_synchronic + hypothesis + the kappa gate's `independent_analyst` half) with the manual-native names (`participant_row_assembly`, `group_coding`, `pattern_identification`, `worksheet_assembly`, `isu_second_level_grouping`).
 - **doc-as-done.AC10.6 Success:** Every SKILL.md Closure subsection enumerates its substeps and the responsible actor for each.
 
 ### doc-as-done.AC11: Every LLM call is captured as a replayable artifact
@@ -81,6 +83,16 @@ Two granularity decisions distinguish this design from the previous stage-level 
 - **doc-as-done.AC11.2 Failure:** A `close` invocation for an LLM-invoking substep without `--prompt-artifact` is rejected with a named error.
 - **doc-as-done.AC11.3 Failure:** A malformed `prompt.json` (missing required keys, wrong schema_version) is rejected at pre-check time; manifest unchanged.
 - **doc-as-done.AC11.4 Success:** Each audit event for an LLM-invoking substep carries `mpi.prompt_artifact_path` pointing at the on-disk prompt.json.
+
+### doc-as-done.AC12: Manual-native methodology fidelity
+- **doc-as-done.AC12.1 Success:** Synchronic substeps iterate **per IDU within a participant**, not per phase. There is no `diachronic.phases` substep, no `diachronic.du`, no `diachronic.refined_du`, no `generic_synchronic.sss_grouping`, no `generic_synchronic.gss_definition`. Substep names match manual_kev.md verbatim.
+- **doc-as-done.AC12.2 Success:** Synchronic schema preserves three distinct fields per ISU row: `criteria` (string), `isu_name` (string), `isu_second_level_of_abstraction` (string or empty). Generic-synchronic and global-synchronic schemas preserve `isu_second_level_of_abstraction` as a distinct column through aggregation.
+- **doc-as-done.AC12.3 Success:** If `synchronic.theme_grouping_within_idu` flags `temporal_order_within_idu: true` for a given IDU, the orchestrator schedules and the agent re-closes `diachronic.criteria_revision` for that participant; the manifest records the return edge as an `idu_split_after_synchronic` audit event with both substep span_ids referenced.
+
+### doc-as-done.AC13: Kappa is a methodological gate
+- **doc-as-done.AC13.1 Success:** `kappa_gate.independent_analyst` substep produces a second independent analysis (alternate model or alternate prompt variant) under `analyses/independent/<scope>-<stage>.{json,md,prompt.json}` for each gated stage (diachronic, synchronic).
+- **doc-as-done.AC13.2 Success:** `kappa_gate.agreement_computation` substep emits a JSON artifact containing `{kappa: float, ci_lower, ci_upper, n_units, outcome: "passed"|"failed"}` where `outcome = "passed"` iff `kappa > 0.6`; the manifest's `kappa_gate.<stage>.outcome` mirrors this value.
+- **doc-as-done.AC13.3 Failure:** Any cross-participant skill invoked while `kappa_gate.<upstream_stage>.outcome != "passed"` exits with a named ERROR and produces zero artifacts; the manifest is unchanged.
 
 ## Glossary
 
@@ -102,32 +114,45 @@ Two granularity decisions distinguish this design from the previous stage-level 
 - **Substep**: The methodology's natural unit of analytic work, finer than a stage. E.g., `diachronic` decomposes into `segment`, `du`, `refined_du`, `phases`. Substep IDs follow the form `<stage>.<substep>`. Each substep closes its own four-part transaction and is independently resumable.
 - **Substep DAG**: The directed graph of substep prerequisites (e.g., `diachronic.refined_du` requires `diachronic.du: done`). Encoded in `_mpi_schemas.py` and enforced by `mpi_step.py close` pre-checks.
 - **Prompt-capture artifact (`.prompt.json`)**: Per-substep file containing the exact LLM prompt, response, model id, finish reason, and token counts. Enables offline replay of any analytic decision; fabrication becomes detectable by comparison rather than only by rule.
-- **µ-PATH (Wordweaver-EH/upath)**: A same-domain microphenomenological analysis pipeline whose substep granularity (P1.1 / P1.2 / P1.3 / P1.4 etc.) and per-step JSON-output convention informed this design's substep model.
+- **µ-PATH (Wordweaver-EH/upath)**: A same-domain microphenomenological analysis pipeline whose substep granularity and per-step JSON-output convention inspired this design's substep model. µ-PATH itself encodes the Valenzuela-Moguillansky & Vásquez-Rosati 2019 procedure, which differs from manual_kev.md (used here) in important ways — µ-PATH produces phases/sub-phases and DU/refined-DU/SSS/GSS outputs that this manual deliberately excludes.
+- **manual_kev.md**: The Sheldrake & Dienes (2025) simplified procedure used as this pipeline's source of truth. Defines IDU, ISU, ISU 2nd Level of Abstraction as the analytic columns; excludes diachronic sub-phase identification; requires Cohen's κ > 0.6 against an independent second analyst before relying on results.
+- **IDU 2nd Level of Abstraction grouping**: A substep that surveys ISUs within an IDU (or across IDUs in generic/global synchronic) for higher-level themes and assigns a 2nd-level name. Preserved as a distinct column throughout synchronic-family substeps.
+- **Kappa gate**: A methodological precondition for cross-participant stages. Produces an independent-analyst pass (alternate model or prompt variant) and a κ computation; cross-participant stages refuse to start unless `kappa > 0.6`.
+- **IDU-split-after-synchronic return edge**: A re-close of `diachronic.criteria_revision` triggered when a `synchronic.theme_grouping_within_idu` finding reveals temporal order within an IDU. Encoded as an `idu_split_after_synchronic` audit event linking the two substep span_ids.
 
 ## Architecture
 
 Every MPI pipeline step — whether executed by a subagent or by the orchestrator — closes by producing four artifacts atomically: an output file on disk, one or more audit events appended to `.mpi/audit.jsonl`, an atomic manifest mutation, and a single git commit binding the three together. A step that does not close all four is `pending` in the manifest. No partial credit; no implicit `done`.
 
-**Substep granularity.** The unit of "step" is the methodology's natural substep, not a stage. This matches the granularity used by the µ-PATH pipeline (Wordweaver-EH/upath) which splits diachronic into segment / DU / refined DU / phases, synchronic into thematic-groups / ISUs / structure per phase, and so on. Concretely:
+**Substep granularity (manual-native).** The unit of "step" is the substep named after the operation manual_kev.md actually prescribes. The µ-PATH pipeline (Wordweaver-EH/upath) inspired the *idea* of substep granularity but encodes a different methodology (Valenzuela-Moguillansky & Vásquez-Rosati 2019, with sub-phase identification and DU/refined-DU/SSS/GSS terminology). manual_kev.md is a deliberately simplified variant that **omits** sub-phase identification and uses IDU/ISU/ISU-2nd-level-of-abstraction as the analytic columns. The substep map below follows the manual literally.
 
 | Stage | Substeps | Iteration |
 |---|---|---|
 | `transcript_prep` | one | per participant |
-| `diachronic` | `segment`, `du`, `refined_du`, `phases` | per participant |
-| `synchronic` | `groups`, `isus`, `structure` | per participant × per phase |
-| `generic_diachronic` | `compare`, `gdus`, `structure` | global |
-| `generic_synchronic` | `sss_grouping`, `gss_definition` | global × per GDU |
-| `global_synchronic` | one | global |
+| `diachronic` | `criteria_grouping`, `criteria_revision`, `idu_naming_ordering` | per participant |
+| `synchronic` | `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping` | per participant × **per IDU** |
+| `kappa_gate` | `independent_analyst`, `agreement_computation` | per stage (diachronic, synchronic) |
+| `generic_diachronic` | `participant_row_assembly`, `group_coding`, `pattern_identification` | per IV category |
+| `generic_synchronic` | `worksheet_assembly`, `isu_second_level_grouping` | per (event × IV category × generic-IDU-of-interest) |
+| `global_synchronic` | one | per (generic-IDU × IV category) |
 | `hypothesis` | one | global |
 
-Substep IDs follow the form `<stage>.<substep>` (e.g., `diachronic.refined_du`). Each substep closes its own four-part transaction; failed substeps are resumable independently.
+Substep IDs follow the form `<stage>.<substep>` (e.g., `diachronic.idu_naming_ordering`). Each substep closes its own four-part transaction; failed substeps are resumable independently. The substep DAG enforces methodological order: `synchronic.theme_grouping_within_idu` per (participant × IDU) requires `diachronic.idu_naming_ordering` for that participant to be `done`; all cross-participant stages require `kappa_gate.agreement_computation` to be `done` with `outcome: passed` (κ > 0.6).
+
+**Important deviations from a stage-level model.** Synchronic iterates **per IDU within a participant**, not "per phase" — manual_kev.md does not produce phases. If synchronic work surfaces temporal order inside an IDU, the analyst returns to diachronic and splits the IDU (the manual prescribes this); the substep DAG supports the return-edge by allowing a `diachronic.criteria_revision` substep to be re-closed after `synchronic.theme_grouping_within_idu` flags a temporal-order-within-IDU finding. The manifest records this as a revision event (audit `event.action: idu_split_after_synchronic`).
 
 **Per-substep artifacts.** Each substep that produces analytic content writes three files into `analyses/`:
 - `<scope>-<stage>.<substep>.json` — structured output (the raw analyst result)
 - `<scope>-<stage>.<substep>.md` — human-readable spec-format markdown
 - `<scope>-<stage>.<substep>.prompt.json` — exact LLM prompt + response + model id + finish reason + token counts (replay artifact)
 
-Where `<scope>` is `pNsN` for per-participant work, `pNsN-phN` for per-phase synchronic substeps, `gduN` for per-GDU generic-synchronic substeps, and `global` for global substeps.
+Scope identifiers (`<scope>`):
+- `pNsN` — per-participant work (transcript_prep, diachronic substeps)
+- `pNsN-iduN` — per-IDU synchronic substeps (replaces an earlier draft's per-phase scoping; the manual is per-IDU)
+- `cat-<low|moderate|high>` — per-IV-category generic_diachronic substeps
+- `event<E>-cat-<C>-gidu<G>` — per (event × IV category × generic-IDU-of-interest) for generic_synchronic worksheets
+- `gidu<G>-cat-<C>` — per (generic-IDU × IV category) for global_synchronic
+- `global` — for hypothesis and stage-level kappa_gate
 
 **Audit + reasoning sinks.** `.mpi/audit.jsonl` is the source of truth (ECS-flavoured JSON, one event per analytic decision; every event references the `.prompt.json` path that produced it). `.mpi/reasoning.log` is *derived* on demand by `mpi_step.py render`, eliminating the drift mode where one sink lags the other.
 
@@ -151,9 +176,11 @@ Investigation found 10 skills, 2 subagents, 1 command, and 3 scripts under `micr
 
 This design unifies the above into one contract executed by one helper, called from every skill in the same way. The helper itself follows the existing atomic-write pattern from `mpi-init` (write tmp → `os.replace`). Audit event field naming follows ECS / OpenTelemetry conventions (`event.kind`, `event.action`, `event.outcome`; `trace_id` + `span_id`; namespaced `mpi.*` payload).
 
+The substep map follows manual_kev.md (Sheldrake & Dienes 2025) literally. An earlier draft of this design borrowed substep names from the µ-PATH pipeline (Wordweaver-EH/upath), but that pipeline encodes the Valenzuela-Moguillansky & Vásquez-Rosati 2019 procedure — a different, less-simplified methodology that produces phases/sub-phases, DU/refined-DU, and SSS/GSS outputs which manual_kev.md explicitly excludes. The current substep names (`criteria_grouping`, `idu_naming_ordering`, `theme_grouping_within_idu`, `isu_second_level_grouping`, etc.) are the operations the manual prescribes verbatim. ISU and ISU 2nd Level of Abstraction remain distinct analytic columns throughout, preserved by the per-stage schemas.
+
 ## Implementation Phases
 
-This design has **12 phases** total. The writing-plans skill limits implementation plans to 8 phases — Phases 1–8 form the first implementation plan, Phases 9–12 the second. See Additional Considerations for sequencing.
+This design has **13 phases** total. The writing-plans skill limits implementation plans to 8 phases — Phases 1–8 form the first implementation plan, Phases 9–13 the second. See Additional Considerations for sequencing.
 
 <!-- START_PHASE_1 -->
 ### Phase 1: Helper CLI scaffolding
@@ -211,7 +238,7 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 
 **Components:**
 - `microphenomenograph/1.0.0/scripts/_mpi_schemas.py` — expanded module exporting one schema per `(stage, substep)`. Schemas use plain Python dicts (no jsonschema dep); fields enumerate required keys, allowed types, and value bounds.
-- Coverage: `transcript_prep` (one); `diachronic.{segment,du,refined_du,phases}`; `synchronic.{groups,isus,structure}`; `generic_diachronic.{compare,gdus,structure}`; `generic_synchronic.{sss_grouping,gss_definition}`; `global_synchronic`; `hypothesis`.
+- Coverage: `transcript_prep`; `diachronic.{criteria_grouping, criteria_revision, idu_naming_ordering}`; `synchronic.{theme_grouping_within_idu, isu_naming, isu_second_level_grouping}` iterated per IDU; `kappa_gate.{independent_analyst, agreement_computation}` per gated stage; `generic_diachronic.{participant_row_assembly, group_coding, pattern_identification}` per IV category; `generic_synchronic.{worksheet_assembly, isu_second_level_grouping}` per (event × IV category × generic-IDU); `global_synchronic`; `hypothesis`. Schemas preserve `criteria`, `isu_name`, `isu_second_level_of_abstraction` as distinct fields throughout synchronic-family substeps.
 - Validator function `validate_units(stage, substep, payload) -> list[Error]` returns named errors on missing required keys, unknown keys (strict mode), bad types, out-of-range values, or schema-version mismatch.
 - Test cases: each schema accepts a canonical positive fixture and rejects a curated set of malformed fixtures (drift names, type errors, range errors).
 
@@ -259,7 +286,7 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phase 2, Phase 4, Phase 5.
 
-**Done when:** Agent declares `Read, Write, Bash`; the Persistence subsection enumerates all 7 mpi-analyst substeps (4 diachronic + 3 synchronic per phase); fixture-driven test exercises one diachronic substep end-to-end producing all three artifacts plus a clean `close`. Verifies `doc-as-done.AC1.4`, `doc-as-done.AC1.5`, `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.4`.
+**Done when:** Agent declares `Read, Write, Bash`; the Persistence subsection enumerates all 6 mpi-analyst substeps (3 diachronic per participant + 3 synchronic per IDU); fixture-driven test exercises one diachronic substep end-to-end producing all three artifacts plus a clean `close`. The IDU-split-after-synchronic return edge (re-close `diachronic.criteria_revision` after a `synchronic.theme_grouping_within_idu` finding) is exercised in a separate fixture. Verifies `doc-as-done.AC1.4`, `doc-as-done.AC1.5`, `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.4`, `doc-as-done.AC12.1`.
 <!-- END_PHASE_6 -->
 
 <!-- START_PHASE_7 -->
@@ -269,7 +296,7 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 
 **Components:**
 - `microphenomenograph/1.0.0/agents/mpi-cross-analyst.md` — `tools:` changes from `Read` to `Read, Write, Bash`
-- "Persistence (mandatory before returning)" subsection enumerates: `generic_diachronic.{compare,gdus,structure}` (global scope); `generic_synchronic.{sss_grouping,gss_definition}` (per-GDU scope); `global_synchronic` (global); `hypothesis` (global)
+- "Persistence (mandatory before returning)" subsection enumerates: `generic_diachronic.{participant_row_assembly, group_coding, pattern_identification}` per IV category; `generic_synchronic.{worksheet_assembly, isu_second_level_grouping}` per (event × IV category × generic-IDU-of-interest); `global_synchronic` per (generic-IDU × IV category); `hypothesis` global. Pre-check inside every cross-participant invocation: verify `kappa_gate` is `passed` for the upstream stage; refuse to start otherwise.
 - Anti-fabrication clause added
 - Per-substep markdown table contract pinned in each cross-participant SKILL.md
 
@@ -286,8 +313,8 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 **Components:**
 - `skills/mpi-init/SKILL.md` — orchestrator closes (`init` is a single substep; artifact is the manifest itself plus the empty `audit.jsonl`/`reasoning.log`)
 - `skills/mpi-transcript-prep/SKILL.md` — orchestrator closes once per participant
-- `skills/mpi-diachronic/SKILL.md` — mpi-analyst closes 4 substeps per participant (`segment`, `du`, `refined_du`, `phases`), each with its own artifact set and its own commit
-- `skills/mpi-synchronic/SKILL.md` — mpi-analyst closes 3 substeps per phase per participant (`groups`, `isus`, `structure`); phase list comes from the participant's `diachronic.phases` output
+- `skills/mpi-diachronic/SKILL.md` — mpi-analyst closes 3 substeps per participant (`criteria_grouping`, `criteria_revision`, `idu_naming_ordering`); explicitly notes the manual's exclusion of sub-phase identification
+- `skills/mpi-synchronic/SKILL.md` — mpi-analyst closes 3 substeps **per IDU** per participant (`theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping`); IDU list comes from the participant's `diachronic.idu_naming_ordering` output; markdown table preserves the ISU and ISU 2nd Level of Abstraction columns distinctly. If a `theme_grouping_within_idu` close flags `temporal_order_within_idu: true`, the orchestrator schedules a return-edge `diachronic.criteria_revision` re-close for that participant before continuing.
 - Each SKILL.md table-format spec is updated to one row per substep (replaces today's single-stage table)
 - All existing yolo-commit prose blocks deleted in favour of the helper's canonical message
 
@@ -302,11 +329,12 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 **Goal:** Cross-participant SKILL.md files and read-only skills gain the same closure contract.
 
 **Components:**
-- `skills/mpi-generic-diachronic/SKILL.md` — mpi-cross-analyst closes 3 substeps globally (`compare`, `gdus`, `structure`)
-- `skills/mpi-generic-synchronic/SKILL.md` — mpi-cross-analyst closes 2 substeps per GDU (`sss_grouping`, `gss_definition`); GDU list comes from `generic_diachronic.gdus` output
-- `skills/mpi-global-synchronic/SKILL.md` — single substep, global scope, mpi-cross-analyst closes
-- `skills/mpi-hypothesis/SKILL.md` — single substep, global scope, mpi-cross-analyst closes
-- `skills/mpi-kappa/SKILL.md`, `skills/mpi-status/SKILL.md` — read-only; closure section explicitly states "no artifact close" but emits a `stage_phase: read` audit event for trace continuity
+- `skills/mpi-generic-diachronic/SKILL.md` — mpi-cross-analyst closes 3 substeps per IV category (`participant_row_assembly`, `group_coding`, `pattern_identification`); preserves the colour-coding-by-IV-level worksheet semantics from the manual
+- `skills/mpi-generic-synchronic/SKILL.md` — mpi-cross-analyst closes 2 substeps per (event × IV category × generic-IDU-of-interest) (`worksheet_assembly`, `isu_second_level_grouping`); generic-IDU-of-interest list comes from `generic_diachronic.pattern_identification` outputs
+- `skills/mpi-global-synchronic/SKILL.md` — single substep, scoped per (generic-IDU × IV category); ISU 2nd Level of Abstraction preserved as a distinct column
+- `skills/mpi-hypothesis/SKILL.md` — single substep, global; compares patterns across IV levels per the manual
+- `skills/mpi-kappa/SKILL.md` — **NOT read-only any more**; promoted to a methodological gate (see Phase 13). Closes 2 substeps per gated stage (`independent_analyst`, `agreement_computation`); cross-participant skills refuse to start if `kappa_gate` is not `passed`. Old "read-only" framing deleted.
+- `skills/mpi-status/SKILL.md` — read-only; closure section explicitly states "no artifact close" but emits a `stage_phase: read` audit event for trace continuity
 
 **Dependencies:** Phase 7.
 
@@ -361,14 +389,32 @@ This design has **12 phases** total. The writing-plans skill limits implementati
 **Done when:** `pytest` from repo root is green; both CLAUDE.md files reference `mpi_step.py`, the substep DAG, and the prompt-capture contract. Verifies `doc-as-done.AC9.1`, `doc-as-done.AC9.2`.
 <!-- END_PHASE_12 -->
 
+<!-- START_PHASE_13 -->
+### Phase 13: Kappa gate as methodological prerequisite
+
+**Goal:** Enforce manual_kev.md's κ > 0.6 requirement as a hard precondition for cross-participant analysis. `mpi-kappa` is promoted from status utility to methodological gate.
+
+**Components:**
+- `skills/mpi-kappa/SKILL.md` rewritten: defines 2 substeps per gated stage. `kappa_gate.independent_analyst` — produce a second independent analysis of the same transcripts/IDUs using an alternate model (e.g., haiku vs sonnet) or alternate prompt variant; writes artifacts to `analyses/independent/<scope>-<stage>.{json,md,prompt.json}`. `kappa_gate.agreement_computation` — invoke `scripts/kappa.py` to compute Cohen's κ between primary and independent; write a markdown report plus a JSON artifact with `{kappa: float, ci_lower, ci_upper, n_units, outcome: "passed"|"failed"}`; `outcome = passed` iff `kappa > 0.6`.
+- Manifest gains `kappa_gate: {diachronic: {status, outcome}, synchronic: {status, outcome}}`. Cross-participant skill orchestration pre-check refuses to start if either is not `passed`.
+- `mpi-cross-analyst` agent prompt updated to verify the gate before any substep close (Phase 7 references this).
+- `scripts/kappa.py` (already exists) extended only if needed to accept the new artifact layout.
+
+**Dependencies:** Phases 8 (per-participant skills produce primary analyses), 9 (cross-participant skills are gated by this).
+
+**Done when:** Running cross-participant skills with `kappa_gate` `pending` or `failed` produces a named ERROR and no artifacts. Running with `kappa_gate` `passed` proceeds normally. Verifies `doc-as-done.AC13.1`, `doc-as-done.AC13.2`, `doc-as-done.AC13.3`.
+<!-- END_PHASE_13 -->
+
 ## Additional Considerations
 
-**Implementation scoping: 12 phases require two implementation plans.** The writing-plans skill caps implementation plans at 8 phases. Recommended split:
+**Implementation scoping: 13 phases require two implementation plans.** The writing-plans skill caps implementation plans at 8 phases. Recommended split:
 
 - **Plan 1 (Phases 1–8): Foundation and per-participant pipeline.** Builds the helper CLI (Phases 1–3), pins per-substep schemas and prompt-capture contract (Phases 4–5), updates the mpi-analyst agent and per-participant skills (Phases 6, 8). After this plan, transcript_prep + diachronic + synchronic run end-to-end on the new contract; cross-participant skills still use the old contract.
-- **Plan 2 (Phases 7, 9–12): Cross-participant pipeline, anti-fabrication, tests, docs.** Updates the mpi-cross-analyst agent (Phase 7 can live here since it has no per-participant dependency beyond Phases 2/4/5) and cross-participant skills (Phase 9), sweeps anti-fabrication guards (Phase 10), adds E2E tests (Phase 11), reconciles docs (Phase 12).
+- **Plan 2 (Phases 7, 9–13): Cross-participant pipeline, kappa gate, tests, docs.** Updates the mpi-cross-analyst agent (Phase 7 has no per-participant dependency beyond Phases 2/4/5) and cross-participant skills (Phase 9), sweeps anti-fabrication guards (Phase 10), adds E2E tests (Phase 11), reconciles docs (Phase 12), promotes kappa to a methodological gate (Phase 13).
 
-The split keeps each plan focused and within the 8-phase budget. Plan 1 leaves the pipeline in a working but incomplete state — the cross-participant skills still pass JSON over the wire as today — so users should not run `/mpi all` between the two plans; only `/mpi diachronic` and `/mpi synchronic` are upgraded after Plan 1.
+The split keeps each plan focused and within the 8-phase budget. Plan 1 leaves the pipeline in a working but incomplete state — the cross-participant skills still pass JSON over the wire as today, and there is no κ gate — so users should not run `/mpi all` between the two plans; only `/mpi diachronic` and `/mpi synchronic` are upgraded after Plan 1.
+
+**Methodology lineage and fidelity check.** A prior draft of this design imported substep names from the µ-PATH pipeline (Wordweaver-EH/upath), which encodes Valenzuela-Moguillansky & Vásquez-Rosati 2019 — a different methodology that produces phases/sub-phases, DU/refined-DU, and SSS/GSS outputs. manual_kev.md is a deliberately simplified variant that omits sub-phase identification and uses IDU + ISU + ISU 2nd Level of Abstraction as its analytic columns. The current substep map is named after the operations manual_kev.md prescribes verbatim. A diff against the prior draft: dropped `diachronic.phases`, `diachronic.du`, `diachronic.refined_du`; renamed `synchronic.{groups,isus,structure}` → `synchronic.{theme_grouping_within_idu, isu_naming, isu_second_level_grouping}` and changed iteration from "per phase" to "per IDU"; replaced `generic_diachronic.{compare, gdus, structure}` with manual-native `participant_row_assembly`/`group_coding`/`pattern_identification`; replaced `generic_synchronic.{sss_grouping, gss_definition}` with `worksheet_assembly`/`isu_second_level_grouping`; promoted `mpi-kappa` from status utility to gated stage.
 
 **Shell-quoting risk.** Subagents invoking `python scripts/mpi_step.py close --units-json '<huge json blob>'` would be fragile on Windows. Mitigation: helper accepts `--units-json -` to read from stdin, and accepts `--units-json path/to/file.json` to read from disk. Agent prompt instructs the latter (write `analyses/pNsN-<stage>.units.json` first, then pass the path).
 
