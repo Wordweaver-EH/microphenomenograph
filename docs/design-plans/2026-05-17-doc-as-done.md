@@ -141,6 +141,7 @@ Every MPI pipeline step — whether executed by a subagent or by the orchestrato
 
 | Stage | Substeps | Iteration |
 |---|---|---|
+| `init` | `scan_transcripts`, `propose_study_config`, `confirm_study_config` | one-shot at init |
 | `transcript_prep` | one | per participant |
 | `diachronic` | `criteria_grouping`, `criteria_revision`, `idu_naming_ordering` | per participant |
 | `synchronic` | `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping` | per participant × **per IDU** |
@@ -153,6 +154,14 @@ Every MPI pipeline step — whether executed by a subagent or by the orchestrato
 Substep IDs follow the form `<stage>.<substep>` (e.g., `diachronic.idu_naming_ordering`). Each substep closes its own four-part transaction; failed substeps are resumable independently. The substep DAG enforces methodological order: `synchronic.theme_grouping_within_idu` per (participant × IDU) requires `diachronic.idu_naming_ordering` for that participant to be `done`; all cross-participant stages require `kappa_gate.agreement_computation` to be `done` with `outcome: passed` (κ > 0.6).
 
 **Important deviations from a stage-level model.** Synchronic iterates **per IDU within a participant**, not "per phase" — manual_kev.md does not produce phases. If synchronic work surfaces temporal order inside an IDU, the analyst returns to diachronic and splits the IDU (the manual prescribes this); the substep DAG supports the return-edge by allowing a `diachronic.criteria_revision` substep to be re-closed after `synchronic.theme_grouping_within_idu` flags a temporal-order-within-IDU finding. The manifest records this as a revision event (audit `event.action: idu_split_after_synchronic`).
+
+**Study configuration is user-driven, orchestrator-proposed.** IV categories (e.g., response-score bins `low=0–1, moderate=2–3, high=4–5`) and DV foci (e.g., `cognition, emotion, sensations, imagination`) are study-specific. Per manual_kev.md, the IV is paired with the experimental design (in the example study, a Likert score grouped into low/moderate/high) and the DV focus shapes interview probes and downstream analysis attention. The pipeline does NOT hardcode these. `init` runs three substeps:
+
+1. `init.scan_transcripts` (orchestrator) — copy transcripts into the run directory, parse headers (`Participant N, Suggestion N (Scored N/M)`), enumerate participants, suggestions, score values.
+2. `init.propose_study_config` (LLM, single subagent call) — given the parsed headers and a small sample of utterances per transcript, propose an IV scheme (categories + numeric ranges) and a DV focus list. Output schema: `{ivs: [{name, levels: [{name, range: [lo, hi]}]}], dvs: [{name, description, example_terms: [...]}], rationale: "..."}`.
+3. `init.confirm_study_config` (orchestrator + user) — present the proposal via `AskUserQuestion`; user accepts, edits, or replaces. Final answer persisted into the manifest under `study: {ivs, dvs}`. All downstream substeps that need to scope per (event × IV category) or filter by DV focus read from this manifest section.
+
+The manifest's `study` block is immutable after `init.confirm_study_config` closes; changing it requires a new run (or an explicit `mpi reconfigure` operation that resets all downstream stages to `pending`). DV foci shape `synchronic.isu_naming` (subagent is told which thematic dimensions matter most) and `hypothesis` (causal hypotheses are framed around DV variation by IV level).
 
 **Per-substep artifacts.** Each substep that produces analytic content writes three files into `analyses/`:
 - `<scope>-<stage>.<substep>.json` — structured output (the raw analyst result)
