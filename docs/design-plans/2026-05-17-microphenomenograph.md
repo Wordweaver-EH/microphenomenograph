@@ -33,7 +33,7 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **microphenomenograph.AC3.3 Success:** Confidence score 1–5 present for every IDU
 - **microphenomenograph.AC3.4 Failure:** IDUs with confidence < 3 or `flag_for_review=true` appear in `.mpi/review-queue.md`
 - **microphenomenograph.AC3.5 Edge:** Transcript with single IDU produces single-row table without error
-- **microphenomenograph.AC3.6 Integrity:** Phase 2 OSF transcripts produce diachronic outputs structurally consistent with Phase 2 reference analyses; no Phase 2 analysis file is present in the few-shot pool passed to `mpi-analyst`
+- **microphenomenograph.AC3.6 Integrity:** Cohen's κ between `mpi-analyst` diachronic outputs on Phase 2 transcripts and Phase 2 reference analyses (per-utterance Moment assignment, same computation as Phase 7) ≥ 0.4; no Phase 2 analysis file present in the few-shot pool (enforced by `examples/analyses/phase1/` path constraint)
 
 ### microphenomenograph.AC4: Synchronic analysis produces correct output
 - **microphenomenograph.AC4.1 Success:** Each diachronic output produces `analyses/pNsN-synchronic.md` with ISU table
