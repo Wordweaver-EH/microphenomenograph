@@ -4,7 +4,7 @@
 
 The microphenomenograph plugin implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin following ed3d conventions. It exposes a single `/mpi` slash command that orchestrates a seven-stage qualitative analysis workflow — from raw transcript preparation through diachronic coding, synchronic structuring, cross-participant aggregation, and causal hypothesis generation — with each stage also independently invokable as a named sub-skill.
 
-The core design decision is a two-agent architecture: `mpi-analyst` handles per-participant analysis using few-shot chain-of-thought prompting with structured JSON output, while `mpi-cross-analyst` handles cross-participant aggregation. Prompt fidelity follows patterns validated in LLM qualitative coding research (LATA/GATOS), favouring few-shot CoT over zero-shot. Two execution modes govern human involvement: *yolo* mode parallelises analysis via subagent fan-out, commits each completed stage to git, and logs all reasoning decisions; *assisted* mode gates progression on human confirmation after each participant. Pipeline state is tracked in a manifest file (`.mpi/project.json`), making runs resumable and incremental. Inter-rater reliability is computed in Python (Krippendorff's alpha) with no R dependency, and the real OSF dataset serves as both example data and acceptance test.
+The core design decision is a two-agent architecture: `mpi-analyst` handles per-participant analysis using few-shot chain-of-thought prompting with structured JSON output, while `mpi-cross-analyst` handles cross-participant aggregation. Prompt fidelity follows patterns validated in LLM qualitative coding research (LATA/GATOS), favouring few-shot CoT over zero-shot. Two execution modes govern human involvement: *yolo* mode parallelises analysis via subagent fan-out, commits each completed stage to git, and logs all reasoning decisions; *assisted* mode gates progression on human confirmation after each participant. Pipeline state is tracked in a manifest file (`.mpi/project.json`), making runs resumable and incremental. Inter-rater reliability is computed in Python (Cohen's kappa, matching the manual's `κ > .6` threshold) with no R dependency. The OSF dataset is split: Phase 1 analyses serve as few-shot examples; Phase 2 analyses are held out as acceptance test fixtures.
 
 ## Definition of Done
 
@@ -50,9 +50,9 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **microphenomenograph.AC6.3 Edge:** No cross-participant patterns found produces explicit "no hypothesis" output rather than empty file
 
 ### microphenomenograph.AC7: Kappa reports correct agreement
-- **microphenomenograph.AC7.1 Success:** Overall Krippendorff's α matches R reference output within ±0.01 on OSF inter-rater data
-- **microphenomenograph.AC7.2 Success:** Per-IDU α breakdown reported
-- **microphenomenograph.AC7.3 Failure:** α < 0.61 items flagged in output
+- **microphenomenograph.AC7.1 Success:** Overall Cohen's κ matches R reference output (`kappa.Rmd`) within ±0.01 on OSF inter-rater data
+- **microphenomenograph.AC7.2 Success:** Per-IDU κ breakdown reported
+- **microphenomenograph.AC7.3 Failure:** κ < 0.61 items flagged in output (manual threshold: κ > .6)
 - **microphenomenograph.AC7.4 Edge:** Missing utterance annotations in one analyst's file handled without crash
 
 ### microphenomenograph.AC8: Yolo mode is automated and resumable
@@ -77,8 +77,7 @@ The core design decision is a two-agent architecture: `mpi-analyst` handles per-
 - **Generic synchronic**: Cross-participant aggregation of ISUs; identifies structural themes recurring across participants.
 - **Global synchronic**: A further-abstracted synthesis of generic synchronic output referencing source participant and suggestion for every row; the final cross-participant structural stage before hypothesis generation.
 - **Pearl ladder rung**: A level of causal reasoning from Judea Pearl's causal hierarchy (association, intervention, counterfactual); used to classify the causal strength of each generated hypothesis.
-- **Krippendorff's alpha (α)**: A statistical measure of inter-rater reliability applicable to ordinal and nominal data; α < 0.61 is flagged as inadequate agreement.
-- **Cohen's kappa**: A related inter-rater reliability statistic referenced in the Definition of Done; superseded in the implementation by Krippendorff's alpha.
+- **Cohen's kappa (κ)**: The inter-rater reliability statistic used throughout this pipeline; computed via Python `sklearn.metrics.cohen_kappa_score`. The manual specifies κ > .6 as the adequacy threshold; items below that are flagged for review.
 - **CoT (Chain-of-Thought)**: A prompting technique instructing the model to produce explicit step-by-step reasoning before a final answer; used in the analyst agent to improve coding fidelity.
 - **Confidence-Diversity routing**: Items with confidence ≥ 3 and `flag_for_review=false` are auto-accepted; others are diverted to `.mpi/review-queue.md` for human review.
 - **OSF**: Open Science Framework; source of the bundled example/test dataset of real transcripts and completed analyses.
@@ -116,7 +115,9 @@ microphenomenograph/1.0.0/
     mpi-cross-analyst.md
   examples/
     transcripts/   (OSF Phase 1 & 2 .txt transcripts)
-    analyses/      (OSF completed analyses as few-shot examples)
+    analyses/
+      phase1/      (OSF Phase 1 completed analyses — few-shot prompt pool)
+      phase2/      (OSF Phase 2 completed analyses — held-out test fixtures only)
   CLAUDE.md
   README.md
 ```
@@ -193,7 +194,7 @@ The analysis prompt architecture follows patterns validated in published LLM qua
 
 **Components:**
 - `agents/mpi-analyst.md` — system prompt with role, few-shot example slot, CoT instruction, structured JSON output schema: `{ reasoning, idus: [{ idu_number, name, criteria, confidence, flag_for_review, utterance_numbers }] }`; synchronic variant adds `isus` array with `isu_name`, `isu_2nd_level` fields
-- `skills/mpi-diachronic/SKILL.md` — selects closest-length few-shot examples from `examples/analyses/`, invokes `mpi-analyst`, applies Confidence-Diversity routing (conf ≥ 3 and flag=false → accept; else → `.mpi/review-queue.md`), writes `analyses/pNsN-diachronic.md` markdown table, updates manifest
+- `skills/mpi-diachronic/SKILL.md` — selects closest-length few-shot examples from `examples/analyses/phase1/` only (Phase 2 OSF analyses are held out as test fixtures; never used as prompting examples), invokes `mpi-analyst`, applies Confidence-Diversity routing (conf ≥ 3 and flag=false → accept; else → `.mpi/review-queue.md`), writes `analyses/pNsN-diachronic.md` markdown table, updates manifest
 - `skills/mpi-synchronic/SKILL.md` — same pattern, operates on diachronic output, produces `analyses/pNsN-synchronic.md`
 - Yolo: parallel fan-out with git commit per completion; assisted: iterative with human confirmation
 
@@ -231,15 +232,15 @@ The analysis prompt architecture follows patterns validated in published LLM qua
 
 <!-- START_PHASE_7 -->
 ### Phase 7: Inter-Rater Reliability (Cohen's Kappa)
-**Goal:** Compare two analysts' outputs and report Krippendorff's alpha per stage and per IDU/ISU.
+**Goal:** Compare two analysts' outputs and report Cohen's κ per stage and per IDU/ISU, matching the manual's κ > .6 threshold.
 
 **Components:**
-- `skills/mpi-kappa/SKILL.md` — accepts two analysis directories, parses markdown tables by utterance number into label arrays, calls Python `krippendorff` package, reports overall α and per-IDU/ISU breakdown; flags α < 0.61
-- Python helper script `scripts/kappa.py` — handles label alignment, missing annotations, and per-theme breakdown
+- `skills/mpi-kappa/SKILL.md` — accepts two analysis directories, parses markdown tables by utterance number into label arrays, calls Python `sklearn.metrics.cohen_kappa_score`, reports overall κ and per-IDU/ISU breakdown; flags κ < 0.61
+- Python helper script `scripts/kappa.py` — handles label alignment, missing annotations, and per-IDU breakdown; output matches `Inter-rater Reliability/kappa.Rmd` reference
 
 **Dependencies:** Phase 4 (needs analysis outputs to compare)
 
-**Done when:** Kappa computed correctly against OSF inter-rater CSV data; per-IDU breakdown matches R reference output within ±0.01; α < 0.61 items correctly flagged; missing annotations handled without crash
+**Done when:** κ computed correctly against OSF `kappa.Rmd` reference within ±0.01; per-IDU breakdown produced; κ < 0.61 items flagged; missing annotations handled without crash
 <!-- END_PHASE_7 -->
 
 <!-- START_PHASE_8 -->
@@ -248,7 +249,7 @@ The analysis prompt architecture follows patterns validated in published LLM qua
 
 **Components:**
 - `commands/mpi.md` — complete subcommand routing for all stages + `all`
-- Yolo orchestration in `skills/mpi-diachronic/SKILL.md` and `skills/mpi-synchronic/SKILL.md` — parallel subagent dispatch, per-completion git commits, `.mpi/reasoning.log` append, terminal progress table
+- Yolo orchestration in `skills/mpi-diachronic/SKILL.md` and `skills/mpi-synchronic/SKILL.md` — in yolo mode, the skill emits multiple Agent tool calls in a single assistant turn (one `mpi-analyst` subagent per pending participant), collects results as they complete, writes each output file, appends to `.mpi/reasoning.log`, runs `git add + git commit`, and updates the manifest — all before returning to the user; Ctrl+C safety comes from manifest atomicity (each participant's record written only after its commit succeeds)
 - Git integration — `git add` + `git commit` per completed participant/stage; commit message format: `mpi: pNsN {stage} analysis`
 - Resume logic — `/mpi all` skips stages already marked `done` in manifest
 
@@ -258,6 +259,8 @@ The analysis prompt architecture follows patterns validated in published LLM qua
 <!-- END_PHASE_8 -->
 
 ## Additional Considerations
+
+**Train/test split:** OSF Phase 1 analyses (`examples/analyses/phase1/`, 7 participants × 3 suggestions) are the few-shot pool for `mpi-analyst` prompts. OSF Phase 2 analyses (`examples/analyses/phase2/`, 6 participants × 3 suggestions) are held out and used exclusively as acceptance test fixtures — never injected into prompts. This prevents contamination when verifying that the pipeline produces analyses structurally consistent with the reference dataset.
 
 **Transcript format tolerance:** Prep stage should handle minor real-world variations (double spaces, inconsistent speaker label capitalisation, BOM characters from Windows editors) without requiring manual fixes.
 
