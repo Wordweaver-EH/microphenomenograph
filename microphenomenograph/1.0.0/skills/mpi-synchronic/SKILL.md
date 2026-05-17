@@ -1,12 +1,12 @@
 ---
 name: mpi-synchronic
-description: Use when running /mpi synchronic — runs per-participant ISU synchronic analysis via mpi-analyst; requires diachronic stage done; routes low-confidence items to review queue
+description: Use when running /mpi synchronic — runs per-participant ISU synchronic analysis via mpi-analyst (zero-shot); requires diachronic stage done; routes low-confidence items to review queue
 user-invocable: false
 ---
 # mpi-synchronic
 
 Run synchronic ISU analysis for one or more participants. Requires diachronic stage to
-be `done`. Invokes `mpi-analyst` with the diachronic output as input.
+be `done`. Invokes `mpi-analyst` with the diachronic output as input zero-shot (no examples).
 
 ## Prerequisites
 
@@ -19,22 +19,13 @@ be `done`. Invokes `mpi-analyst` with the diachronic output as input.
 Participant key (optional): `pNsN`. If omitted, process all with `synchronic: pending`
 AND `diachronic: done`.
 
-## Few-shot example selection
-
-Same closest-length logic as mpi-diachronic, but using `examples/analyses/phase1/pNsN-synchronic.md` files. Never use phase2 files.
-
 ## Invoking mpi-analyst
 
 Invoke `mpi-analyst` with:
 1. Task type: `synchronic`
 2. The diachronic output (full content of `analyses/pNsN-diachronic.md`)
-3. Selected few-shot example(s):
-   ```
-   ## Example synchronic analysis (p3s2):
-   [full content of examples/analyses/phase1/p3s2-synchronic.md]
-   ```
-4. "Now produce synchronic analysis for:"
-5. The diachronic output
+3. "Now produce synchronic analysis for:"
+4. The diachronic output
 
 ## Parsing and routing
 

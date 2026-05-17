@@ -41,11 +41,8 @@ Runtime state file. Tracked keys per participant/suggestion:
 
 ## Examples
 
-- `examples/transcripts/` — OSF Phase 1 & 2 transcripts (real data)
-- `examples/analyses/phase1/` — OSF Phase 1 completed analyses (few-shot pool)
-- `examples/analyses/phase2/` — OSF Phase 2 completed analyses (held-out test fixtures)
-
-**Never inject phase2 analyses into prompts.** They are acceptance test fixtures only.
+- `examples/transcripts/` — OSF transcripts (real data)
+- `examples/analyses/` — OSF completed analyses (acceptance test fixtures only; never inject into prompts)
 
 ## Key files
 

@@ -45,6 +45,6 @@ Helper scripts live inside the plugin (`microphenomenograph/1.0.0/scripts/`):
 
 ## Conventions
 
-- Phase 1 examples (p1–p7) are the few-shot pool. Phase 2 (p8–p13) is held-out test data — never inject phase2 analyses into prompts.
+- Analysis is zero-shot — no examples are injected into prompts. OSF analyses in `examples/analyses/` are acceptance test fixtures only.
 - Plugin version is pinned in `microphenomenograph/1.0.0/`; bump the directory name for new versions, do not edit in place after release.
 - Freshness dates: always use `date +%Y-%m-%d` when updating CLAUDE.md files.

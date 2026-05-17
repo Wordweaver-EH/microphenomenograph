@@ -1,12 +1,12 @@
 ---
 name: mpi-diachronic
-description: Use when running /mpi diachronic — runs per-participant diachronic IDU analysis via mpi-analyst with few-shot CoT prompting; routes low-confidence items to review queue
+description: Use when running /mpi diachronic — runs per-participant diachronic IDU analysis via mpi-analyst (zero-shot); routes low-confidence items to review queue
 user-invocable: false
 ---
 # mpi-diachronic
 
 Run diachronic IDU analysis for one or more participants. Invokes `mpi-analyst` subagent
-with few-shot examples drawn from `examples/analyses/phase1/` only (never phase2).
+zero-shot (no examples).
 
 ## Prerequisites
 
@@ -17,33 +17,14 @@ with few-shot examples drawn from `examples/analyses/phase1/` only (never phase2
 
 Participant key (optional): `pNsN`. If omitted, process all with `diachronic: pending`.
 
-## Few-shot example selection
-
-Select 1–2 diachronic examples from `examples/analyses/phase1/` using closest-length
-matching:
-1. Count lines in the target transcript
-2. For each phase1 transcript in `examples/transcripts/`, count lines
-3. Select the example(s) whose line count is closest to the target
-4. If no example is within 20% of target length, use the longest available example
-5. Read the corresponding `examples/analyses/phase1/pNsN-diachronic.md`
-
-**NEVER use any file from `examples/analyses/phase2/` as a few-shot example.** Phase 2
-files are held-out acceptance test fixtures. Enforce by checking file path — if it
-contains `phase2`, skip it.
-
 ## Invoking mpi-analyst
 
 Invoke the `mpi-analyst` subagent with this context:
 
 1. The task type: `diachronic`
 2. The target transcript (full text)
-3. The selected few-shot example(s) labelled clearly:
-   ```
-   ## Example analysis (p3s2):
-   [full content of examples/analyses/phase1/p3s2-diachronic.md]
-   ```
-4. The instruction: "Now analyse the following transcript in the same style:"
-5. The target transcript text
+3. The instruction: "Analyse the following transcript:"
+4. The target transcript text
 
 ## Parsing the output
 
@@ -139,4 +120,4 @@ Append to `.mpi/reasoning.log`:
   calls in a single turn). Commit each result as it completes:
   `git add analyses/pNsN-diachronic.md && git commit -m "mpi: pNsN diachronic analysis"`
 
-**Verifies:** microphenomenograph.AC3.1, microphenomenograph.AC3.2, microphenomenograph.AC3.3, microphenomenograph.AC3.4, microphenomenograph.AC3.5, microphenomenograph.AC3.6 (phase2 exclusion)
+**Verifies:** microphenomenograph.AC3.1, microphenomenograph.AC3.2, microphenomenograph.AC3.3, microphenomenograph.AC3.4, microphenomenograph.AC3.5

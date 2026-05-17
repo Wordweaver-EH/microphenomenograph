@@ -143,11 +143,10 @@ After the Reasoning section, produce a `## Output` section containing valid JSON
 }
 ```
 
-## Few-shot examples
+## Zero-shot operation
 
-The calling skill will include worked examples below this instruction block. Study them
-carefully — they demonstrate the expected level of granularity, naming style, and criteria
-language. Replicate the analytical style of the examples.
+No worked examples are provided. Apply the methodology rules above directly to the
+transcript or diachronic output given.
 
 ## Important constraints
 

@@ -293,29 +293,6 @@ def verify_missing_diachronic_error(
         }
 
 
-def verify_phase2_exclusion() -> Dict[str, bool]:
-    """
-    Verify phase2 exclusion logic (simulated).
-
-    Skill spec states: "NEVER use any file from `examples/analyses/phase2/`".
-    This would be enforced at runtime by checking file paths.
-    """
-    # Simulate the check: if a path contains 'phase2', skip it
-    test_paths = [
-        "examples/analyses/phase1/p1s1-synchronic.md",
-        "examples/analyses/phase2/p2s1-synchronic.md",
-        "examples/analyses/phase1/p3s2-synchronic.md",
-    ]
-
-    phase2_found = any("phase2" in path for path in test_paths)
-    phase1_found = any("phase1" in path for path in test_paths)
-
-    return {
-        "phase2_files_detected": phase2_found,
-        "phase2_would_be_skipped": True,  # Enforced by the logic
-        "phase1_files_available": phase1_found,
-    }
-
 
 def verify_single_idu_edge_case(diachronic_output: str) -> Dict[str, bool]:
     """
@@ -429,16 +406,8 @@ def run_test_suite() -> bool:
     should_proceed = not prerequisite_check2.get("should_error")
     print(f"  {'PASS' if should_proceed else 'FAIL'}: Should proceed when diachronic done")
 
-    # Test 5: Phase2 exclusion logic
-    print("\n[TEST 5] Phase2 Exclusion Logic (Simulated)")
-    print("-" * 70)
-    phase2_check = verify_phase2_exclusion()
-    print(f"  Phase2 files detected in pool: {phase2_check.get('phase2_files_detected')}")
-    print(f"  Phase1 files available: {phase2_check.get('phase1_files_available')}")
-    print(f"  PASS: Phase2 would be skipped by path check")
-
-    # Test 6: Single-IDU edge case
-    print("\n[TEST 6] Single-IDU Edge Case")
+    # Test 5: Single-IDU edge case
+    print("\n[TEST 5] Single-IDU Edge Case")
     print("-" * 70)
     diachronic_single = create_sample_diachronic_output(single_idu=True)
     single_idu_check = verify_single_idu_edge_case(diachronic_single)
@@ -457,8 +426,8 @@ def run_test_suite() -> bool:
     if diachronic_multi_check.get("passes_edge_case") or diachronic_multi_check.get("is_single_idu") == False:
         print(f"  PASS: Multiple IDU case has N-1 hinges for N IDUs")
 
-    # Test 7: Confidence scoring present
-    print("\n[TEST 7] Confidence Scoring (AC4.1 implicit)")
+    # Test 6: Confidence scoring present
+    print("\n[TEST 6] Confidence Scoring (AC4.1 implicit)")
     print("-" * 70)
     rows = parse_markdown_table(synchronic_multi)
     confidence_present = all("Confidence" in str(row) for row in rows)

@@ -16,7 +16,7 @@ Microphenomenological Interview (MPI) analysis pipeline.
 
 | Subcommand | Description | Skill |
 |---|---|---|
-| `init` | Scan transcripts/, parse headers, write manifest | mpi-init |
+| `init [--transcripts <path>]` | Copy transcripts from `<path>`, parse headers, write manifest | mpi-init |
 | `status` | Show pipeline progress table | mpi-status |
 | `transcript-prep [pNsN]` | Normalise transcript(s) | mpi-transcript-prep |
 | `diachronic [pNsN]` | Run IDU analysis (per-participant) | mpi-diachronic |
@@ -27,6 +27,19 @@ Microphenomenological Interview (MPI) analysis pipeline.
 | `hypothesis` | Generate causal research hypotheses | mpi-hypothesis |
 | `kappa [dir1] [dir2]` | Compute Cohen's κ inter-rater reliability | mpi-kappa |
 | `all` | Run full pipeline (respects mode setting) | orchestration logic |
+
+## Options
+
+| Flag | Applies to | Description |
+|---|---|---|
+| `--yolo` | `init`, `all`, per-stage subcommands | Automated parallel execution; no human confirmation |
+| `--transcripts <path>` | `init` | Source directory to copy transcripts from before initialising |
+
+**Example:**
+```
+/mpi init --yolo --transcripts "osf-archive/Phase 1/transcripts"
+/mpi all --yolo
+```
 
 ## Mode
 

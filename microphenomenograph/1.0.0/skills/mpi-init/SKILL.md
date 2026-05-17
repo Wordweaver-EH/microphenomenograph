@@ -5,8 +5,19 @@ user-invocable: false
 ---
 # mpi-init
 
-Scan all `.txt` files in `transcripts/` (in the current working directory), parse their
-headers, and write or update `.mpi/project.json`.
+Scan all `.txt` files in a source transcript directory, copy them into `transcripts/`
+(in the current working directory), parse their headers, and write or update `.mpi/project.json`.
+
+## Source directory
+
+Accept an optional `--transcripts <path>` argument pointing to the source transcript
+directory. If provided:
+1. Create `transcripts/` in CWD if it does not exist
+2. Copy all `.txt` files from `<path>` into `transcripts/` (overwrite if already present)
+3. Proceed with scanning `transcripts/` as normal
+
+If `--transcripts` is omitted, scan `transcripts/` in the CWD directly (legacy behaviour
+— assumes transcripts are already present).
 
 ## Header format
 
@@ -97,14 +108,15 @@ This means running init twice never resets completed work.
 
 ## Steps
 
-1. Create `.mpi/` if not present
-2. Check for existing `.mpi/project.json` and load it if present
-3. List all `.txt` files in `transcripts/`
-4. For each file, read line 1 and parse the header regex
+1. If `--transcripts <path>` was given: create `transcripts/` in CWD if absent, then copy all `.txt` files from `<path>` into it
+2. Create `.mpi/` if not present
+3. Check for existing `.mpi/project.json` and load it if present
+4. List all `.txt` files in `transcripts/`
+5. For each file, read line 1 and parse the header regex
    - On parse failure: print error and skip this file (do not abort entire run)
-5. Build the participant entry (new or merge with existing)
-6. Write updated manifest to `.mpi/project.json`
-7. Report: "Initialised N participants. M already had completed stages (preserved)."
+6. Build the participant entry (new or merge with existing)
+7. Write updated manifest to `.mpi/project.json`
+8. Report: "Initialised N participants. M already had completed stages (preserved)."
 
 ## Output
 
