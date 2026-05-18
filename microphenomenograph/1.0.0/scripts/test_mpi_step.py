@@ -256,3 +256,234 @@ class TestLocalOnlyDefault:
         source = (SCRIPTS_DIR / "mpi_step.py").read_text()
         assert "remote add" not in source, \
             "mpi_step.py should never call 'git remote add'; found 'remote add' string"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: close transaction tests
+# ---------------------------------------------------------------------------
+
+import shutil
+
+
+def _init_run_dir(tmp_path: Path) -> Path:
+    """Create a git-initialised MPI run dir with identity set."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=run_dir, capture_output=True)
+    subprocess.run(["git", "config", "--local", "user.name", "Test"], cwd=run_dir, capture_output=True)
+    subprocess.run(["git", "config", "--local", "user.email", "t@t.com"], cwd=run_dir, capture_output=True)
+    mpi_step.main(["init", "--run", str(run_dir)])
+    return run_dir
+
+
+def _write_artifact(run_dir: Path, name: str, content: str = '{"ok": true}') -> Path:
+    p = run_dir / "analyses" / name
+    p.parent.mkdir(exist_ok=True)
+    p.write_text(content)
+    return p
+
+
+def _write_prompt_artifact(run_dir: Path, scope: str, stage: str, substep: str) -> Path:
+    p = run_dir / "analyses" / f"{scope}-{stage}.{substep}.prompt.json"
+    p.parent.mkdir(exist_ok=True)
+    p.write_text(json.dumps({
+        "schema_version": "2",
+        "actor": {"kind": "subagent", "name": "mpi-analyst",
+                  "agent_file_sha256": "abc123", "agent_file_path": "agents/mpi-analyst.md"},
+        "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+        "sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": None,
+                     "max_tokens": 8192, "seed": None, "stop_sequences": []},
+        "stage": stage, "substep": substep, "scope": scope,
+        "prompt": {"system": "...", "messages": [], "tools_available": []},
+        "response": {"raw_text": "...", "tool_calls": [], "parsed_units_path": ""},
+        "metadata": {"finish_reason": "end_turn",
+                     "usage": {"input_tokens": 0, "output_tokens": 0,
+                               "cache_read_tokens": 0, "cache_write_tokens": 0},
+                     "duration_ms": 100, "timestamp": "2026-05-18T00:00:00Z",
+                     "anthropic_request_id": "req_xxx"},
+    }))
+    return p
+
+
+def _write_units_json(run_dir: Path, name: str, payload: dict) -> Path:
+    p = run_dir / name
+    p.write_text(json.dumps(payload))
+    return p
+
+
+VALID_CRITERIA_GROUPING_UNITS = {
+    "analysis_type": "diachronic",
+    "participant": "p1s1",
+    "reasoning_summary": "test",
+    "idus": [
+        {
+            "idu_number": 1, "idu_name": "Start", "moment": 1,
+            "criteria": "The utterances talk about starting.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1", "2"],
+            "hinge_to_next": None,
+        }
+    ],
+}
+
+
+class TestCloseHappyPath:
+    def test_close_criteria_grouping_succeeds(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1",
+            "--stage", "diachronic",
+            "--substep", "criteria_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "criteria grouped",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+    def test_close_writes_audit_events(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        audit = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        events = [json.loads(l) for l in audit if l.strip()]
+        actions = [e["event"]["action"] for e in events]
+        assert "close_attempted" in actions
+        assert "artifacts_validated" in actions
+        assert "audit_appended" in actions
+        assert "manifest_replaced" in actions
+        assert "git_commit_succeeded" in actions
+
+    def test_close_events_share_close_id(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        audit = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        events = [json.loads(l) for l in audit if l.strip()]
+        close_ids = {e["mpi"]["close_id"] for e in events if "close_id" in e.get("mpi", {})}
+        assert len(close_ids) == 1, f"Expected 1 close_id, got {close_ids}"
+
+    def test_close_updates_manifest_substeps(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        substep = manifest["participants"]["p1s1"]["stages"]["diachronic"]["substeps"]["criteria_grouping"]
+        assert substep["status"] == "done"
+        assert "close_id" in substep
+        assert substep.get("expected_action") == "git_commit_succeeded"
+        # No git_commit_sha in manifest (self-reference impossibility)
+        assert "git_commit_sha" not in substep
+
+
+class TestCloseFailures:
+    def test_missing_artifact_fails(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(run_dir / "nonexistent.json"),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_missing_manifest_fails(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        rc = mpi_step.main([
+            "close", "--actor", "x", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", "x.json",
+            "--units-json", "x.json", "--reason", "x",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_dag_prereq_enforced(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "idu_naming_ordering")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        # criteria_revision not done — close should fail
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "idu_naming_ordering",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_llm_substep_requires_prompt_artifact(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            # NO --prompt-artifact
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_manifest_unchanged_on_failure(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        manifest_before = (run_dir / ".mpi" / "project.json").read_text()
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        # Missing artifact
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(run_dir / "missing.json"),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        manifest_after = (run_dir / ".mpi" / "project.json").read_text()
+        assert manifest_before == manifest_after
