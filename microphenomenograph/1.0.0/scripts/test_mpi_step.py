@@ -939,3 +939,122 @@ class TestSchemaConvergenceField:
         }
         errs = validate_units("diachronic", "criteria_revision", bad_payload)
         assert any("decision" in str(e) for e in errs), [str(e) for e in errs]
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: prompt artifact validation tests
+# ---------------------------------------------------------------------------
+
+VALID_PROMPT_ARTIFACT = {
+    "schema_version": "2",
+    "actor": {
+        "kind": "subagent", "name": "mpi-analyst",
+        "agent_file_sha256": "abc123def456",
+        "agent_file_path": "agents/mpi-analyst.md",
+    },
+    "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+    "sampling": {
+        "temperature": 1.0, "top_p": 1.0, "top_k": None,
+        "max_tokens": 8192, "seed": None, "stop_sequences": [],
+    },
+    "stage": "diachronic", "substep": "criteria_grouping", "scope": "p1s1",
+    "prompt": {"system": "...", "messages": [], "tools_available": []},
+    "response": {"raw_text": "...", "tool_calls": [], "parsed_units_path": ""},
+    "metadata": {
+        "finish_reason": "end_turn",
+        "usage": {
+            "input_tokens": 100, "output_tokens": 50,
+            "cache_read_tokens": 0, "cache_write_tokens": 0,
+        },
+        "duration_ms": 1500,
+        "timestamp": "2026-05-18T10:00:00Z",
+        "anthropic_request_id": "req_abc123",
+    },
+}
+
+
+class TestPromptArtifactSchema:
+    def test_valid_prompt_artifact_accepted(self):
+        from _mpi_schemas import validate_prompt_artifact
+        errs = validate_prompt_artifact(VALID_PROMPT_ARTIFACT, check_agent_sha=False)
+        assert errs == [], [str(e) for e in errs]
+
+    def test_wrong_schema_version_rejected(self):
+        from _mpi_schemas import validate_prompt_artifact
+        bad = {**VALID_PROMPT_ARTIFACT, "schema_version": "1"}
+        errs = validate_prompt_artifact(bad, check_agent_sha=False)
+        assert any("schema_version" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_missing_actor_fields_rejected(self):
+        from _mpi_schemas import validate_prompt_artifact
+        bad_actor = {"kind": "subagent"}  # missing name, agent_file_sha256, agent_file_path
+        bad = {**VALID_PROMPT_ARTIFACT, "actor": bad_actor}
+        errs = validate_prompt_artifact(bad, check_agent_sha=False)
+        assert any("agent_file_sha256" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_missing_cache_tokens_rejected(self):
+        from _mpi_schemas import validate_prompt_artifact
+        bad_usage = {"input_tokens": 100, "output_tokens": 50}  # missing cache fields
+        bad_meta = {**VALID_PROMPT_ARTIFACT["metadata"], "usage": bad_usage}
+        bad = {**VALID_PROMPT_ARTIFACT, "metadata": bad_meta}
+        errs = validate_prompt_artifact(bad, check_agent_sha=False)
+        assert any("cache_read_tokens" in str(e) or "cache_write_tokens" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestClosePromptArtifactEnforcement:
+    def test_llm_substep_without_prompt_artifact_rejected(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            # NO --prompt-artifact
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_malformed_prompt_artifact_rejected(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        # Write a prompt.json missing required fields
+        bad_prompt = run_dir / "bad_prompt.json"
+        bad_prompt.write_text(json.dumps({"schema_version": "1", "actor": {}}))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(bad_prompt),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+        # Manifest must be unchanged — criteria_grouping substep must not be present
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert "criteria_grouping" not in manifest.get("participants", {}).get("p1s1", {}).get("stages", {}).get("diachronic", {}).get("substeps", {})
+
+    def test_valid_prompt_artifact_accepted_in_close(self, tmp_path):
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+        # Audit event must reference the prompt artifact path
+        audit = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        events = [json.loads(l) for l in audit if l.strip()]
+        audit_events = [e for e in events if e.get("event", {}).get("action") == "audit_appended"]
+        assert audit_events, "No audit_appended event found"
+        assert any(
+            e.get("mpi", {}).get("prompt_artifact_path") for e in events
+        ), "No prompt_artifact_path in any audit event"
