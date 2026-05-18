@@ -498,7 +498,72 @@ def cmd_close(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_render(args: argparse.Namespace) -> int:
-    raise NotImplementedError("render implemented in Phase 3")
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    audit_path = run_dir / ".mpi" / "audit.jsonl"
+
+    if not audit_path.exists():
+        print(f"ERROR audit_not_found: {audit_path}", file=sys.stderr)
+        return 1
+
+    out_path = Path(args.out) if args.out else run_dir / ".mpi" / "reasoning.log"
+
+    lines_in = audit_path.read_text(encoding="utf-8").splitlines()
+    rendered = []
+
+    for i, raw_line in enumerate(lines_in, start=1):
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            ev = json.loads(raw_line)
+        except json.JSONDecodeError:
+            rendered.append(f"MALFORMED:{i}: {raw_line}")
+            continue
+
+        # Apply filters
+        ts = ev.get("@timestamp", "")
+        if args.from_ts and ts < args.from_ts:
+            continue
+        if args.to_ts and ts > args.to_ts:
+            continue
+
+        mpi = ev.get("mpi", {})
+        participant = mpi.get("participant_id", "")
+        stage = mpi.get("stage", "")
+        substep = mpi.get("substep", "")
+        action = ev.get("event", {}).get("action", "")
+        actor_name = ev.get("actor", {}).get("name", "")
+        reason = ev.get("reason", "")
+
+        if args.participant and participant != args.participant:
+            continue
+        if args.stage and stage != args.stage:
+            continue
+
+        # Format the line
+        stage_substep = f"{stage}.{substep}" if substep else stage
+        n_units = mpi.get("n_units", "")
+        n_flagged = mpi.get("n_flagged", "")
+        commit_part = ""
+
+        if action == "git_commit_succeeded":
+            sha = mpi.get("git_commit_sha", "")
+            commit_part = f" commit={sha[:7] if sha else '?'}"
+
+        parts = [f"[{ts}]", actor_name, participant, f"{stage_substep}:"]
+        detail = reason
+        if n_units != "":
+            detail += f". {n_units} units"
+            if n_flagged:
+                detail += f", {n_flagged} flagged"
+        detail += commit_part
+        parts.append(detail)
+
+        rendered.append(" ".join(parts))
+
+    output = "\n".join(rendered) + ("\n" if rendered else "")
+    atomic_write(out_path, output)
+    return 0
 
 
 # ---------------------------------------------------------------------------
