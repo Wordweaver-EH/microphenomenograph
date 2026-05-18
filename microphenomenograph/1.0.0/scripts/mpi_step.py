@@ -504,7 +504,63 @@ def cmd_render(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    raise NotImplementedError("verify implemented in Phase 2")
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    try:
+        manifest = _load_manifest(run_dir)
+    except FileNotFoundError as e:
+        print(f"ERROR manifest_not_found: {e}", file=sys.stderr)
+        return 1
+
+    audit_path = run_dir / ".mpi" / "audit.jsonl"
+    if not audit_path.exists():
+        print("ERROR audit_not_found", file=sys.stderr)
+        return 1
+
+    # Load all audit events
+    events = []
+    for line in audit_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+
+    # Build index: close_id -> git_commit_sha from git_commit_succeeded events
+    commit_by_close: dict[str, str] = {}
+    for ev in events:
+        if ev.get("event", {}).get("action") == "git_commit_succeeded":
+            cid = ev.get("mpi", {}).get("close_id")
+            sha = ev.get("mpi", {}).get("git_commit_sha")
+            if cid and sha:
+                commit_by_close[cid] = sha
+
+    failures = []
+    for participant, pdata in manifest.get("participants", {}).items():
+        for stage, sdata in pdata.get("stages", {}).items():
+            for substep, ssdata in sdata.get("substeps", {}).items():
+                if ssdata.get("status") != "done":
+                    continue
+                close_id = ssdata.get("close_id")
+                if not close_id:
+                    failures.append(f"{participant}/{stage}/{substep}: missing close_id in manifest")
+                    continue
+                sha = commit_by_close.get(close_id)
+                if not sha:
+                    failures.append(f"{participant}/{stage}/{substep}: no git_commit_succeeded event for close_id={close_id}")
+                    continue
+                # Verify the commit exists in git log
+                r = _git(["cat-file", "-t", sha], cwd=run_dir, check=False)
+                if r.stdout.strip() != "commit":
+                    failures.append(f"{participant}/{stage}/{substep}: commit sha {sha} not found in git")
+
+    if failures:
+        for f in failures:
+            print(f"FAIL {f}", file=sys.stderr)
+        return 1
+
+    print("OK all done substeps verified")
+    return 0
 
 
 # ---------------------------------------------------------------------------
