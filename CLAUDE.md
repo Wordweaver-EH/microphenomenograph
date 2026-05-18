@@ -1,6 +1,6 @@
 # microphenomenograph repo
 
-_Last updated: 2026-05-18_
+_Last updated: 2026-05-18 (design fb65db5; not yet implemented)_
 
 Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline implementing Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis.
 
@@ -20,6 +20,14 @@ Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline i
 ## Plugin contracts
 
 The plugin's own contracts (pipeline stages, data formats, manifest schema, execution modes) live in `microphenomenograph/1.0.0/CLAUDE.md`. Read that file before modifying plugin internals.
+
+**Documentation-as-Done contract.** Every pipeline step closes via `scripts/mpi_step.py` (transactional close protocol: artifact + audit event + manifest mutation + git commit, all keyed by `close_id`). See `docs/design-plans/2026-05-17-doc-as-done.md` (`fb65db5`) for the full design — 13 implementation phases split across two implementation plans; 34 acceptance criteria; transcript-span grounding mandatory; replay-grade prompt capture; bootstrap CIs for IRR (Krippendorff α + Cohen κ + αU block-bootstrap + ARI). Walkthrough at `docs/design-plans/2026-05-17-doc-as-done.html`.
+
+## Operational requirements
+
+**MPI runs need a dedicated git repo.** A 21-transcript study produces ~100–200 commits (one per substep close). The pipeline's helper `mpi_step.py` refuses by default to initialise inside a non-empty active development worktree — pre-commit hooks, GPG signing, CI triggers, and branch protections would each fire per close. Point `/mpi init --run <dir>` at an empty directory; the helper will `git init` there. To make MPI runs visible from a parent project repo, add the run directory as a **git submodule**, not as a nested directory.
+
+The helper sets in the run repo's local git config (never global): `core.autocrlf false`, `core.eol lf`, `core.hooksPath .git/hooks-disabled`, `commit.gpgsign false` (recommendation). Author identity is required (the helper refuses to invent one); set `user.name` and `user.email` locally per run if you don't have a global identity. The pipeline is local-only by default — never runs `git push` and never configures a remote.
 
 ## Tests
 
