@@ -234,3 +234,30 @@ class TestInitIdentityRequired:
         monkeypatch.setattr(mpi_step, "_git_identity_set", lambda cwd: False)
         rc = mpi_step.main(["init", "--run", str(run_dir)])
         assert rc != 0
+
+
+# ---------------------------------------------------------------------------
+# Static source inspection tests (AC33.7)
+# ---------------------------------------------------------------------------
+
+class TestLocalOnlyDefault:
+    def test_mpi_step_never_calls_git_push(self):
+        """AC33.7: mpi_step.py must never call 'git push' (static source check)."""
+        source = (SCRIPTS_DIR / "mpi_step.py").read_text()
+        # Check that the source does not contain the string "git push"
+        # (either as subprocess call or in a git command list)
+        assert '"push"' not in source, \
+            "mpi_step.py should never call 'git push'; found quoted 'push' string"
+        assert "'push'" not in source, \
+            "mpi_step.py should never call 'git push'; found quoted 'push' string"
+
+    def test_mpi_step_never_calls_git_remote_add(self):
+        """AC33.7: mpi_step.py must never call 'git remote add' (static source check)."""
+        source = (SCRIPTS_DIR / "mpi_step.py").read_text()
+        # Check that the source does not contain the string "remote add"
+        assert '"remote", "add"' not in source and "'remote', 'add'" not in source and \
+               '"add"' not in source.split("remote")[0:], \
+            "mpi_step.py should never call 'git remote add'"
+        # More targeted: no 'remote add' substring at all
+        assert "remote add" not in source, \
+            "mpi_step.py should never call 'git remote add'; found 'remote add' string"

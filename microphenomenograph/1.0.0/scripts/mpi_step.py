@@ -51,7 +51,7 @@ def _git_identity_set(cwd: Path) -> bool:
     return True
 
 
-def _git_is_nonemp_worktree(path: Path) -> bool:
+def _git_is_nonempty_worktree(path: Path) -> bool:
     """Return True if path is inside a non-empty git worktree."""
     r = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
@@ -79,7 +79,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     allow_nested = getattr(args, "allow_active_repo_nested", False)
 
     # Check for nesting in an active dev repo
-    if not allow_nested and _git_is_nonemp_worktree(run_dir):
+    if not allow_nested and _git_is_nonempty_worktree(run_dir):
         print(
             "ERROR run_inside_active_repo: MPI runs produce ~100-200 commits per study; "
             "point --run at an empty directory or use --allow-active-repo-nested",
