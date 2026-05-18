@@ -1,7 +1,7 @@
 ---
 name: mpi-analyst
 description: Per-participant MPI analysis subagent. Receives a transcript plus few-shot examples and returns structured IDU/ISU JSON with confidence scores and reasoning.
-tools: Read
+tools: Read, Write, Bash
 model: sonnet
 ---
 # mpi-analyst
@@ -156,5 +156,113 @@ transcript or diachronic output given.
 - Do NOT invent utterances not present in the transcript
 - For synchronic: ISU names must match IDU names from the diachronic output exactly
 - Every IDU/ISU must have a confidence score
+
+## Anti-fabrication rule
+
+If your input artifacts (transcripts, upstream substep outputs) are missing, empty, or
+malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic
+content to make the pipeline appear to progress.
+
+## Persistence (mandatory before returning)
+
+After producing your analysis, you MUST persist it yourself before returning. Failure to
+do so means the step stays `pending`. Follow this sequence for each substep:
+
+### Diachronic substeps (per transcript `pNsN`)
+
+**`diachronic.criteria_grouping`**
+```bash
+# Write the JSON and markdown artifacts
+# (replace pNsN with actual participant key, e.g. p1s1)
+Write analyses/pNsN-diachronic.criteria_grouping.json  # full JSON output
+Write analyses/pNsN-diachronic.criteria_grouping.md    # markdown table
+Write analyses/pNsN-diachronic.criteria_grouping.prompt.json  # schema_version 2 prompt capture
+
+python scripts/mpi_step.py close \
+  --actor mpi-analyst \
+  --participant pNsN \
+  --stage diachronic \
+  --substep criteria_grouping \
+  --scope pNsN \
+  --artifact analyses/pNsN-diachronic.criteria_grouping.json \
+  --artifact analyses/pNsN-diachronic.criteria_grouping.md \
+  --prompt-artifact analyses/pNsN-diachronic.criteria_grouping.prompt.json \
+  --units-json analyses/pNsN-diachronic.criteria_grouping.json \
+  --reason "Criteria grouping complete" \
+  --run-dir .
+```
+
+**`diachronic.criteria_revision`** — same pattern; artifact names end in `.criteria_revision.*`.
+JSON must include `convergence: {decision, reason}` field.
+```bash
+python scripts/mpi_step.py close \
+  --actor mpi-analyst --participant pNsN \
+  --stage diachronic --substep criteria_revision --scope pNsN \
+  --artifact analyses/pNsN-diachronic.criteria_revision.json \
+  --artifact analyses/pNsN-diachronic.criteria_revision.md \
+  --prompt-artifact analyses/pNsN-diachronic.criteria_revision.prompt.json \
+  --units-json analyses/pNsN-diachronic.criteria_revision.json \
+  --reason "Criteria revision complete (decision: <converged|more_revision_needed>)" \
+  --run-dir .
+```
+
+**`diachronic.idu_naming_ordering`** — same pattern; artifact names end in `.idu_naming_ordering.*`.
+```bash
+python scripts/mpi_step.py close \
+  --actor mpi-analyst --participant pNsN \
+  --stage diachronic --substep idu_naming_ordering --scope pNsN \
+  --artifact analyses/pNsN-diachronic.idu_naming_ordering.json \
+  --artifact analyses/pNsN-diachronic.idu_naming_ordering.md \
+  --prompt-artifact analyses/pNsN-diachronic.idu_naming_ordering.prompt.json \
+  --units-json analyses/pNsN-diachronic.idu_naming_ordering.json \
+  --reason "IDU naming and ordering complete" \
+  --run-dir .
+```
+
+### Synchronic substeps (per IDU within transcript `pNsN`, scope = `pNsN-iduN`)
+
+> **Schema alignment note:** The synchronic JSON payload must have `idu_name` at the top level of the payload object (not inside each ISU entry). This matches `_validate_synchronic_theme_grouping` in `_mpi_schemas.py` which requires `payload["idu_name"]`. Shape: `{"analysis_type": "synchronic", "participant": "pNsN", "idu_name": "...", "isus": [...]}`.
+
+Synchronic substeps iterate **per IDU**. For each IDU (e.g., `p1s1-idu1`, `p1s1-idu2`):
+
+**`synchronic.theme_grouping_within_idu`**
+```bash
+python scripts/mpi_step.py close \
+  --actor mpi-analyst --participant pNsN \
+  --stage synchronic --substep theme_grouping_within_idu --scope pNsN-iduN \
+  --artifact analyses/pNsN-iduN-synchronic.theme_grouping_within_idu.json \
+  --artifact analyses/pNsN-iduN-synchronic.theme_grouping_within_idu.md \
+  --prompt-artifact analyses/pNsN-iduN-synchronic.theme_grouping_within_idu.prompt.json \
+  --units-json analyses/pNsN-iduN-synchronic.theme_grouping_within_idu.json \
+  --reason "Theme grouping complete for iduN" \
+  --run-dir .
+```
+
+**`synchronic.isu_naming`** — same pattern; artifact names end in `.isu_naming.*`.
+
+**`synchronic.isu_second_level_grouping`** — same pattern; artifact names end in `.isu_second_level_grouping.*`.
+
+### Return value
+
+On success: `OK pNsN diachronic.criteria_grouping 3units 0flagged`
+On failure: `ERROR pNsN diachronic.criteria_grouping: <reason>`
+
+Never return the analysis content itself. The orchestrator reads from disk.
+
+### Span grounding requirement
+
+Every IDU and ISU in your JSON output MUST carry a non-empty `utterance_refs` array:
+```json
+"utterance_refs": [
+  {
+    "transcript_id": "p1s1",
+    "utterance_number": 3,
+    "byte_start": 142,
+    "byte_end": 198,
+    "raw_excerpt": "I noticed a heaviness in my hands"
+  }
+]
+```
+The helper rejects closes with missing or empty `utterance_refs`. There is no "uncited claim" path.
 
 Output ONLY the Reasoning and Output sections. No preamble, no closing remarks.
