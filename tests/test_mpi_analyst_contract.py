@@ -4,8 +4,11 @@ These are contract tests — they verify the files contain the required sections
 declarations without invoking any LLM.
 """
 from pathlib import Path
+import json
 import re
+import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -13,6 +16,12 @@ PLUGIN_ROOT = Path(__file__).parent.parent / "microphenomenograph" / "1.0.0"
 AGENT_FILE = PLUGIN_ROOT / "agents" / "mpi-analyst.md"
 DIACHRONIC_SKILL = PLUGIN_ROOT / "skills" / "mpi-diachronic" / "SKILL.md"
 SYNCHRONIC_SKILL = PLUGIN_ROOT / "skills" / "mpi-synchronic" / "SKILL.md"
+
+# Import mpi_step from the plugin's scripts directory
+_SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
+sys.path.insert(0, str(_SCRIPTS_DIR))
+import mpi_step
+from _mpi_atomic import atomic_write, load_or_create_run_id
 
 
 class TestAC6_1_AgentTools:
@@ -132,3 +141,154 @@ class TestAntiFabricationClause:
                "never generate placeholder" in content or \
                "Anti-fabrication" in content, \
             "Anti-fabrication rule not found in mpi-analyst.md"
+
+
+def _setup_run_dir(tmp_path: Path) -> Path:
+    """Create a git-initialised MPI run dir that passes init."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=run_dir, capture_output=True)
+    subprocess.run(["git", "config", "--local", "user.name", "Test"], cwd=run_dir, capture_output=True)
+    subprocess.run(["git", "config", "--local", "user.email", "t@test.com"], cwd=run_dir, capture_output=True)
+    mpi_step.main(["init", "--run", str(run_dir)])
+    return run_dir
+
+
+_VALID_CRITERIA_GROUPING_UNITS = {
+    "analysis_type": "diachronic",
+    "participant": "p1s1",
+    "reasoning_summary": "One IDU identified.",
+    "idus": [
+        {
+            "idu_number": 1, "idu_name": "Opening Moment", "moment": 1,
+            "criteria": "The utterances talk about the opening experience.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1", "2"],
+            "hinge_to_next": None,
+            "utterance_refs": [
+                {
+                    "transcript_id": "p1s1",
+                    "utterance_number": 1,
+                    "byte_start": 0,
+                    "byte_end": 20,
+                    "raw_excerpt": "I noticed something.",
+                }
+            ],
+        }
+    ],
+}
+
+_VALID_PROMPT_ARTIFACT_DATA = {
+    "schema_version": "2",
+    "actor": {
+        "kind": "subagent", "name": "mpi-analyst",
+        "agent_file_sha256": "fakefakefakefake",
+        "agent_file_path": "agents/mpi-analyst.md",
+    },
+    "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+    "sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": None,
+                 "max_tokens": 8192, "seed": None, "stop_sequences": []},
+    "stage": "diachronic", "substep": "criteria_grouping", "scope": "p1s1",
+    "prompt": {"system": "...", "messages": [], "tools_available": []},
+    "response": {"raw_text": "...", "tool_calls": [], "parsed_units_path": ""},
+    "metadata": {
+        "finish_reason": "end_turn",
+        "usage": {"input_tokens": 100, "output_tokens": 50,
+                  "cache_read_tokens": 0, "cache_write_tokens": 0},
+        "duration_ms": 800, "timestamp": "2026-05-18T10:00:00Z",
+        "anthropic_request_id": "req_e2e",
+    },
+}
+
+
+class TestAC1_6_AgentSelfPersistEndToEnd:
+    """
+    AC1.6: mpi-analyst writes artifacts itself before invoking mpi_step.py close.
+    This fixture simulates the agent workflow: write three files, then call close.
+    No LLM is invoked — we're testing the close contract, not the analysis.
+    """
+
+    def test_agent_workflow_writes_artifacts_then_closes(self, tmp_path):
+        run_dir = _setup_run_dir(tmp_path)
+        analyses = run_dir / "analyses"
+        analyses.mkdir()
+
+        scope = "p1s1"
+        stage = "diachronic"
+        substep = "criteria_grouping"
+
+        # Step 1: Agent writes JSON artifact
+        json_path = analyses / f"{scope}-{stage}.{substep}.json"
+        json_path.write_text(json.dumps(_VALID_CRITERIA_GROUPING_UNITS))
+
+        # Step 2: Agent writes MD artifact
+        md_path = analyses / f"{scope}-{stage}.{substep}.md"
+        md_path.write_text("# IDU Analysis\n\n| IDU | Criteria |\n|-----|----------|\n| Opening Moment | ... |\n")
+
+        # Step 3: Agent writes prompt-capture artifact
+        prompt_path = analyses / f"{scope}-{stage}.{substep}.prompt.json"
+        prompt_path.write_text(json.dumps(_VALID_PROMPT_ARTIFACT_DATA))
+
+        # Step 4: Agent calls mpi_step.py close (simulated here)
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", scope,
+            "--stage", stage,
+            "--substep", substep,
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "criteria_grouping complete for p1s1",
+            "--run-dir", str(run_dir),
+        ])
+
+        # Verify: close succeeded
+        assert rc == 0, f"close returned {rc}"
+
+        # Verify: manifest updated at substep granularity
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        substep_entry = (
+            manifest.get("participants", {})
+            .get(scope, {})
+            .get("stages", {})
+            .get(stage, {})
+            .get("substeps", {})
+            .get(substep, {})
+        )
+        assert substep_entry.get("status") == "done", f"substep not done: {substep_entry}"
+        assert substep_entry.get("expected_action") == "git_commit_succeeded"
+        assert "git_commit_sha" not in substep_entry  # AC1.4 self-reference impossibility
+
+        # Verify: audit trail has full phase sequence
+        audit_lines = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        events = [json.loads(l) for l in audit_lines if l.strip()]
+        actions = [e.get("event", {}).get("action") for e in events]
+        assert "close_attempted" in actions
+        assert "git_commit_succeeded" in actions
+
+        # Verify: git has a commit with canonical message
+        r = subprocess.run(
+            ["git", "log", "--oneline", "-1"],
+            cwd=run_dir, capture_output=True, text=True,
+        )
+        assert f"mpi: mpi-analyst {stage}.{substep} {scope}" in r.stdout
+
+    def test_agent_returning_error_instead_of_analysis_content(self, tmp_path):
+        """AC1.7: When agent fails, it returns ERROR string, NOT analysis content."""
+        # This is a documentation/contract test — verifies that the agent's
+        # Persistence section instructs it to return ERROR, not content.
+        content = AGENT_FILE.read_text(encoding="utf-8")
+        # The Persistence section must document the ERROR return format
+        assert "ERROR" in content and ("ERROR <" in content or "ERROR pNsN" in content), \
+            "mpi-analyst.md Persistence section must document ERROR return format for failures"
+        # The agent must NOT instruct itself to return analysis content on failure
+        # (This is a best-effort check — full behavioral testing requires LLM-in-the-loop)
+        persistence_idx = content.find("Persistence (mandatory before returning)")
+        if persistence_idx >= 0:
+            persistence_section = content[persistence_idx:]
+            assert "Never return the analysis content" in persistence_section or \
+                   "The orchestrator reads from disk" in persistence_section, \
+                "mpi-analyst.md Persistence section must instruct agent to NOT return content"
