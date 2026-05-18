@@ -602,26 +602,32 @@ The agent writes its proposal to disk with a rationale.
   <li>After the <b>first participant's synchronic completes</b> (their last <code>synchronic.isu_second_level_grouping</code> closes across all IDUs), the same happens for the synchronic stage.</li>
 </ol>
 
-<p>The IRR computation produces <b>two metrics, not one</b>:</p>
+<div class="callout callout-warning">
+<b>The label-mismatch problem.</b> Primary and alternate are different LLMs (or the same model with a different prompt). They invent their own category labels — primary's "Initial Sensation" and alternate's "First Awareness" might denote the same moment or not. Standard Cohen's κ and standard nominal Krippendorff's α both require <i>matched</i> labels: if labels never line up by name, every comparison counts as disagreement even when the underlying partitions are identical. So the pipeline reports a different primary metric:
+</div>
+
+<p>The IRR computation reports <b>three metrics</b>, each answering a different question:</p>
 
 <table>
-<thead><tr><th>Metric</th><th>What it handles well</th><th>What it stumbles on</th></tr></thead>
+<thead><tr><th>Metric</th><th>Operates on</th><th>Handles different category counts?</th><th>Role</th></tr></thead>
 <tbody>
-<tr><td><b>Cohen's κ</b></td><td>Two raters using the same fixed category set.</td><td>Different numbers of IDUs/ISUs between primary and alternate. Requires a category-alignment step (Hungarian-algorithm assignment over IDU-name semantic similarity). If counts diverge &gt;50% or alignment fails, κ is reported as <code>null</code> with reason <code>unalignable_categories</code>.</td></tr>
-<tr><td><b>Krippendorff's α</b></td><td>Differing category counts, missing data. Computed at utterance level ("which IDU does utterance N belong to?") — robust to all the conditions where κ falters.</td><td>Slightly less interpretable than κ when both are computable.</td></tr>
+<tr><td><b>Adjusted Rand Index (ARI)</b></td><td>Partitions of the utterance set — completely ignores category labels.</td><td>Yes.</td><td>Primary headline metric. Outcome decided by ARI ≥ 0.6.</td></tr>
+<tr><td><b>Partition-based α</b></td><td>Pairwise "are utterances i and j in the same group?" decisions — derived from the partition, no label dependency.</td><td>Yes.</td><td>Diagnostic cross-check. Should track ARI.</td></tr>
+<tr><td><b>Cohen's κ</b></td><td>Matched-label category assignments (one rater's "A" pairs with the other rater's "X" via alignment).</td><td>Only when counts match AND a Hungarian-algorithm name-alignment is unambiguous (best cost ≤ 0.6× runner-up). Otherwise <code>null</code>.</td><td>Diagnostic when computable. Tells you both raters used similar terminology and agreed on category counts.</td></tr>
 </tbody>
 </table>
 
-<p>Both are appended to <code>.mpi/irr_calibration.jsonl</code>:</p>
+<p>All three are appended to <code>.mpi/irr_calibration.jsonl</code>:</p>
 
 <pre>{"stage": "diachronic", "participant": "p1s1",
  "primary_model": "claude-haiku-4-5", "alternate_model": "claude-sonnet-4-6",
- "kappa": 0.42, "kappa_reason": null,
- "alpha": 0.61, "n_units_primary": 4, "n_units_alternate": 5,
+ "ari": 0.72, "alpha_partition": 0.69,
+ "kappa": null, "kappa_reason": "unmatched_counts",
+ "n_units_primary": 4, "n_units_alternate": 5, "n_utterances": 72,
  "threshold": 0.6, "outcome": "passed",
  "timestamp": "2026-05-17T15:08:21Z"}</pre>
 
-<p>Outcome is <code>passed</code> iff <b>(κ ≥ 0.6 or κ is null) AND α ≥ 0.6</b>. From that point on:</p>
+<p>Outcome is <code>passed</code> iff <b>ARI ≥ 0.6</b>. From that point on:</p>
 <ul>
   <li>If outcome is <code>passed</code>, cross-participant stages proceed normally.</li>
   <li>If outcome is <code>low</code>, cross-participant stages emit an <code>irr_warning</code> audit event but still proceed.</li>
@@ -629,11 +635,11 @@ The agent writes its proposal to disk with a rationale.
 </ul>
 
 <div class="callout">
-<b>Why two metrics?</b> When primary and alternate produce different numbers of moments (e.g., primary identifies 4 IDUs, alternate identifies 5), κ can't be computed without first aligning categories — which adds noise. α is computed at the utterance level and is robust to category-count differences. Reporting both lets you spot disagreements about segmentation granularity (low κ, low α) separately from disagreements about specific utterance-to-IDU assignments (low α, possibly null κ).
+<b>Why ARI rather than κ?</b> Hungarian-aligned κ is a hack — once you've aligned the categories, you've already injected judgment into the metric, and the "agreement" it measures is conditional on the alignment being right. ARI sidesteps the alignment problem entirely by operating on the partitions directly: "did rater A and rater B put the same utterances together, no matter what they called the groups?" When category counts and names both match, κ adds confirmatory information; otherwise ARI alone is the honest reading.
 </div>
 
 <div class="callout">
-<b>Why "model-quality gate" rather than "training gate"?</b> The manual's audience is humans being trained as analysts. Here the analyst is an LLM. A low κ/α tells you the primary model can't be reliably reproduced — consider swapping models (haiku → sonnet) or revising prompts, not "training the model more". The warning frames the issue accordingly. The semantic is still warn-by-default per yolo.
+<b>Why "model-quality gate" rather than "training gate"?</b> The manual's audience is humans being trained as analysts. Here the analyst is an LLM. A low ARI tells you the primary model can't be reliably reproduced — consider swapping models (haiku → sonnet) or revising prompts, not "training the model more". The warning frames the issue accordingly. Semantics: warn by default in yolo; opt in to strict blocking.
 </div>
 
 <h2 id="walk">9. A concrete walkthrough</h2>
@@ -761,9 +767,10 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation.</dd>
   <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
   <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
-  <dt><b>IRR calibration</b></dt><dd>Automatic model-quality gate: orchestrator triggers an alternate-agent re-analysis after the first participant's diachronic completes, and again after their synchronic, then computes both Cohen's κ and Krippendorff's α. Warning-by-default (yolo proceeds even on low IRR); opt-in <code>--strict-irr</code> blocks.</dd>
-  <dt><b>Cohen's κ</b></dt><dd>Agreement metric that assumes raters share a fixed category set. Useful when IDU counts match between primary and alternate; needs category alignment otherwise.</dd>
-  <dt><b>Krippendorff's α</b></dt><dd>Agreement metric robust to differing category counts, computed at utterance level. Always reported, even when κ is unalignable.</dd>
+  <dt><b>IRR calibration</b></dt><dd>Automatic model-quality gate: orchestrator triggers an alternate-agent re-analysis after the first participant's diachronic completes, and again after their synchronic, then computes three agreement metrics. Outcome based on ARI ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>
+  <dt><b>Adjusted Rand Index (ARI)</b></dt><dd>Label-independent partition-agreement metric. Compares how two raters group the same utterances, ignoring what they called the groups. Chance-corrected (1.0 = identical, 0 = random, negative = worse than random). The primary IRR metric here because primary and alternate LLMs invent their own category names.</dd>
+  <dt><b>Cohen's κ</b></dt><dd>Agreement metric for matched-label category assignments. Only computed when category counts match AND Hungarian-algorithm name-alignment is unambiguous; otherwise reported as <code>null</code> with reason.</dd>
+  <dt><b>Partition-based Krippendorff's α</b></dt><dd>α applied to pairwise "are these two utterances in the same group?" decisions. Equivalent in spirit to ARI; reported as a cross-check.</dd>
 </dl>
 
 <hr>
