@@ -69,16 +69,17 @@
 </div>
 
 <div class="step">
-<b>2. propose_study_config (LLM)</b> — Reads a small sample of utterances per transcript and proposes:
+<b>2. propose_study_config (orchestrator, branching by config provenance)</b> — Before touching transcript content with an LLM, init asks you: <i>how are IV scheme and DV foci provided?</i>
 <ul>
-  <li>An <b>Independent Variable (IV)</b> scheme: e.g., <i>"score category: low (0-1), moderate (2-3), high (4-5)"</i>.</li>
-  <li>A list of <b>Dependent Variable (DV) foci</b>: e.g., <i>"cognition, emotion, sensations, imagination"</i>.</li>
+  <li><b>preregistered</b> — chosen and documented before the study; you type them in. LLM never sees transcript content first.</li>
+  <li><b>user_specified</b> — you choose now without LLM assistance.</li>
+  <li><b>llm_proposed_user_confirmed</b> — exploratory; LLM looks at transcript samples and proposes IV/DV with rationale; you accept/edit/replace.</li>
 </ul>
-The agent writes its proposal to disk with a rationale.
+The choice is recorded immutably as <code>study.config_provenance</code> and surfaced in every hypothesis output's disclaimer. The LLM proposal path runs only when you opt into it; the other paths skip the LLM proposal entirely so corpus content doesn't leak into study design.
 </div>
 
 <div class="step">
-<b>3. confirm_study_config (you)</b> — Claude shows you the proposal. You accept, edit, or replace it. Your final answer is locked into the manifest. Every downstream step reads from this manifest entry — IV categories scope cross-participant comparisons, DV foci shape what hypothesis generation focuses on.
+<b>3. confirm_study_config (you)</b> — Claude shows you the (proposed or user-typed) configuration. You accept, edit, or replace. Final answer locked into the manifest. Every downstream step reads from this entry — IV categories scope cross-participant comparisons, DV foci shape what hypothesis generation emphasises.
 </div>
 
 <div class="callout">
@@ -431,7 +432,7 @@ The agent writes its proposal to disk with a rationale.
 </figure>
 
 <div class="callout">
-<b>Prompt capture makes LLM calls auditable and replayable.</b> Every LLM call writes its exact prompt and response to disk. You can re-run the prompt offline against the same model and verify the call's integrity — that the recorded prompt produces a comparable response. <b>Replay does not verify output groundedness</b>: if the model fabricated an unsupported claim deterministically, replay reproduces the fabrication rather than detecting it. Groundedness still requires <i>transcript-span evidence</i> — every IDU/ISU/hypothesis claim citing utterance line numbers, validated against the transcript. That's a candidate scope expansion, not part of v3.16.
+<b>Prompt capture makes LLM calls auditable and replayable.</b> Every LLM call writes its exact prompt and response to disk. You can re-run the prompt offline against the same model and verify the call's integrity — that the recorded prompt produces a comparable response. <b>Replay does not verify output groundedness</b>: if the model fabricated an unsupported claim deterministically, replay reproduces the fabrication rather than detecting it. Groundedness comes from the mandatory <i>transcript-span grounding</i> layer described in section 5.5 — every analytic unit carries <code>utterance_refs</code> validated against the immutable raw transcript. Both layers (replay + grounding) are v1, not future scope.
 </div>
 
 <h2 id="grounding">5.5. Transcript-span grounding (the anti-fabrication mechanism)</h2>
@@ -446,16 +447,20 @@ The agent writes its proposal to disk with a rationale.
   "criteria": "The utterances talk about initial tactile awareness.",
   "utterance_refs": [
     {"transcript_id": "p1s1", "utterance_number": 12,
-     "char_start": 0, "char_end": 87,
+     "byte_start": 0, "byte_end": 87,
      "raw_excerpt": "P1: I felt this kind of tacky, sticky feeling in my hands..."},
     {"transcript_id": "p1s1", "utterance_number": 14,
-     "char_start": 0, "char_end": 64,
+     "byte_start": 0, "byte_end": 64,
      "raw_excerpt": "P1: Like glue almost, before anything visual came in."}
   ],
   "confidence": 5
 }</pre>
 
-<p>The helper validates every <code>utterance_refs</code> entry by resolving the <code>transcript_id</code> + <code>utterance_number</code> through <code>transcripts/offsets/&lt;transcript_id&gt;.json</code>, fetching the raw byte range from <code>transcripts/raw/&lt;transcript_id&gt;.txt</code>, and confirming the bytes match <code>raw_excerpt</code>. Failure modes:</p>
+<p>The helper validates every <code>utterance_refs</code> entry by resolving the <code>transcript_id</code> + <code>utterance_number</code> through <code>transcripts/offsets/&lt;transcript_id&gt;.json</code>, fetching the raw byte range from <code>transcripts/raw/&lt;transcript_id&gt;.txt</code>, and confirming the bytes match <code>raw_excerpt</code>. <b>Byte offsets, not character offsets</b> — characters are ambiguous across Unicode normalisations, BOMs, line endings; bytes are unambiguous. Optional <code>display_char_start</code>/<code>display_char_end</code> fields can carry render-time character positions but are never authored by agents.</p>
+
+<p><b>What "utterance" means here.</b> An <i>utterance</i> is one numbered line in the normalised transcript: one speaker turn per line, multi-clause turns split into one clause per line (matching the manual_kev convention). Numbering starts at 1 after the header and is dense. The offset registry maps utterance number → raw byte range; the rule is fixed at <code>study.utterance_definition_version</code> in the manifest so any change requires re-running prep.</p>
+
+<p>Failure modes:</p></p>
 
 <ul>
   <li><code>missing_span_refs</code> — analytic unit has empty/absent <code>utterance_refs</code></li>
@@ -629,7 +634,7 @@ The agent writes its proposal to disk with a rationale.
 <tr><td><b>Concurrent-close lock</b></td><td><code>.mpi/close.lock</code> serialises closes. Two parallel runs can't corrupt the manifest. Stale locks are auto-reclaimed only if the holding PID is verifiably dead on the same host.</td></tr>
 <tr><td><b>HEAD verification</b></td><td>At resume, the helper checks that the current git HEAD matches what the manifest's last commit recorded. Mismatch → refusal to close until you resolve.</td></tr>
 <tr><td><b>Artifact SHA256 pinning</b></td><td>Every audit event records the SHA256 of every artifact file it produced. Silent tampering is detectable.</td></tr>
-<tr><td><b>Cascade reset</b></td><td>If you (or the agent) revise an IDU after synchronic analysis revealed a temporal split, the manifest automatically resets all downstream substeps that depended on that IDU's old form back to <code>pending</code>. No analysis ever runs on stale inputs.</td></tr>
+<tr><td><b>Cascade reset</b></td><td>If you (or the agent) revise an IDU after synchronic analysis revealed a temporal split, the manifest automatically resets all downstream substeps that depended on that IDU's old form back to <code>pending</code>. <b>Affected artifacts are moved aside</b>, not just marked stale: each goes to <code>analyses/_superseded/&lt;cascade_close_id&gt;/</code> with a sibling <code>tombstone.json</code> recording the source and reason. <code>/mpi status</code> surfaces superseded counts. This is structural — humans and scripts can't accidentally read stale artifacts after a revision.</td></tr>
 </tbody>
 </table>
 
@@ -902,6 +907,8 @@ The agent writes its proposal to disk with a rationale.
 <tr><td><code>missing_span_refs</code> at close</td><td>An analytic unit (IDU, ISU, hypothesis claim) had no <code>utterance_refs</code>.</td><td>The agent prompt is misconfigured or the agent didn't follow it. Inspect the rejected artifact; re-prompt the agent with explicit reminder that every unit needs <code>utterance_refs</code>.</td></tr>
 <tr><td><code>span_out_of_range</code> or <code>span_excerpt_mismatch</code> at close</td><td>An <code>utterance_refs</code> entry pointed at a non-existent location or its <code>raw_excerpt</code> didn't match the bytes at that location.</td><td>The agent invented or transcribed a span incorrectly. Re-run the substep; if it keeps happening, the prompt may be allowing creative paraphrase — tighten it.</td></tr>
 <tr><td><code>raw_transcript_mutated</code></td><td>The SHA of <code>transcripts/raw/&lt;transcript_id&gt;.txt</code> no longer matches what the manifest recorded at init.</td><td>Either restore the raw file from git history (it should never have been edited), or run <code>mpi-init --force-reconfigure</code> to start a new run with the new raw. Do not silently rerun against mutated raw — that breaks the grounding chain.</td></tr>
+<tr><td><code>run_inside_active_repo</code> at init</td><td>You pointed <code>/mpi init --run &lt;dir&gt;</code> inside an existing non-empty git worktree (e.g., your main project repo). A 21-transcript run produces ~100–200 commits, which fights with pre-commit hooks / GPG signing / CI / branch protections.</td><td>Recommended: point <code>--run</code> at an empty directory; helper will <code>git init</code> there. Or add the MPI run as a submodule of your main repo. Override (advanced): <code>--allow-active-repo-nested</code>, which records <code>study.run_repo_mode = "nested_in_active"</code> in the manifest so the choice is auditable.</td></tr>
+<tr><td>User wants to pick IV/DV preregistered, not via LLM proposal</td><td>The default v3.20 behaviour <i>asks</i> at init: how are IV scheme and DV foci provided? (preregistered / user_specified / llm_proposed_user_confirmed).</td><td>Pick the first or second option at the AskUserQuestion prompt — the LLM never sees transcript content before IV/DV are finalised. <code>study.config_provenance</code> is recorded immutably; every downstream hypothesis output's disclaimer surfaces it.</td></tr>
 </tbody>
 </table>
 
@@ -920,7 +927,7 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation. Runs <b>strictly sequentially</b> — one participant at a time, substeps in DAG order — to eliminate races, renumbering thrash, and audit-event interleaving. Wall-clock scales linearly with participant count.</dd>
   <dt><b>Prompt-capture artifact (schema_version 2)</b></dt><dd>Per-substep <code>.prompt.json</code> file containing everything needed to replay the LLM call offline: full message chain, sampling parameters (temperature, top_p, top_k, max_tokens, seed, stop sequences), agent definition file SHA, tool call sequence with inputs and results, token usage (including cache hits), vendor request ID. Replay-grade, not audit-only.</dd>
   <dt><b>Literature thresholds (IRR)</b></dt><dd>Conventional bright-lines from the methodological literature, surfaced in each IRR record alongside the metric value: α — 0.667 tentative / 0.8 acceptable (Krippendorff 2018); κ — 0.6 (S&D manual) / 0.61 substantial / 0.81 almost perfect (Landis & Koch 1977); αU — same cutoffs as nominal α (Krippendorff 2016); ARI — no bright-line, diagnostic only. <b>Caveat:</b> all calibrated for human analysts after training; transfer to LLM raters is by analogy, not evidence.</dd>
-  <dt><b>Replay artifact</b></dt><dd>A prompt-capture artifact at schema_version 2 supports being fed to <code>mpi_step.py replay</code> to reconstruct the original API call. The schema captures every knob that affects model output. If the agent definition file's SHA no longer matches what's recorded in the artifact, drift is detectable. <b>Caveat:</b> replay verifies call integrity (same prompt produces a comparable response), not output groundedness — if the model fabricates an unsupported claim, replay reproduces the fabrication. Stronger anti-fabrication = transcript-span grounding (a candidate scope expansion).</dd>
+  <dt><b>Replay artifact</b></dt><dd>A prompt-capture artifact at schema_version 2 supports being fed to <code>mpi_step.py replay</code> to reconstruct the original API call. The schema captures every knob that affects model output. If the agent definition file's SHA no longer matches what's recorded in the artifact, drift is detectable. <b>Caveat:</b> replay verifies call integrity (same prompt produces a comparable response), not output groundedness — that's what mandatory transcript-span grounding (section 5.5) is for. Both layers are v1.</dd>
   <dt><b>Manifest vs audit (sources of truth)</b></dt><dd>Two SoTs with strict domain separation: manifest is SoT for <i>state</i> (done/pending); audit.jsonl is SoT for <i>history</i> (what happened). Tools deciding next-action query the manifest; tools reconstructing a run query the audit log. Never mix.</dd>
   <dt><b>Candidate mechanism hypothesis</b></dt><dd>The hypothesis stage's output. Generative conjecture inferred from qualitative pattern variation across IV levels in a small sample. <b>Not</b> a causal estimate from a hypothesis test; not a result that supports a causal claim. Inputs for downstream causal testing in a separate study. Every artifact carries a verbatim disclaimer.</dd>
   <dt><b>Calibration transcript</b></dt><dd>The transcript used for IRR calibration. Set at init via <code>--calibration</code>: <code>"first"</code> (default; first-to-complete), a specific <code>transcript_id</code> (pre-chosen example), or <code>"stratified"</code> (one per IV-level stratum, deterministic seeded sampling). Recorded immutably in <code>study.calibration_transcript</code>.</dd>
