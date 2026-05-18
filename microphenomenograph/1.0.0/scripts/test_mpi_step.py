@@ -81,8 +81,19 @@ class TestLoadOrCreateRunId:
 # ---------------------------------------------------------------------------
 
 class TestValidateUnits:
-    def test_accepts_known_stage(self):
-        errors = validate_units("diachronic", "criteria_grouping", {})
+    def test_accepts_known_stage_with_valid_payload(self):
+        """Phase 4: full schemas require proper fields. Test with minimal valid payload."""
+        valid_payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [{
+                "idu_number": 1, "idu_name": "Test", "moment": 1,
+                "criteria": "test", "confidence": 3, "flag_for_review": False,
+                "utterance_numbers": ["1"], "hinge_to_next": None,
+                "utterance_refs": [{"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 5, "raw_excerpt": "hello"}],
+            }],
+        }
+        errors = validate_units("diachronic", "criteria_grouping", valid_payload)
         assert errors == []
 
     def test_rejects_unknown_stage(self):
@@ -323,6 +334,10 @@ VALID_CRITERIA_GROUPING_UNITS = {
             "confidence": 4, "flag_for_review": False,
             "utterance_numbers": ["1", "2"],
             "hinge_to_next": None,
+            "utterance_refs": [
+                {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "hello test"},
+                {"transcript_id": "p1s1", "utterance_number": 2, "byte_start": 10, "byte_end": 20, "raw_excerpt": "world test"},
+            ],
         }
     ],
 }
@@ -778,3 +793,149 @@ class TestRender:
         log = out.read_text()
         assert "p1s1" in log
         assert "p2s1" not in log
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: per-substep schema tests
+# ---------------------------------------------------------------------------
+
+VALID_UTTERANCE_REF = {
+    "transcript_id": "p1s1",
+    "utterance_number": 1,
+    "byte_start": 0,
+    "byte_end": 10,
+    "raw_excerpt": "hello test",
+}
+
+VALID_IDU = {
+    "idu_number": 1, "idu_name": "Opening Experience", "moment": 1,
+    "criteria": "The utterances talk about the opening moment.",
+    "confidence": 4, "flag_for_review": False,
+    "utterance_numbers": ["1", "2"],
+    "hinge_to_next": None,
+    "utterance_refs": [VALID_UTTERANCE_REF],
+}
+
+VALID_DIACHRONIC_PAYLOAD = {
+    "analysis_type": "diachronic",
+    "participant": "p1s1",
+    "reasoning_summary": "Three IDUs identified.",
+    "idus": [VALID_IDU],
+}
+
+VALID_CRITERIA_REVISION_PAYLOAD = {
+    **VALID_DIACHRONIC_PAYLOAD,
+    "convergence": {"decision": "converged", "reason": "No further improvements needed."},
+}
+
+VALID_ISU = {
+    "isu_name": "Sense of Warmth",
+    "isu_second_level_of_abstraction": "Tactile Qualities",
+    "criteria": "The utterances talk about warmth.",
+    "confidence": 4,
+    "flag_for_review": False,
+    "utterance_refs": [VALID_UTTERANCE_REF],
+}
+
+VALID_SYNCHRONIC_PAYLOAD = {
+    "analysis_type": "synchronic",
+    "participant": "p1s1",
+    "idu_name": "Opening Experience",
+    "isus": [VALID_ISU],
+}
+
+
+class TestSchemaAcceptsValid:
+    def test_criteria_grouping_valid(self):
+        errs = validate_units("diachronic", "criteria_grouping", VALID_DIACHRONIC_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+    def test_criteria_revision_valid(self):
+        errs = validate_units("diachronic", "criteria_revision", VALID_CRITERIA_REVISION_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+    def test_synchronic_theme_grouping_valid(self):
+        errs = validate_units("synchronic", "theme_grouping_within_idu", VALID_SYNCHRONIC_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+
+class TestSchemaDriftNames:
+    def test_title_instead_of_idu_name_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "idu_name"}
+        bad_idu["title"] = "Wrong"
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("title" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_utterance_lines_instead_of_utterance_numbers_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "utterance_numbers"}
+        bad_idu["utterance_lines"] = ["1"]
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_lines" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_isu_2nd_level_instead_of_isu_second_level_rejected(self):
+        bad_isu = {k: v for k, v in VALID_ISU.items() if k != "isu_second_level_of_abstraction"}
+        bad_isu["isu_2nd_level"] = "wrong"
+        bad_payload = {**VALID_SYNCHRONIC_PAYLOAD, "isus": [bad_isu]}
+        # Test against isu_second_level_grouping — that substep requires the field
+        errs = validate_units("synchronic", "isu_second_level_grouping", bad_payload)
+        assert any("isu_2nd_level" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_isu_second_level_not_required_at_theme_grouping(self):
+        """theme_grouping_within_idu does not require isu_second_level_of_abstraction."""
+        isu_no_second_level = {k: v for k, v in VALID_ISU.items() if k != "isu_second_level_of_abstraction"}
+        payload = {**VALID_SYNCHRONIC_PAYLOAD, "isus": [isu_no_second_level]}
+        errs = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert not any("isu_second_level" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaRangeErrors:
+    def test_confidence_out_of_range(self):
+        bad_idu = {**VALID_IDU, "confidence": 9}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("confidence" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_flag_for_review_non_bool(self):
+        bad_idu = {**VALID_IDU, "flag_for_review": "yes"}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("flag_for_review" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_hinge_null_on_non_last_idu(self):
+        idu1 = {**VALID_IDU, "idu_number": 1, "hinge_to_next": None}
+        idu2 = {**VALID_IDU, "idu_number": 2, "moment": 2, "hinge_to_next": None}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [idu1, idu2]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        # idu1 is non-last and has null hinge — should error
+        assert any("hinge_to_next" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaUtteranceRefs:
+    def test_missing_utterance_refs_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "utterance_refs"}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_refs" in str(e) for e in errs), [str(e) for e in errs]
+        assert any("missing_span_refs" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_empty_utterance_refs_rejected(self):
+        bad_idu = {**VALID_IDU, "utterance_refs": []}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_refs" in str(e) and "missing_span_refs" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaConvergenceField:
+    def test_criteria_revision_missing_convergence(self):
+        errs = validate_units("diachronic", "criteria_revision", VALID_DIACHRONIC_PAYLOAD)
+        assert any("convergence" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_criteria_revision_bad_decision(self):
+        bad_payload = {
+            **VALID_DIACHRONIC_PAYLOAD,
+            "convergence": {"decision": "keep_going", "reason": "still working"},
+        }
+        errs = validate_units("diachronic", "criteria_revision", bad_payload)
+        assert any("decision" in str(e) for e in errs), [str(e) for e in errs]
