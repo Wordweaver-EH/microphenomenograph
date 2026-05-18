@@ -219,9 +219,10 @@ The agent writes its proposal to disk with a rationale.
 
   <!-- return edge -->
   <path class="svg-arrow-dashed" d="M80,260 C-20,250 -20,200 20,200"/>
-  <text class="svg-text-label" x="0" y="225" text-anchor="middle">IDU split</text>
+  <text class="svg-text-label" x="0" y="220" text-anchor="middle">IDU split</text>
+  <text class="svg-text-label" x="0" y="235" text-anchor="middle">(or merge, opt-in)</text>
 </svg>
-<figcaption>Pipeline stage dependency graph. Per-participant work (left) feeds cross-participant work (centre and right). Kappa calibration sits beside synchronic as a one-shot sanity check. The red dashed return-edge shows the manual's "if synchronic reveals temporal order, return to diachronic and split the IDU" rule.</figcaption>
+<figcaption>Pipeline stage dependency graph. Per-participant work (left) feeds cross-participant work (centre and right). Kappa calibration sits beside synchronic as a one-shot sanity check. The red dashed return-edge shows the manual's "if synchronic reveals temporal order, return to diachronic and split the IDU" rule — plus an opt-in merge variant for synchronic-revealed concurrent IDUs (extension beyond the manual's literal wording).</figcaption>
 <div class="legend">
   <span class="l-user">user-driven</span>
   <span class="l-orch">orchestrator</span>
@@ -257,6 +258,22 @@ The agent writes its proposal to disk with a rationale.
 </div>
 
 <p>Synchronic similarly decomposes into <code>theme_grouping_within_idu</code> → <code>isu_naming</code> → <code>isu_second_level_grouping</code>, iterated <b>per IDU</b> (not per phase — there are no phases).</p>
+
+<h3>Split vs merge: the diachronic ↔ synchronic feedback edge</h3>
+
+<p>Within <code>diachronic.criteria_revision</code> itself, the revision pass can do <b>both split and merge</b> — the manual is explicit: utterances "grouped by a single temporal criterion actually represent two or more moments" (split), or "two or more moments actually appear to happen concurrently and not sequentially" (merge). Both directions live inside the revision loop already.</p>
+
+<p>The asymmetry is at the <i>synchronic → diachronic</i> feedback edge. The manual only explicitly licenses the synchronic-driven <b>split</b>: <i>"If synchronic analysis has revealed themes within an IDU that exhibit temporal order, then this indicates that the IDU represents more than a single IDU and should be split."</i> The merge direction (two adjacent IDUs whose ISUs reveal they're really one concurrent moment) is not named.</p>
+
+<p>The pipeline supports both directions, but the merge variant is <b>opt-in</b> via <code>--allow-synchronic-merge</code> since it extends the manual's literal wording. The synchronic artifact has two flag fields:</p>
+
+<table>
+<thead><tr><th>Field</th><th>Source</th><th>Default action</th></tr></thead>
+<tbody>
+<tr><td><code>temporal_order_within_idu: bool</code></td><td>Manual-licensed (line 67)</td><td>Triggers <code>diachronic.criteria_revision</code> re-close → split; <code>idu_split_after_synchronic</code> audit event.</td></tr>
+<tr><td><code>concurrent_with_adjacent_idu: {idu_id, rationale} | null</code></td><td>Extension beyond manual</td><td>With <code>--allow-synchronic-merge</code>: re-close → merge; <code>idu_merge_after_synchronic</code> event. Without: <code>merge_candidate_ignored</code> advisory event only.</td></tr>
+</tbody>
+</table>
 
 <figure>
 <svg viewBox="0 0 780 280" role="img" aria-label="Diachronic and synchronic substep DAG">
@@ -301,11 +318,15 @@ The agent writes its proposal to disk with a rationale.
   <path class="svg-arrow" d="M510,101 C510,130 105,135 105,165"/>
   <text class="svg-text-label" x="350" y="130" text-anchor="middle">requires idu_naming_ordering: done</text>
 
-  <!-- return edge from synchronic.theme_grouping back to diachronic.criteria_revision -->
-  <path class="svg-arrow-dashed" d="M105,211 C105,250 300,250 300,101"/>
-  <text class="svg-text-label" x="200" y="248" text-anchor="middle">temporal_order_within_idu = true → re-revise → cascade reset downstream</text>
+  <!-- return edge: split (manual-licensed) -->
+  <path class="svg-arrow-dashed" d="M105,211 C105,245 250,245 280,110"/>
+  <text class="svg-text-label" x="155" y="240" text-anchor="middle">temporal_order_within_idu → split</text>
+
+  <!-- return edge: merge (extension, opt-in) -->
+  <path class="svg-arrow-dashed" d="M180,211 C180,265 320,265 320,110" stroke-dasharray="2 4" opacity="0.7"/>
+  <text class="svg-text-label" x="360" y="260" text-anchor="start" opacity="0.7">concurrent_with_adjacent_idu → merge (--allow-synchronic-merge)</text>
 </svg>
-<figcaption>Substep DAG for the per-participant stages. Black arrows are forward dependencies; the orange self-loop is the bounded revision loop; the red dashed return-edge is the manual's IDU-split rule, which triggers a cascade reset of all downstream substeps that depended on the old IDU shape.</figcaption>
+<figcaption>Substep DAG for per-participant stages. Black arrows = forward dependencies; orange self-loop = bounded revision loop (handles both split and merge within diachronic per manual line 59); solid red dashed return-edge = manual-licensed synchronic→diachronic split (manual line 67); fainter dotted red edge = synchronic→diachronic merge (extension beyond manual's literal wording, opt-in via <code>--allow-synchronic-merge</code>). Either return edge triggers a cascade reset of all downstream substeps.</figcaption>
 </figure>
 
 <h2 id="four">5. The four-part "close" — how each step finishes</h2>
