@@ -602,44 +602,85 @@ The agent writes its proposal to disk with a rationale.
   <li>After the <b>first participant's synchronic completes</b> (their last <code>synchronic.isu_second_level_grouping</code> closes across all IDUs), the same happens for the synchronic stage.</li>
 </ol>
 
-<div class="callout callout-warning">
-<b>The label-mismatch problem.</b> Primary and alternate are different LLMs (or the same model with a different prompt). They invent their own category labels — primary's "Initial Sensation" and alternate's "First Awareness" might denote the same moment or not. Standard Cohen's κ and standard nominal Krippendorff's α both require <i>matched</i> labels: if labels never line up by name, every comparison counts as disagreement even when the underlying partitions are identical. So the pipeline reports a different primary metric:
-</div>
+<p>The IRR check is a three-step procedure: <b>align categories → build coincidence matrix → compute four metrics with bootstrap CIs</b>.</p>
 
-<p>The IRR computation reports <b>three metrics</b>, each answering a different question:</p>
+<h3>Step 1: Category alignment</h3>
+
+<p>Primary and alternate raters invent their own labels — primary's "Initial Sensation" and alternate's "First Awareness" might denote the same moment or might not. A fresh mpi-cross-analyst subagent reads both raters' IDU sets (with definitions) and proposes a correspondence:</p>
+
+<pre>{"mapping": [
+  {"primary": "Initial Sensation", "alternate": "First Awareness",
+   "confidence": 0.82,
+   "rationale": "both describe the opening tactile moment before any imagery"},
+  {"primary": "Hand Movement", "alternate": "Felt Pull",
+   "confidence": 0.76,
+   "rationale": "both refer to involuntary hand convergence"},
+  ...
+ ],
+ "unmatched_primary": [],
+ "unmatched_alternate": ["Surprise Reflection"]}</pre>
+
+<p>In assisted mode, you see this mapping in a prompt and can accept, edit, or override. In yolo, it's auto-accepted with an <code>irr_alignment_auto_accepted</code> audit event so the decision is traceable.</p>
+
+<p>This step mirrors what upath's <code>irrStore.ts</code> does (LLM-mediated alignment with user validation) and what Kev Sheldrake did manually when he and Yesesvi had different IDU counts on p3s1 — rename one rater's categories to align with the other's, then compute κ on the union.</p>
+
+<h3>Step 2: Build the coincidence matrix</h3>
+
+<p>Categories used by only one rater stay in the union. They appear as rows/columns with zero diagonal and nonzero marginal. This is the textbook Krippendorff (2011, eq. 1–6) procedure — not a project-specific hack. If primary used 4 IDUs and alternate used 5, the matrix is 5×5; one of primary's rows is all zeros except where alternate's codes paired against primary's on the same utterances.</p>
+
+<h3>Step 3: Compute four metrics with bootstrap CIs</h3>
 
 <table>
-<thead><tr><th>Metric</th><th>Operates on</th><th>Handles different category counts?</th><th>Role</th></tr></thead>
+<thead><tr><th>Metric</th><th>Question</th><th>Operates on</th></tr></thead>
 <tbody>
-<tr><td><b>Adjusted Rand Index (ARI)</b></td><td>Partitions of the utterance set — completely ignores category labels.</td><td>Yes.</td><td>Primary headline metric. Outcome decided by ARI ≥ 0.6.</td></tr>
-<tr><td><b>Partition-based α</b></td><td>Pairwise "are utterances i and j in the same group?" decisions — derived from the partition, no label dependency.</td><td>Yes.</td><td>Diagnostic cross-check. Should track ARI.</td></tr>
-<tr><td><b>Cohen's κ</b></td><td>Matched-label category assignments (one rater's "A" pairs with the other rater's "X" via alignment).</td><td>Only when counts match AND a Hungarian-algorithm name-alignment is unambiguous (best cost ≤ 0.6× runner-up). Otherwise <code>null</code>.</td><td>Diagnostic when computable. Tells you both raters used similar terminology and agreed on category counts.</td></tr>
+<tr><td><b>Nominal α</b> (primary)</td><td>Given the alignment, do raters label corresponding moments the same?</td><td>Coincidence matrix (post-alignment)</td></tr>
+<tr><td><b>Cohen's κ</b> (secondary)</td><td>Same as α; matches the manual literally</td><td>Coincidence matrix (post-alignment)</td></tr>
+<tr><td><b>Unitizing αU</b></td><td>Do raters cut the transcript continuum at the same places?</td><td>Raw utterance-range boundaries; label-independent</td></tr>
+<tr><td><b>ARI</b></td><td>Do raters put the same utterances in the same groups, regardless of labels?</td><td>Raw partition; label-permutation-invariant; independent of alignment</td></tr>
 </tbody>
 </table>
 
-<p>All three are appended to <code>.mpi/irr_calibration.jsonl</code>:</p>
+<p>Each metric carries a 95% bootstrap confidence interval (N=5000 utterance resamples, per Hayes & Krippendorff 2007). Same bootstrap sample indices are reused across all four metrics within one call, so the CIs are correlated and consistent. Seed is persisted in the JSONL record for reproducibility.</p>
+
+<h3>The JSONL record</h3>
 
 <pre>{"stage": "diachronic", "participant": "p1s1",
- "primary_model": "claude-haiku-4-5", "alternate_model": "claude-sonnet-4-6",
- "ari": 0.72, "alpha_partition": 0.69,
- "kappa": null, "kappa_reason": "unmatched_counts",
- "n_units_primary": 4, "n_units_alternate": 5, "n_utterances": 72,
- "threshold": 0.6, "outcome": "passed",
- "timestamp": "2026-05-17T15:08:21Z"}</pre>
+ "timestamp": "2026-05-17T15:08:21Z",
+ "primary_model": "claude-haiku-4-5",
+ "alternate_model": "claude-sonnet-4-6",
+ "alignment": {
+   "mode": "llm_auto_accepted",
+   "mapping": [{"primary": "Initial Sensation", "alternate": "First Awareness",
+                "confidence": 0.82, "rationale": "..."}, ...],
+   "unmatched_primary": [], "unmatched_alternate": ["Surprise Reflection"]},
+ "metrics": {
+   "alpha":   {"point": 0.64, "ci_lo": 0.42, "ci_hi": 0.79, "n_categories_union": 7},
+   "kappa":   {"point": 0.61, "ci_lo": 0.39, "ci_hi": 0.78},
+   "alpha_u": {"point": 0.71, "ci_lo": 0.55, "ci_hi": 0.82},
+   "ari":     {"point": 0.68, "ci_lo": 0.48, "ci_hi": 0.81}},
+ "n_utterances": 68, "n_bootstrap": 5000, "bootstrap_seed": 42,
+ "disagreement_types": {"assignment_count": 3, "partial_overlap": 4, "no_overlap": 1},
+ "threshold": 0.6,
+ "outcome": "passed"}</pre>
 
-<p>Outcome is <code>passed</code> iff <b>ARI ≥ 0.6</b>. From that point on:</p>
+<p><code>outcome = "passed"</code> iff <b>α's CI lower bound ≥ 0.6</b>. Note this is more conservative than the modal published practice (which uses the point estimate). Using the CI lower bound is honest about the small-sample-size noise inherent in single-transcript IRR calibration.</p>
+
 <ul>
-  <li>If outcome is <code>passed</code>, cross-participant stages proceed normally.</li>
-  <li>If outcome is <code>low</code>, cross-participant stages emit an <code>irr_warning</code> audit event but still proceed.</li>
-  <li>If you pass <code>--strict-irr</code> to <code>/mpi all</code>, low IRR becomes a hard error.</li>
+  <li>If <code>passed</code>, cross-participant stages proceed normally.</li>
+  <li>If <code>low</code>, cross-participant stages emit <code>irr_warning</code> but still proceed.</li>
+  <li>With <code>--strict-irr</code>, low IRR becomes a hard error.</li>
 </ul>
 
 <div class="callout">
-<b>Why ARI rather than κ?</b> Hungarian-aligned κ is a hack — once you've aligned the categories, you've already injected judgment into the metric, and the "agreement" it measures is conditional on the alignment being right. ARI sidesteps the alignment problem entirely by operating on the partitions directly: "did rater A and rater B put the same utterances together, no matter what they called the groups?" When category counts and names both match, κ adds confirmatory information; otherwise ARI alone is the honest reading.
+<b>Why four metrics rather than one?</b> α and κ measure labeling agreement <i>given</i> the alignment. αU measures segmentation agreement (do raters see the same moments?). ARI measures partition agreement <i>without</i> alignment. They answer orthogonal questions — high α + low αU means "you cut the transcript differently but labeled corresponding pieces consistently"; high αU + low α means "you found the same moments but called them different things". Each diagnoses a different model-quality failure mode.
 </div>
 
 <div class="callout">
-<b>Why "model-quality gate" rather than "training gate"?</b> The manual's audience is humans being trained as analysts. Here the analyst is an LLM. A low ARI tells you the primary model can't be reliably reproduced — consider swapping models (haiku → sonnet) or revising prompts, not "training the model more". The warning frames the issue accordingly. Semantics: warn by default in yolo; opt in to strict blocking.
+<b>Why bootstrap CIs?</b> Single-transcript IRR has wide intrinsic uncertainty — α=0.64 with 68 utterances could plausibly be anywhere from 0.42 to 0.79 just from sampling variation. Reporting a bare point estimate overstates precision. Bootstrap is Hayes & Krippendorff's (2007) explicit recommendation; modal published qualitative-coding work skips it, but at this sample size it's the right call. ~30 lines of pure-Python; no external dep.
+</div>
+
+<div class="callout">
+<b>Why "model-quality" not "training"?</b> The manual's audience is humans being trained as analysts; here the analyst is an LLM. A low α tells you the primary model can't be reliably reproduced — consider swapping models or revising prompts, not "training the model more". Warning-by-default in yolo; opt in to strict blocking.
 </div>
 
 <h2 id="walk">9. A concrete walkthrough</h2>
@@ -767,10 +808,13 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation.</dd>
   <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
   <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
-  <dt><b>IRR calibration</b></dt><dd>Automatic model-quality gate: orchestrator triggers an alternate-agent re-analysis after the first participant's diachronic completes, and again after their synchronic, then computes three agreement metrics. Outcome based on ARI ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>
-  <dt><b>Adjusted Rand Index (ARI)</b></dt><dd>Label-independent partition-agreement metric. Compares how two raters group the same utterances, ignoring what they called the groups. Chance-corrected (1.0 = identical, 0 = random, negative = worse than random). The primary IRR metric here because primary and alternate LLMs invent their own category names.</dd>
-  <dt><b>Cohen's κ</b></dt><dd>Agreement metric for matched-label category assignments. Only computed when category counts match AND Hungarian-algorithm name-alignment is unambiguous; otherwise reported as <code>null</code> with reason.</dd>
-  <dt><b>Partition-based Krippendorff's α</b></dt><dd>α applied to pairwise "are these two utterances in the same group?" decisions. Equivalent in spirit to ARI; reported as a cross-check.</dd>
+  <dt><b>IRR calibration</b></dt><dd>Automatic model-quality check after first diachronic and first synchronic. Three steps: LLM-mediated category alignment → union-of-categories coincidence matrix → four metrics with bootstrap CIs. Outcome based on α's CI lower bound ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>
+  <dt><b>Nominal Krippendorff's α</b></dt><dd>Primary labeling-agreement metric on the aligned coincidence matrix. Handles categories used by only one rater as zero-diagonal rows with nonzero marginals — canonical Krippendorff (2011), not a workaround.</dd>
+  <dt><b>Cohen's κ</b></dt><dd>Secondary labeling-agreement metric on the same aligned matrix. Matches the manual's wording.</dd>
+  <dt><b>Unitizing α (αU)</b></dt><dd>Krippendorff (2016) extension. Measures whether raters cut a continuum at the same places — segmentation agreement, label-independent. Orthogonal to α/κ which measure labeling.</dd>
+  <dt><b>Adjusted Rand Index (ARI)</b></dt><dd>Label-permutation-invariant partition-agreement metric. Independent of the alignment decision; useful sanity check.</dd>
+  <dt><b>Bootstrap 95% CI</b></dt><dd>Per Hayes & Krippendorff (2007): resample utterances with replacement N=5000 times, recompute each metric on each resample, take 2.5th and 97.5th percentiles as the CI bounds. Same indices reused across metrics for consistency. Seed persisted for reproducibility.</dd>
+  <dt><b>Category alignment</b></dt><dd>LLM-mediated correspondence between primary and alternate runs' category sets (e.g., primary "Initial Sensation" ↔ alternate "First Awareness"). Proposed by a fresh subagent with per-pair confidence + rationale; user-validated in assisted mode, auto-accepted in yolo. Mirrors upath's <code>irrStore.ts</code> approach.</dd>
 </dl>
 
 <hr>
