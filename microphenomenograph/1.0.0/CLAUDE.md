@@ -1,21 +1,21 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-05-18 (design ahead of implementation — see notice below)_
+_Last updated: 2026-05-18 (Plan 1 Phases 1–6 landed; Plan 2 not yet implemented)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
 ## Design vs implementation
 
-**This file describes the legacy v1.0.0 plugin layout. The current design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `fb65db5`, v3.22), which has not yet been implemented.** Implementation is split into two implementation plans:
+The design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `fb65db5`, v3.22). Implementation is split into two implementation plans:
 
-- **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8):** helper CLI (`scripts/mpi_step.py`), per-substep schemas, prompt-capture artifacts, `mpi-analyst` self-persistence, per-transcript SKILL closure sweep.
-- **Plan 2 (Phases 7, 9, 10, 11, 12, 13):** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards, E2E pipeline test, docs reconciliation, IRR calibration.
+- **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — Phases 1–6 LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending.
+- **Plan 2 (Phases 7, 9, 10, 11, 12, 13) — NOT YET IMPLEMENTED:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline test, docs reconciliation, IRR calibration.
 
-Until Plan 1 ships, the "Pipeline overview" / "Data formats" / "Execution modes" sections below describe the pre-design state. Read the design doc for the target architecture.
+The "Pipeline overview" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
 
-## Documentation-as-Done contract (target architecture)
+## Documentation-as-Done contract
 
-Every pipeline step closes via `scripts/mpi_step.py` (not yet implemented) under a phased close protocol:
+Every pipeline step closes via `scripts/mpi_step.py` under a phased close protocol:
 
 ```
 close_attempted
