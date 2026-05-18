@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MPI Pipeline — How It Works (for newcomers)</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         max-width: 820px; margin: 2rem auto; padding: 0 1.25rem;
+         line-height: 1.55; color: #1d2021; background: #fbf1c7; }
+  h1 { border-bottom: 3px solid #d65d0e; padding-bottom: .4rem; }
+  h2 { border-bottom: 1px solid #d5c4a1; padding-bottom: .25rem; margin-top: 2.2rem; color: #9d0006; }
+  h3 { color: #b57614; margin-top: 1.6rem; }
+  code, pre { font-family: "SF Mono", "Consolas", monospace; background: #ebdbb2; }
+  code { padding: .05rem .3rem; border-radius: 3px; font-size: 0.92em; }
+  pre  { padding: .8rem 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.88em;
+         border-left: 4px solid #b57614; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.92em; }
+  th, td { border: 1px solid #d5c4a1; padding: .45rem .7rem; text-align: left; vertical-align: top; }
+  th { background: #ebdbb2; }
+  .callout { background: #f9f5d7; border-left: 4px solid #d65d0e; padding: .6rem 1rem;
+             margin: 1rem 0; border-radius: 4px; }
+  .callout-warning { border-left-color: #cc241d; background: #fbf1c7; }
+  .small { font-size: 0.88em; color: #504945; }
+  ul li, ol li { margin-bottom: .3rem; }
+  .step { background: #ebdbb2; border-radius: 6px; padding: .8rem 1rem; margin: .8rem 0; }
+  .step b { color: #af3a03; }
+  .toc { background: #ebdbb2; border-radius: 6px; padding: .6rem 1rem; font-size: 0.92em; }
+  .toc ol { margin: .3rem 0 .3rem 1.2rem; padding: 0; }
+  a { color: #076678; }
+</style>
+</head>
+<body>
+
+<h1>The MPI Pipeline — How It Works</h1>
+<p class="small">A plain-English walkthrough of the Microphenomenological Interview analysis pipeline implemented by this Claude Code plugin. Written for readers new to the methodology and the codebase. Source design: <code>docs/design-plans/2026-05-17-doc-as-done.md</code>.</p>
+
+<div class="toc">
+<b>What this document covers</b>
+<ol>
+  <li><a href="#what">What is the MPI pipeline?</a></li>
+  <li><a href="#start">Starting a run: <code>/mpi init</code></a></li>
+  <li><a href="#stages">The seven analysis stages</a></li>
+  <li><a href="#substeps">Why substeps matter</a></li>
+  <li><a href="#four">The four-part "close" — how each step finishes</a></li>
+  <li><a href="#audit">The audit trail (the on-disk story of what happened)</a></li>
+  <li><a href="#yolo">Yolo mode: running the whole thing unattended</a></li>
+  <li><a href="#kappa">Kappa calibration: a sanity check</a></li>
+  <li><a href="#walk">A concrete walkthrough</a></li>
+  <li><a href="#troubleshoot">When things go wrong</a></li>
+  <li><a href="#glossary">Glossary</a></li>
+</ol>
+</div>
+
+<h2 id="what">1. What is the MPI pipeline?</h2>
+<p><b>Microphenomenological Interview (MPI)</b> is a qualitative research method for studying first-person experience. A researcher interviews a participant about a specific moment of experience (in our example studies, an "imaginative suggestion" where the participant closes their eyes and follows an instruction like "imagine your hands are stuck together"). The interview produces a transcript. From many such transcripts, the analyst tries to find patterns.</p>
+
+<p>The methodology used here is the <b>simplified procedure of Sheldrake &amp; Dienes (2025)</b> documented in <code>manual_kev.md</code>. This pipeline automates that procedure using LLM subagents under a strict bookkeeping contract.</p>
+
+<p>The pipeline is a <b>command-line tool</b> exposed as the <code>/mpi</code> slash command in Claude Code. You give it a folder of transcripts and tell it what your study's variables are; it produces a series of analysis artifacts and, finally, a set of candidate causal hypotheses.</p>
+
+<div class="callout">
+<b>Why "documentation-as-done"?</b> The whole pipeline runs on one rule: <b>a step isn't finished until it has produced its output file, recorded what it did in an audit log, updated the manifest, and committed everything to git</b>. There's no "trust me, I did it" — the disk has to show the work or the step is still pending.
+</div>
+
+<h2 id="start">2. Starting a run: <code>/mpi init</code></h2>
+
+<p>You start with a folder of transcripts (e.g. <code>p1s1.txt</code> through <code>p7s3.txt</code> — seven participants × three suggestions each). Run:</p>
+
+<pre>/mpi init --run runs/my-study/ --transcripts path/to/transcripts/</pre>
+
+<p><code>init</code> does three things, in order:</p>
+
+<div class="step">
+<b>1. scan_transcripts (mechanical)</b> — Copies transcripts into the run folder. Parses each file's header line (<code>Participant 1, Suggestion 2 (Scored 3/5)</code>) to enumerate participants, suggestions, and scores.
+</div>
+
+<div class="step">
+<b>2. propose_study_config (LLM)</b> — Reads a small sample of utterances per transcript and proposes:
+<ul>
+  <li>An <b>Independent Variable (IV)</b> scheme: e.g., <i>"score category: low (0-1), moderate (2-3), high (4-5)"</i>.</li>
+  <li>A list of <b>Dependent Variable (DV) foci</b>: e.g., <i>"cognition, emotion, sensations, imagination"</i>.</li>
+</ul>
+The agent writes its proposal to disk with a rationale.
+</div>
+
+<div class="step">
+<b>3. confirm_study_config (you)</b> — Claude shows you the proposal. You accept, edit, or replace it. Your final answer is locked into the manifest. Every downstream step reads from this manifest entry — IV categories scope cross-participant comparisons, DV foci shape what hypothesis generation focuses on.
+</div>
+
+<div class="callout">
+<b>IV bin rules.</b> By default, IV levels can't overlap in their numeric ranges. If you really want overlap (e.g., a value that belongs to both "moderate" and "high"), you have to pass <code>--allow-overlap</code> and write a rationale; you also pick a <b>tie-resolution rule</b> (the value goes to the upper bin, the lower bin, or to both). Bins also have to cover every score that actually appears in the corpus, or you have to explicitly declare which scores you're dropping.
+</div>
+
+<h2 id="stages">3. The seven analysis stages</h2>
+
+<p>After <code>init</code>, the pipeline runs seven stages in dependency order. Each stage produces files in <code>analyses/</code>.</p>
+
+<table>
+<thead><tr><th>Stage</th><th>What it does (in plain English)</th><th>Scope</th></tr></thead>
+<tbody>
+<tr><td><code>transcript_prep</code></td><td>Cleans up each transcript: strips BOMs, normalises spacing, fixes speaker labels.</td><td>per participant</td></tr>
+<tr><td><code>diachronic</code></td><td>Reads one transcript at a time and breaks the experience into temporally-ordered moments (<b>IDUs</b> — "Incipient Diachronic Units"). What happened first, second, third?</td><td>per participant</td></tr>
+<tr><td><code>synchronic</code></td><td>For each IDU within a participant, identifies the themes present at that moment (<b>ISUs</b> — "Incipient Synchronic Units"). What aspects of experience co-occurred?</td><td>per (participant × IDU)</td></tr>
+<tr><td><code>generic_diachronic</code></td><td>Compares IDUs across participants who share an IV level. Identifies common temporal patterns and how those patterns differ between IV levels.</td><td>per event</td></tr>
+<tr><td><code>generic_synchronic</code></td><td>Across participants in the same IV category, groups the ISUs that appear within each common generic IDU.</td><td>per (event × IV × generic-IDU)</td></tr>
+<tr><td><code>global_synchronic</code></td><td>Where the same generic IDU appears in multiple events (suggestions), aggregates the ISUs across events.</td><td>per (generic-IDU × IV)</td></tr>
+<tr><td><code>hypothesis</code></td><td>Generates candidate causal hypotheses about how participant experience differs by IV level, framed per DV focus, with traceability back to the evidence.</td><td>per DV focus; global review</td></tr>
+</tbody>
+</table>
+
+<h2 id="substeps">4. Why substeps matter</h2>
+
+<p>Each stage is broken into smaller "substeps" — typically two or three. This matters for two reasons:</p>
+
+<ol>
+  <li><b>LLM atomicity.</b> Each LLM-driven substep is sized to be answerable in one focused call. "Identify temporal moments AND name them AND check for inter-IDU temporal order" would be three jobs in one head; instead the pipeline asks one question at a time.</li>
+  <li><b>Resumability.</b> If something goes wrong on substep 3 of 4 for participant p5s2, the pipeline re-runs only that substep. Substeps 1-2 stay done; participants 1-4 stay untouched.</li>
+</ol>
+
+<p>The most interesting substep decomposition is <b>diachronic</b>, which mirrors the manual's procedure exactly:</p>
+
+<div class="step">
+<b>diachronic.criteria_grouping</b> (LLM) — "Read the whole transcript. Group utterances into temporal moments using <i>criteria</i> like 'the utterances talk about feeling their hands move'."
+</div>
+
+<div class="step">
+<b>diachronic.criteria_revision</b> (LLM, can loop) — "Look at your groupings. Do any need splitting or merging? Is anything in the wrong moment?" The agent emits a <code>convergence: {decision, reason}</code> field — either <i>"more revision needed"</i> or <i>"converged"</i>. The orchestrator dispatches another revision pass if needed, up to 5 times.
+</div>
+
+<div class="step">
+<b>diachronic.idu_naming_ordering</b> (LLM) — "Now name each group (e.g., 'Initial Sensation', 'Imagery Onset') and number them in the order the participant <i>experienced</i> them, not the order they were mentioned in the interview."
+</div>
+
+<div class="callout">
+<b>Important: there is no <code>diachronic.phases</code> substep.</b> The manual explicitly says: <i>"our simplified approach does not include identifying the diachronic structure, and as such does not consider sub-phases of diachronic units."</i> An earlier draft of this pipeline included a phases substep, borrowed from a different methodology (µ-PATH). It has been removed.
+</div>
+
+<p>Synchronic similarly decomposes into <code>theme_grouping_within_idu</code> → <code>isu_naming</code> → <code>isu_second_level_grouping</code>, iterated <b>per IDU</b> (not per phase — there are no phases).</p>
+
+<h2 id="four">5. The four-part "close" — how each step finishes</h2>
+
+<p>Every substep — LLM-driven or orchestrator-driven — finishes by performing a single transactional operation called <b>close</b>. Closure requires four things to land together:</p>
+
+<table>
+<thead><tr><th>#</th><th>Artifact</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><b>Output file(s)</b> in <code>analyses/</code></td><td>The actual analysis result — a JSON file with the structured output, a Markdown file with the human-readable table, and (for LLM substeps) a <b>prompt.json</b> with the exact prompt + response + model + tokens used to produce it.</td></tr>
+<tr><td>2</td><td><b>Audit event(s)</b> in <code>.mpi/audit.jsonl</code></td><td>One line per analytic decision, including which IDU/ISU was coded, what confidence, whether it was flagged, what files were produced.</td></tr>
+<tr><td>3</td><td><b>Manifest update</b> in <code>.mpi/project.json</code></td><td>The single source of truth for "what's done, what's pending". Atomically written (tmp file → rename) so concurrent readers never see a partial state.</td></tr>
+<tr><td>4</td><td><b>Git commit</b></td><td>One commit per substep close, message format <code>mpi: &lt;actor&gt; &lt;stage&gt;.&lt;substep&gt; &lt;scope&gt; (&lt;N&gt;units &lt;K&gt;flagged)</code>. Binds artifacts + audit + manifest together at one point in history.</td></tr>
+</tbody>
+</table>
+
+<p>All four are done by a single CLI helper: <code>scripts/mpi_step.py close</code>. It runs pre-checks (artifacts exist, schema validates, upstream substeps are done), then appends to audit, then atomically updates the manifest, then commits. If any step fails after pre-checks, the manifest is left untouched and the substep stays <code>pending</code> — the next run will retry it.</p>
+
+<div class="callout">
+<b>The prompt.json artifact is the secret weapon against fabrication.</b> Every LLM call writes the exact prompt and the exact response to disk. If you suspect the agent made something up, you can re-run the prompt offline against the same model and compare. Fabrication becomes detectable by replay, not just rule-violation.
+</div>
+
+<h2 id="audit">6. The audit trail (the on-disk story of what happened)</h2>
+
+<p>There are two log files in <code>.mpi/</code>:</p>
+
+<ul>
+  <li><b><code>audit.jsonl</code></b> — the <b>source of truth</b>. One structured JSON object per line, with fields named after standard observability conventions (ECS / OpenTelemetry). Machine-readable; greppable with <code>jq</code>.</li>
+  <li><b><code>reasoning.log</code></b> — a <b>human-readable view</b> of the same data, regenerated on demand by <code>mpi_step.py render</code>. It's <i>derived</i> from the JSONL, not written separately, so the two can never drift out of sync.</li>
+</ul>
+
+<p>A single audit event looks roughly like this:</p>
+
+<pre>{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "@timestamp": "2026-05-17T14:32:07.123Z",
+  "trace_id": "&lt;same UUID for every event in this run&gt;",
+  "span_id": "&lt;unique per substep close&gt;",
+  "actor": {"kind": "subagent", "name": "mpi-analyst",
+            "model": "claude-haiku-4-5"},
+  "event": {"kind": "event", "category": "analysis",
+            "action": "idu_coded", "outcome": "success",
+            "duration_ms": 14820},
+  "mpi": {
+    "participant": "p1s1", "stage": "diachronic",
+    "substep": "idu_naming_ordering",
+    "unit": {"id": 4, "name": "Involuntary Hand Movement",
+             "confidence": 5, "flag_for_review": false},
+    "manifest_status": "done",
+    "artifact_paths": ["analyses/p1s1-diachronic.idu_naming_ordering.md",
+                       "analyses/p1s1-diachronic.idu_naming_ordering.json"],
+    "artifact_sha256": {"...": "..."},
+    "prompt_artifact_path": "analyses/p1s1-diachronic.idu_naming_ordering.prompt.json",
+    "git_commit_sha": "a82d63b..."
+  },
+  "reason": "Movement noted as discrete onset moment; 3 utterances align."
+}</pre>
+
+<p>To get a human-readable view of everything that happened in a run:</p>
+
+<pre>python scripts/mpi_step.py render</pre>
+
+<p>Which produces lines like:</p>
+
+<pre>[2026-05-17T14:32:07Z] mpi-analyst p1s1 diachronic.idu_naming_ordering: Movement noted as discrete onset moment; 3 utterances align. 1 units, 0 flagged. commit=a82d63b</pre>
+
+<h2 id="yolo">7. Yolo mode: running the whole thing unattended</h2>
+
+<p>The pipeline has two execution modes:</p>
+
+<ul>
+  <li><b>assisted</b> (default) — Claude pauses after each per-participant stage and shows you the output, asking <i>"Accept and proceed?"</i></li>
+  <li><b>yolo</b> — Claude runs every stage to completion without confirmation. <code>/mpi all --yolo</code>.</li>
+</ul>
+
+<p>In yolo, several safety mechanisms make sure the on-disk state remains coherent even with no human in the loop:</p>
+
+<table>
+<thead><tr><th>Mechanism</th><th>What it prevents</th></tr></thead>
+<tbody>
+<tr><td><b>Blocked-state audit events</b></td><td>If a substep is skipped because its upstream isn't done, a <code>stage_blocked</code> event is emitted. Absence of an artifact alone isn't traceable; the blocked event is.</td></tr>
+<tr><td><b>Run identity (<code>.mpi/run_id</code>)</b></td><td>Every run has a single UUID. All audit events for that run share it as <code>trace_id</code>. Resumed runs reuse it.</td></tr>
+<tr><td><b>Dirty-worktree refusal</b></td><td>The helper refuses to close if your repo has uncommitted files outside <code>analyses/</code> and <code>.mpi/</code>. Prevents accidentally committing unrelated work.</td></tr>
+<tr><td><b>Commit-failure rollback</b></td><td>If <code>git commit</code> fails after audit+manifest succeed, the manifest is rolled back to its previous state. The next run will see the substep as <code>pending</code> and retry.</td></tr>
+<tr><td><b>Partial-artifact rejection</b></td><td>If a subagent writes the analysis JSON+MD but crashes before writing the prompt.json, the helper rejects the close. The partial files stay on disk for inspection; manifest stays pending.</td></tr>
+<tr><td><b>Concurrent-close lock</b></td><td><code>.mpi/close.lock</code> serialises closes. Two parallel runs can't corrupt the manifest. Stale locks are auto-reclaimed only if the holding PID is verifiably dead on the same host.</td></tr>
+<tr><td><b>HEAD verification</b></td><td>At resume, the helper checks that the current git HEAD matches what the manifest's last commit recorded. Mismatch → refusal to close until you resolve.</td></tr>
+<tr><td><b>Artifact SHA256 pinning</b></td><td>Every audit event records the SHA256 of every artifact file it produced. Silent tampering is detectable.</td></tr>
+<tr><td><b>Cascade reset</b></td><td>If you (or the agent) revise an IDU after synchronic analysis revealed a temporal split, the manifest automatically resets all downstream substeps that depended on that IDU's old form back to <code>pending</code>. No analysis ever runs on stale inputs.</td></tr>
+</tbody>
+</table>
+
+<h2 id="kappa">8. Kappa calibration: a sanity check</h2>
+
+<p>The manual recommends comparing two independent analysts' work on <b>one example transcript</b> using Cohen's κ, and continuing training until κ > 0.6. This pipeline implements that as a <b>one-shot setup utility</b>, not a per-run gate:</p>
+
+<pre>mpi-kappa calibrate --participant p3s1 --stage diachronic</pre>
+
+<p>This re-runs the diachronic analysis for p3s1 using an alternate agent (different model, e.g. sonnet instead of haiku, or a different prompt variant), computes κ between the two runs' IDU assignments, and appends a record to <code>.mpi/kappa_calibration.jsonl</code>.</p>
+
+<p>From that point on:</p>
+<ul>
+  <li>If κ ≥ 0.6, cross-participant stages proceed normally.</li>
+  <li>If κ &lt; 0.6, cross-participant stages emit a <code>kappa_warning</code> audit event but still proceed.</li>
+  <li>If you pass <code>--strict-kappa</code> to <code>/mpi all</code>, low κ becomes a hard error.</li>
+</ul>
+
+<div class="callout">
+<b>Why not block every run?</b> The manual frames κ as a training-time check: "continue training until κ > .6." It doesn't say "block every production run forever". An earlier design draft made κ a hard gate; this one matches the manual's intent.
+</div>
+
+<h2 id="walk">9. A concrete walkthrough</h2>
+
+<p>Suppose you have 7 participants × 3 suggestions = 21 transcripts. You want to compare imagery vividness across score categories (low/moderate/high) per suggestion.</p>
+
+<ol>
+  <li><code>/mpi init --run runs/phase1/ --transcripts data/phase1/</code><br>Claude reads transcripts, proposes <code>IV: score-category {low: 0-1, mod: 2-3, high: 4-5}</code> and <code>DVs: [imagination, cognition, sensation, emotion]</code>. You confirm via prompts.</li>
+  <li><code>/mpi all --yolo</code><br>Claude proceeds through every stage automatically. Per-participant diachronic and synchronic substeps fan out in parallel (one subagent per participant). Each subagent writes its three artifact files and calls <code>mpi_step.py close</code>.</li>
+  <li>After per-participant stages finish, cross-participant stages run sequentially: <code>generic_diachronic</code> per event, <code>generic_synchronic</code> per worksheet, <code>global_synchronic</code> per (generic-IDU × IV), then <code>hypothesis</code> per DV focus plus a global review.</li>
+  <li>Final outputs land in <code>analyses/</code> (per-participant) and <code>hypotheses/</code> (per-DV).</li>
+  <li><code>git log --oneline</code> shows one commit per substep close — typically 100-200 commits for a 21-transcript run.</li>
+  <li><code>python scripts/mpi_step.py render</code> regenerates a human-readable <code>.mpi/reasoning.log</code> summarising every decision.</li>
+</ol>
+
+<p>If anything went wrong mid-run, you can re-run the same <code>/mpi all --yolo</code> — the pipeline reads the manifest, sees which substeps are already <code>done</code>, and resumes from the first <code>pending</code> one.</p>
+
+<h2 id="troubleshoot">10. When things go wrong</h2>
+
+<table>
+<thead><tr><th>Symptom</th><th>What it means</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td>Substep stays <code>pending</code> after a run</td><td>Either the subagent returned ERROR, or one of the four close artifacts didn't land.</td><td>Inspect <code>analyses/&lt;participant&gt;-&lt;substep&gt;.*</code> for partial files; check the audit log for a <code>close_aborted</code> or <code>stage_failed</code> event with a reason.</td></tr>
+<tr><td>Helper refuses with <code>dirty_worktree_refused</code></td><td>You have uncommitted files outside <code>analyses/</code> and <code>.mpi/</code>.</td><td>Commit or stash them, then retry.</td></tr>
+<tr><td>Helper refuses with <code>head_mismatch</code></td><td>The repo's current HEAD doesn't match the manifest's last recorded commit (e.g., you rebased).</td><td>Inspect; restore HEAD to the recorded SHA, or accept the new state by manually editing the manifest (rare).</td></tr>
+<tr><td><code>concurrent_close_blocked</code> after 30s</td><td>Another close is holding the lock.</td><td>Wait, or if you're sure no other process is running, <code>mpi_step.py unlock --reason "..."</code>.</td></tr>
+<tr><td><code>kappa_warning</code> events in audit</td><td>Either no calibration was run, or κ &lt; 0.6.</td><td>Run <code>mpi-kappa calibrate</code> on one participant; if κ stays low, revise the agent prompts (this is the "continue training" of the manual).</td></tr>
+<tr><td>Cross-participant skill errors with <code>upstream_pending</code></td><td>A required per-participant substep isn't done.</td><td>Check <code>/mpi status</code> for which one; re-run if needed.</td></tr>
+<tr><td>An LLM-substep result looks fabricated</td><td>Possible but detectable.</td><td>Read the corresponding <code>.prompt.json</code> file. Re-run the prompt offline. Compare. If outputs differ unreasonably, file a bug against the agent prompt.</td></tr>
+</tbody>
+</table>
+
+<h2 id="glossary">11. Glossary</h2>
+
+<dl>
+  <dt><b>MPI</b></dt><dd>Microphenomenological Interview. A qualitative research method for studying fine-grained first-person experience.</dd>
+  <dt><b>IDU</b></dt><dd>Incipient Diachronic Unit. A discrete temporally-ordered moment in a participant's experience. Produced by the diachronic stage.</dd>
+  <dt><b>ISU</b></dt><dd>Incipient Synchronic Unit. A theme present <i>within</i> an IDU. Produced by the synchronic stage.</dd>
+  <dt><b>ISU 2nd Level of Abstraction</b></dt><dd>Higher-level theme grouping multiple ISUs within an IDU. A distinct column preserved throughout the pipeline.</dd>
+  <dt><b>IV</b></dt><dd>Independent Variable. A study-design choice (e.g., score category) by which participants are grouped for comparison.</dd>
+  <dt><b>DV focus</b></dt><dd>Dependent Variable focus. A study-design choice (e.g., "cognition", "emotion") that shapes what aspects of experience the analysis emphasises. <b>Not a filter</b> — full transcripts are still coded; foci only guide attention.</dd>
+  <dt><b>Generic IDU</b></dt><dd>An IDU pattern shared by multiple participants. Produced by generic_diachronic.</dd>
+  <dt><b>Substep</b></dt><dd>The methodology's natural unit of analytic work, finer than a stage. Each substep closes its own four-part transaction.</dd>
+  <dt><b>Close</b></dt><dd>The transactional operation that finishes a substep: artifact + audit event + manifest update + git commit, atomically.</dd>
+  <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation.</dd>
+  <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
+  <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
+  <dt><b>Kappa calibration</b></dt><dd>One-shot setup utility comparing primary and alternate-agent analyses of one (participant, stage) pair using Cohen's κ. Warning-by-default, not a per-run gate.</dd>
+</dl>
+
+<hr>
+<p class="small">Source design plan: <code>docs/design-plans/2026-05-17-doc-as-done.md</code>. Plugin manifest at <code>microphenomenograph/1.0.0/</code>. Methodology source: <code>manual_kev.md</code> (Sheldrake &amp; Dienes 2025).</p>
+
+</body>
+</html>
