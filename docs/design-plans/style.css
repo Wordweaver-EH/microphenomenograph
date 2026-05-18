@@ -29,7 +29,7 @@ a { color: #076678; }
 /* Figures and SVG diagrams */
 figure { margin: 1.5rem auto; text-align: center; max-width: 100%;
          overflow: hidden; box-sizing: border-box; }
-figure svg { display: block; width: 80%; max-width: 560px; height: auto;
+figure svg { display: block; width: 70%; max-width: 440px; height: auto;
              margin: 0 auto; background: #f9f5d7; border: 1px solid #d5c4a1;
              border-radius: 6px; padding: .5rem; box-sizing: border-box; }
 figcaption { font-size: 0.88em; color: #504945;
