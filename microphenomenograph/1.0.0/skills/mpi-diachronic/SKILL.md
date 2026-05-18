@@ -121,3 +121,20 @@ Append to `.mpi/reasoning.log`:
   `git add analyses/pNsN-diachronic.md && git commit -m "mpi: pNsN diachronic analysis"`
 
 **Verifies:** microphenomenograph.AC3.1, microphenomenograph.AC3.2, microphenomenograph.AC3.3, microphenomenograph.AC3.4, microphenomenograph.AC3.5
+
+## Closure (mandatory)
+
+Each diachronic substep closes its own four-part transaction via `mpi_step.py close`.
+The `mpi-analyst` subagent owns persistence for all three LLM substeps.
+
+| Substep | Actor | Artifacts | Notes |
+|---------|-------|-----------|-------|
+| `diachronic.criteria_grouping` | mpi-analyst (LLM) | `pNsN-diachronic.criteria_grouping.{json,md,prompt.json}` | First substep; no prerequisites |
+| `diachronic.criteria_revision` | mpi-analyst (LLM) | `pNsN-diachronic.criteria_revision.{json,md,prompt.json}` | JSON must include `convergence: {decision, reason}`; orchestrator re-dispatches while `decision == "more_revision_needed"`, capped at 5 passes |
+| `diachronic.idu_naming_ordering` | mpi-analyst (LLM) | `pNsN-diachronic.idu_naming_ordering.{json,md,prompt.json}` | Final diachronic substep; its close triggers synchronic eligibility |
+
+**Commit message format:** `mpi: mpi-analyst diachronic.<substep> pNsN (<N>units <K>flagged)`
+
+**Manual-native constraint:** Diachronic does NOT include sub-phase identification (`diachronic.phases`, `diachronic.du`, `diachronic.refined_du`). Substep names follow manual_kev.md (Sheldrake & Dienes 2025) verbatim.
+
+**Anti-fabrication rule:** If transcript is missing, empty, or malformed, `mpi-analyst` returns `ERROR <reason>` and stops. Never synthesize placeholder content.

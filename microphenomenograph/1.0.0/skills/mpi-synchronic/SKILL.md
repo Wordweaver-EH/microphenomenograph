@@ -73,3 +73,20 @@ Append to `.mpi/reasoning.log`:
 Same as mpi-diachronic (assisted/yolo).
 
 **Verifies:** microphenomenograph.AC4.1, microphenomenograph.AC4.2, microphenomenograph.AC4.3
+
+## Closure (mandatory)
+
+Synchronic substeps iterate **per IDU within a transcript**, not per stage-level invocation.
+Scope for each substep is `pNsN-iduN` (e.g., `p1s1-idu1`, `p1s1-idu2`).
+
+| Substep | Actor | Artifacts | Notes |
+|---------|-------|-----------|-------|
+| `synchronic.theme_grouping_within_idu` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.theme_grouping_within_idu.{json,md,prompt.json}` | First synchronic substep per IDU. If `temporal_order_within_idu: true`, orchestrator schedules `diachronic.criteria_revision` re-close for that transcript before continuing |
+| `synchronic.isu_naming` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.isu_naming.{json,md,prompt.json}` | Requires `theme_grouping_within_idu` done for same IDU |
+| `synchronic.isu_second_level_grouping` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.isu_second_level_grouping.{json,md,prompt.json}` | Final synchronic substep per IDU |
+
+**Output columns (all three substeps):** `criteria` (string) | `isu_name` (string) | `isu_second_level_of_abstraction` (string or empty). These three columns are preserved as distinct fields through all downstream aggregation.
+
+**IDU-split-after-synchronic return edge:** If `theme_grouping_within_idu` flags `temporal_order_within_idu: true`, the orchestrator re-closes `diachronic.criteria_revision` for that transcript with the split context in the prompt. Manifest records `idu_split_after_synchronic` audit event linking both span_ids.
+
+**Anti-fabrication rule:** If diachronic output is missing, empty, or malformed, `mpi-analyst` returns `ERROR <reason>` and stops.
