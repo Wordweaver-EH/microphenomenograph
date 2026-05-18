@@ -469,7 +469,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 - `skills/mpi-generic-synchronic/SKILL.md` — mpi-cross-analyst closes 2 substeps per (event × IV category × generic-IDU-of-interest) (`worksheet_assembly`, `isu_second_level_grouping`); generic-IDU-of-interest list comes from `generic_diachronic.pattern_identification` outputs
 - `skills/mpi-global-synchronic/SKILL.md` — single substep, scoped per (generic-IDU × IV category); ISU 2nd Level of Abstraction preserved as a distinct column
 - `skills/mpi-hypothesis/SKILL.md` — closes 3 LLM substeps: `evidence_extraction` per DV focus (extracts pattern variations from upstream artifacts grouped by IV level with full traceability); `candidate_drafting` per DV focus (drafts causal hypotheses framed against IV-level differences, citing evidence artifact paths); `weak_evidence_review` global (flags hypotheses with thin support given participant count, mirroring the manual's "only provides weak evidence" guidance)
-- `skills/mpi-irr/SKILL.md` — calibration utility (see Phase 13). Operation `mpi-irr calibrate --participant pNsN --stage <S>` runs the alternate-agent analysis through the stage's substep DAG, then `irr_calibration.alignment` (LLM, fresh cross-analyst subagent, optional user validation in assisted mode), then `irr_calibration.agreement_computation` (orchestrator: builds union coincidence matrix, computes α/κ/αU/ARI with bootstrap 95% CIs). Writes `analyses/independent/<scope>-<stage>.<substep>.{json,md,prompt.json}` for every substep of the shadowed stage, plus one structured record to `.mpi/irr_calibration.jsonl`. Cross-participant skills emit `irr_warning` if outcome is low/missing; proceed unless `--strict-irr`. The legacy `mpi-kappa` command name is retained as an alias by the command router for backwards compatibility.
+- `skills/mpi-irr/SKILL.md` — calibration utility (see Phase 13). Operation `mpi-irr calibrate --participant pNsN --stage <S>` runs the alternate-agent analysis through the stage's substep DAG, then `irr_calibration.alignment` (LLM, fresh cross-analyst subagent, optional user validation in assisted mode), then `irr_calibration.agreement_computation` (orchestrator: builds union coincidence matrix, computes α/κ/αU/ARI with bootstrap 95% CIs). Writes `analyses/independent/<scope>-<stage>.<substep>.{json,md,prompt.json}` for every substep of the shadowed stage, plus one structured record to `.mpi/irr_calibration.jsonl`. Cross-participant skills emit `irr_warning` if outcome is low/missing; proceed unless `--strict-irr`.
 - `skills/mpi-status/SKILL.md` — read-only; closure section explicitly states "no artifact close" but emits a `stage_phase: read` audit event for trace continuity
 
 **Dependencies:** Phase 7.
@@ -537,7 +537,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
   - `alpha_nominal(coincidence_matrix)`, `cohens_kappa(coincidence_matrix)`, `ari(partition_a, partition_b)`, `alpha_unitizing(boundaries_a, boundaries_b, n_utterances)` — point-estimate calculators, all pure Python.
   - `bootstrap_ci(metric_fn, utterances, n_bootstrap=5000, alpha=0.05)` — generic bootstrap. Resamples utterance assignments with replacement; recomputes `metric_fn` on each; returns `{point, ci_lo, ci_hi, n_bootstrap}`. Same bootstrap sample indices reused across all four metrics within one calibration call (caller passes the shared sample list).
   - `compute_irr(primary, alternate, alignment, level)` — top-level convenience: runs the four point estimates + four bootstrap CIs and returns the full record dict matching the JSONL schema in DoD #8.
-- `scripts/kappa.py` (existing) retained for backwards compatibility but `irr.py` becomes the canonical entry point. The kappa.py logic merges into irr.py.
+- `scripts/kappa.py` (existing) is deleted; its logic merges into `irr.py`. Pre-release: no backwards-compatibility shim.
 - Orchestrator hook in `/mpi all`: after the **first** participant's `diachronic.idu_naming_ordering` close, schedule `mpi-irr calibrate --participant <that_pNsN> --stage diachronic`. After the first participant's last `synchronic.isu_second_level_grouping` close (across all that participant's IDUs), schedule `mpi-irr calibrate --participant <that_pNsN> --stage synchronic`. Both happen automatically — user does not invoke them.
 - The calibrate operation:
   1. Runs the alternate-agent analysis through the same substep DAG, writing per-substep alternate artifacts to `analyses/independent/<pNsN>-<stage>.<substep>.{json,md,prompt.json}`.
@@ -547,7 +547,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
   5. Classifies disagreements (assignment_count / partial_overlap / no_overlap, mirroring upath).
   6. Appends one structured record to `.mpi/irr_calibration.jsonl`.
 - Cross-participant skills emit `irr_warning` audit event at stage start if the most-recent IRR record's α-CI lower bound is below 0.6 (the `low` outcome condition) or no IRR record exists; proceed unless `--strict-irr`.
-- `skills/mpi-kappa/SKILL.md` renamed to `skills/mpi-irr/SKILL.md`; the user-facing CLI verb is `mpi-irr calibrate` (the `mpi-kappa` name remains as an alias for backwards compatibility in the command router).
+- `skills/mpi-kappa/SKILL.md` renamed to `skills/mpi-irr/SKILL.md`; the user-facing CLI verb is `mpi-irr calibrate`. Pre-release: no backwards-compatibility alias.
 
 **Dependencies:** Phase 6 (mpi-analyst produces per-substep artifacts), Phase 8 (per-participant skill closure sweep — needs the first-participant hook).
 
@@ -581,7 +581,7 @@ The split keeps each plan focused and within the 8-phase budget. Plan 1 leaves t
 
 **JSONL corruption from partial writes.** Each append is a single `open('a'); write(line); fsync(); close()` with the line constructed entirely in memory. `mpi_step.py render` flags malformed lines as `MALFORMED:<lineno>` rather than aborting the render — keeps human visibility intact even when the JSONL has a damaged tail.
 
-**Helper as single point of failure.** It's stdlib-only (~300 LOC estimated), runs locally, has unit tests that exercise it without LLM calls, and is the same Python interpreter that already runs `kappa.py`. No new install step.
+**Helper as single point of failure.** It's stdlib-only (~300 LOC estimated), runs locally, has unit tests that exercise it without LLM calls, and is the same Python interpreter that runs every other helper in `scripts/`. No new install step.
 
 **`/mpi all` orchestration interaction.** The orchestrator (Claude in the main loop, executing the `mpi` command's routing logic) is itself an actor and must also call `mpi_step.py close` for orchestration-level events (cascade resets, stage dispatches). Phase 5 enumerates the orchestrator's close-points.
 
