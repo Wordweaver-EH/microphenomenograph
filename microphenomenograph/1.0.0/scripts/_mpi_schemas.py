@@ -429,3 +429,85 @@ LLM_SUBSTEPS: frozenset[tuple[str, str]] = frozenset({
     ("irr_calibration", "independent_analyst"),
     ("irr_calibration", "alignment"),
 })
+
+# ---------------------------------------------------------------------------
+# Prompt artifact validator (schema_version 2)
+# ---------------------------------------------------------------------------
+
+_PROMPT_ARTIFACT_REQUIRED_KEYS = [
+    "schema_version", "actor", "model", "sampling",
+    "stage", "substep", "scope", "prompt", "response", "metadata",
+]
+
+_PROMPT_ACTOR_REQUIRED = ["kind", "name", "agent_file_sha256", "agent_file_path"]
+_PROMPT_MODEL_REQUIRED = ["id", "provider"]
+_PROMPT_SAMPLING_REQUIRED = ["temperature", "top_p", "max_tokens"]
+_PROMPT_INNER_REQUIRED = ["system", "messages", "tools_available"]
+_PROMPT_RESPONSE_REQUIRED = ["raw_text", "tool_calls", "parsed_units_path"]
+_PROMPT_METADATA_REQUIRED = ["finish_reason", "usage", "duration_ms", "timestamp"]
+_PROMPT_USAGE_REQUIRED = ["input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"]
+
+
+def validate_prompt_artifact(
+    artifact: dict,
+    *,
+    check_agent_sha: bool = True,
+) -> list[SchemaError]:
+    """
+    Validate a prompt.json dict against schema_version 2.
+    If check_agent_sha=True (default), reads the agent file at
+    artifact['actor']['agent_file_path'] and verifies SHA256 matches
+    artifact['actor']['agent_file_sha256'].
+    Returns list of SchemaError; empty means valid.
+    """
+    import hashlib
+    import os
+
+    errors = _require_keys(artifact, _PROMPT_ARTIFACT_REQUIRED_KEYS, "prompt")
+
+    if artifact.get("schema_version") != "2":
+        errors.append(SchemaError("prompt.schema_version",
+                                  f"must be '2', got {artifact.get('schema_version')!r}"))
+
+    actor = artifact.get("actor", {})
+    if isinstance(actor, dict):
+        errors.extend(_require_keys(actor, _PROMPT_ACTOR_REQUIRED, "prompt.actor"))
+        if check_agent_sha and "agent_file_sha256" in actor and "agent_file_path" in actor:
+            agent_path = actor["agent_file_path"]
+            expected_sha = actor["agent_file_sha256"]
+            # Resolve relative to cwd (the plugin root during execution)
+            if os.path.exists(agent_path):
+                with open(agent_path, "rb") as f:
+                    actual_sha = hashlib.sha256(f.read()).hexdigest()
+                if actual_sha != expected_sha:
+                    errors.append(SchemaError(
+                        "prompt.actor.agent_file_sha256",
+                        f"SHA256 mismatch: recorded={expected_sha[:16]}... "
+                        f"actual={actual_sha[:16]}... — agent file has changed since this prompt was captured",
+                    ))
+            # If file doesn't exist at path, skip SHA check (may be a different machine/path)
+
+    model = artifact.get("model", {})
+    if isinstance(model, dict):
+        errors.extend(_require_keys(model, _PROMPT_MODEL_REQUIRED, "prompt.model"))
+
+    sampling = artifact.get("sampling", {})
+    if isinstance(sampling, dict):
+        errors.extend(_require_keys(sampling, _PROMPT_SAMPLING_REQUIRED, "prompt.sampling"))
+
+    prompt_inner = artifact.get("prompt", {})
+    if isinstance(prompt_inner, dict):
+        errors.extend(_require_keys(prompt_inner, _PROMPT_INNER_REQUIRED, "prompt.prompt"))
+
+    response = artifact.get("response", {})
+    if isinstance(response, dict):
+        errors.extend(_require_keys(response, _PROMPT_RESPONSE_REQUIRED, "prompt.response"))
+
+    metadata = artifact.get("metadata", {})
+    if isinstance(metadata, dict):
+        errors.extend(_require_keys(metadata, _PROMPT_METADATA_REQUIRED, "prompt.metadata"))
+        usage = metadata.get("usage", {})
+        if isinstance(usage, dict):
+            errors.extend(_require_keys(usage, _PROMPT_USAGE_REQUIRED, "prompt.metadata.usage"))
+
+    return errors
