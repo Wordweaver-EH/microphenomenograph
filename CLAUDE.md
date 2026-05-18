@@ -1,6 +1,6 @@
 # microphenomenograph repo
 
-_Last updated: 2026-05-17_
+_Last updated: 2026-05-18_
 
 Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline implementing Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis.
 
@@ -48,3 +48,22 @@ Helper scripts live inside the plugin (`microphenomenograph/1.0.0/scripts/`):
 - Analysis is zero-shot — no examples are injected into prompts. OSF analyses in `examples/analyses/` are acceptance test fixtures only.
 - Plugin version is pinned in `microphenomenograph/1.0.0/`; bump the directory name for new versions, do not edit in place after release.
 - Freshness dates: always use `date +%Y-%m-%d` when updating CLAUDE.md files.
+
+### HTML documentation
+
+When writing HTML docs in `docs/design-plans/` (e.g. novice-reader walkthroughs of design plans), **do not inline CSS**. Link to the shared stylesheet:
+
+```html
+<link rel="stylesheet" href="style.css">
+```
+
+`docs/design-plans/style.css` provides the Gruvbox-light palette plus utility classes for the rest of the doc:
+
+- Layout: `body` defaults, headings, `code`/`pre`, tables, links
+- Callouts: `.callout`, `.callout-warning`, `.small`, `.step`
+- TOC block: `.toc`
+- Figures and SVG diagrams: `figure`, `figcaption`, plus SVG classes `.svg-box`, `.svg-box-{llm,orch,user,artifact,audit}`, `.svg-arrow`, `.svg-arrow-{dashed,derived}`, `.svg-text`, `.svg-text-{small,label}`, and legend classes `.legend`, `.l-{llm,orch,user,art,audit}`
+
+For SVG diagrams that use `.svg-arrow*` classes, the HTML body must also include the arrow marker `<defs>` block (UUIDs `arrow`, `arrow-red`, `arrow-amber`) — see `2026-05-17-doc-as-done.html` for the canonical example.
+
+Naming convention for HTML walkthroughs: `YYYY-MM-DD-<slug>.html`, same slug as the source design plan.
