@@ -309,7 +309,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             print(f"ERROR schema_validation_failed: {err}", file=sys.stderr)
         return _abort(f"schema_validation_failed: {schema_errors[0]}")
 
-    # Check LLM substep requires --prompt-artifact
+    # Check LLM substep requires --prompt-artifact and validate it
+    from _mpi_schemas import validate_prompt_artifact
     if (args.stage, args.substep) in LLM_SUBSTEPS:
         if not getattr(args, "prompt_artifact", None):
             msg = (f"prompt_artifact_required: substep ({args.stage}, {args.substep}) "
@@ -321,6 +322,22 @@ def cmd_close(args: argparse.Namespace) -> int:
             msg = f"prompt_artifact_not_found: {args.prompt_artifact}"
             print(f"ERROR {msg}", file=sys.stderr)
             return _abort(msg)
+        try:
+            pa_data = json.loads(pa.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            msg = f"prompt_artifact_invalid_json: {exc}"
+            print(f"ERROR {msg}", file=sys.stderr)
+            return _abort(msg)
+        pa_errors = validate_prompt_artifact(pa_data, check_agent_sha=False)
+        if pa_errors:
+            for err in pa_errors:
+                print(f"ERROR prompt_artifact_schema_invalid: {err}", file=sys.stderr)
+            return _abort(f"prompt_artifact_schema_invalid: {pa_errors[0]}")
+    elif getattr(args, "prompt_artifact", None):
+        msg = (f"prompt_artifact_unexpected: substep ({args.stage}, {args.substep}) "
+               "is orchestrator-only and must NOT have --prompt-artifact")
+        print(f"ERROR {msg}", file=sys.stderr)
+        return _abort(msg)
 
     # Check substep DAG prerequisites
     prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
