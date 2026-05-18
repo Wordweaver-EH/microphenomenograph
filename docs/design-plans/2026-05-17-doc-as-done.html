@@ -84,22 +84,32 @@ The agent writes its proposal to disk with a rationale.
 <b>IV bin rules.</b> IV levels can't overlap in their numeric ranges — overlap is rejected at init with a named error pointing at the offending pair, and the user fixes the bins. (Pre-release: no escape hatch.) Bins also have to cover every score that actually appears in the corpus, or you have to explicitly declare which scores you're dropping via <code>excluded_scores</code>. Example: <code>low 1-2 / med 3-4 / high 4-5</code> overlaps at 4 and is rejected; correct to <code>low 0-1 / med 2-3 / high 4-5</code> (the manual's example bins) or similar.
 </div>
 
-<h2 id="stages">3. The seven analysis stages</h2>
+<h2 id="stages">3. The state machine: setup + 7 analysis stages + 1 sidecar gate</h2>
 
-<p>After <code>init</code>, the pipeline runs seven stages in dependency order. Each stage produces files in <code>analyses/</code>.</p>
+<p>The pipeline has three kinds of nodes in the state machine, and the table below lists all of them so you can see the shape end-to-end:</p>
+
+<ul>
+  <li><b>Setup</b>: <code>init</code> — one-shot at the start. Parses transcripts, proposes IV/DV via LLM, gets user confirmation. Not a recurring analysis stage; runs once and writes the immutable <code>study</code> block.</li>
+  <li><b>The seven analysis stages</b> in dependency order: <code>transcript_prep</code> → <code>diachronic</code> → <code>synchronic</code> → <code>generic_diachronic</code> → <code>generic_synchronic</code> → <code>global_synchronic</code> → <code>hypothesis</code>. These are the substantive analytic work; each produces files in <code>analyses/</code>.</li>
+  <li><b>Sidecar gate</b>: <code>irr_calibration</code> — runs automatically after the calibration transcript's diachronic and synchronic complete. Not in the main dependency chain (cross-participant stages do NOT depend on IRR being <code>passed</code>); emits a warning-by-default signal alongside the main flow. Marked as "sidecar" because it observes but does not gate.</li>
+</ul>
+
+<p>Each row in the table below names its kind in parentheses:</p>
+
+<p>Updates to the manifest are atomic on a single substep close. Resumability comes from the manifest reflecting only completed substeps; a partially-finished substep stays <code>pending</code> until its close lands.</p>
 
 <table>
 <thead><tr><th>Stage</th><th>What it does (in plain English)</th><th>Scope</th></tr></thead>
 <tbody>
-<tr><td><code>init</code></td><td>Scans transcripts, parses headers, proposes IV scheme + DV foci via LLM, gets user confirmation; persists immutable <code>study</code> block to manifest.</td><td>one-shot</td></tr>
-<tr><td><code>transcript_prep</code></td><td>Cleans up each transcript: strips BOMs, normalises spacing, fixes speaker labels.</td><td>per participant</td></tr>
-<tr><td><code>diachronic</code></td><td>Reads one transcript at a time and breaks the experience into temporally-ordered moments (<b>IDUs</b> — "Incipient Diachronic Units"). What happened first, second, third?</td><td>per participant</td></tr>
-<tr><td><code>synchronic</code></td><td>For each IDU within a participant, identifies the themes present at that moment (<b>ISUs</b> — "Incipient Synchronic Units"). What aspects of experience co-occurred?</td><td>per (participant × IDU)</td></tr>
-<tr><td><code>irr_calibration</code></td><td>Auto-triggered after the first participant's diachronic and synchronic complete. Runs an alternate-agent re-analysis, aligns categories via LLM, computes four agreement metrics with bootstrap 95% CIs. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</td><td>after 1st participant's diachronic; after 1st participant's synchronic</td></tr>
-<tr><td><code>generic_diachronic</code></td><td>Compares IDUs across participants who share an IV level. Identifies common temporal patterns and how those patterns differ between IV levels.</td><td>per event</td></tr>
-<tr><td><code>generic_synchronic</code></td><td>Across participants in the same IV category, groups the ISUs that appear within each common generic IDU.</td><td>per (event × IV × generic-IDU)</td></tr>
-<tr><td><code>global_synchronic</code></td><td>Where the same generic IDU appears in multiple events (suggestions), aggregates the ISUs across events.</td><td>per (generic-IDU × IV)</td></tr>
-<tr><td><code>hypothesis</code></td><td>Generates candidate causal hypotheses about how participant experience differs by IV level, framed per DV focus, with traceability back to evidence in all three of generic_diachronic, generic_synchronic, and global_synchronic.</td><td>per DV focus; global review</td></tr>
+<tr><td><code>init</code> <i>(setup)</i></td><td>Scans transcripts, parses headers, proposes IV scheme + DV foci via LLM, gets user confirmation; persists immutable <code>study</code> block to manifest.</td><td>one-shot</td></tr>
+<tr><td><code>transcript_prep</code> <i>(stage 1/7)</i></td><td>Cleans up each transcript: strips BOMs, normalises spacing, fixes speaker labels.</td><td>per transcript</td></tr>
+<tr><td><code>diachronic</code> <i>(stage 2/7)</i></td><td>Reads one transcript at a time and breaks the experience into temporally-ordered moments (<b>IDUs</b> — "Incipient Diachronic Units"). What happened first, second, third?</td><td>per transcript</td></tr>
+<tr><td><code>synchronic</code> <i>(stage 3/7)</i></td><td>For each IDU within a transcript, identifies the themes present at that moment (<b>ISUs</b> — "Incipient Synchronic Units"). What aspects of experience co-occurred?</td><td>per (transcript × IDU)</td></tr>
+<tr><td><code>irr_calibration</code> <i>(sidecar gate)</i></td><td>Auto-triggered after the calibration transcript's diachronic and synchronic complete. Runs an alternate-agent re-analysis, aligns categories via LLM, computes four agreement metrics with bootstrap 95% CIs. Warning-by-default; opt-in <code>--strict-irr</code> blocks. <b>Not in the dependency chain</b> — cross-participant stages proceed regardless of IRR outcome (unless <code>--strict-irr</code>).</td><td>after the calibration transcript's diachronic; after its synchronic</td></tr>
+<tr><td><code>generic_diachronic</code> <i>(stage 4/7)</i></td><td>Compares IDUs across transcripts that share an IV level. Identifies common temporal patterns and how those patterns differ between IV levels.</td><td>per event</td></tr>
+<tr><td><code>generic_synchronic</code> <i>(stage 5/7)</i></td><td>Across transcripts in the same IV category, groups the ISUs that appear within each common generic IDU.</td><td>per (event × IV × generic-IDU)</td></tr>
+<tr><td><code>global_synchronic</code> <i>(stage 6/7)</i></td><td>Where the same generic IDU appears in multiple events (suggestions), aggregates the ISUs across events.</td><td>per (generic-IDU × IV)</td></tr>
+<tr><td><code>hypothesis</code> <i>(stage 7/7)</i></td><td>Generates <b>candidate mechanism hypotheses</b> (not causal estimates — see callout below) about how experience differs by IV level, framed per DV focus, with traceability back to evidence in all three of generic_diachronic, generic_synchronic, and global_synchronic.</td><td>per DV focus; global review</td></tr>
 </tbody>
 </table>
 
@@ -327,17 +337,30 @@ The agent writes its proposal to disk with a rationale.
 <figcaption>Substep DAG for per-participant stages. Black arrows = forward dependencies; orange self-loop = bounded revision loop (handles both split and merge within diachronic per manual line 59); solid red dashed return-edge = manual-licensed synchronic→diachronic split (manual line 67); fainter dotted red edge = synchronic→diachronic merge (extension beyond manual's literal wording, opt-in via <code>--allow-synchronic-merge</code>). Either return edge triggers a cascade reset of all downstream substeps.</figcaption>
 </figure>
 
+<div class="callout callout-warning">
+<b>"Candidate mechanism hypotheses", not causal estimates.</b> The pipeline's final output is qualitative pattern extraction — it generates conjectures about *what mechanisms might explain* the IV-level differences observed across a small sample of interviews. These are inputs for downstream causal testing in a separate study. They are not themselves causal estimates from a hypothesis test, and should never be reported as such. Every hypothesis artifact carries a verbatim disclaimer to this effect; the <code>weak_evidence_review</code> substep flags any unsupported causal language.
+</div>
+
 <h2 id="four">5. The four-part "close" — how each step finishes</h2>
 
-<p>Every substep — LLM-driven or orchestrator-driven — finishes by performing a single transactional operation called <b>close</b>. Closure requires four things to land together:</p>
+<p>Every substep — LLM-driven or orchestrator-driven — finishes by performing a single transactional operation called <b>close</b>. The four artifacts do <b>not</b> all land at the same instant; the honest contract is:</p>
+
+<ol>
+  <li><b>Output files</b> may exist on disk <i>before</i> close runs — subagents write them first.</li>
+  <li><b>Audit events</b> are appended to <code>.mpi/audit.jsonl</code> first inside close — including events for failed close attempts.</li>
+  <li><b>Manifest mutation</b> is the atomic commit-point: the substep status flips from <code>pending</code> to <code>done</code> in a single <code>os.replace</code>.</li>
+  <li><b>Git commit</b> binds (1)+(2)+(3) into one revision; the commit SHA is recorded in the manifest entry.</li>
+</ol>
+
+<p>A substep is <code>done</code> iff <b>(a)</b> the manifest's status says so AND <b>(b)</b> the named commit SHA exists in <code>git log</code>. Either alone is insufficient — a manifest with a <code>done</code> status but no matching commit (or vice versa) is an inconsistent state, which the helper detects at next start via the HEAD-mismatch check.</p>
 
 <table>
 <thead><tr><th>#</th><th>Artifact</th><th>Why</th></tr></thead>
 <tbody>
 <tr><td>1</td><td><b>Output file(s)</b> in <code>analyses/</code></td><td>The actual analysis result — a JSON file with the structured output, a Markdown file with the human-readable table, and (for LLM substeps) a <b>prompt.json</b> with the exact prompt + response + model + tokens used to produce it.</td></tr>
 <tr><td>2</td><td><b>Audit event(s)</b> in <code>.mpi/audit.jsonl</code></td><td>One line per analytic decision, including which IDU/ISU was coded, what confidence, whether it was flagged, what files were produced.</td></tr>
-<tr><td>3</td><td><b>Manifest update</b> in <code>.mpi/project.json</code></td><td>The single source of truth for "what's done, what's pending". Atomically written (tmp file → rename) so concurrent readers never see a partial state.</td></tr>
-<tr><td>4</td><td><b>Git commit</b></td><td>One commit per substep close, message format <code>mpi: &lt;actor&gt; &lt;stage&gt;.&lt;substep&gt; &lt;scope&gt; (&lt;N&gt;units &lt;K&gt;flagged)</code>. Binds artifacts + audit + manifest together at one point in history.</td></tr>
+<tr><td>3</td><td><b>Manifest update</b> in <code>.mpi/project.json</code></td><td>The atomic commit-point. Source of truth for <i>state</i> (which substeps are done/pending). Atomically written (tmp file → rename) so concurrent readers never see a partial state.</td></tr>
+<tr><td>4</td><td><b>Git commit</b></td><td>One commit per substep close, message format <code>mpi: &lt;actor&gt; &lt;stage&gt;.&lt;substep&gt; &lt;scope&gt; (&lt;N&gt;units &lt;K&gt;flagged)</code>. Recorded SHA goes into the manifest. Substep is <i>only</i> truly done when both manifest says so AND this commit exists in <code>git log</code>.</td></tr>
 </tbody>
 </table>
 
@@ -406,10 +429,17 @@ The agent writes its proposal to disk with a rationale.
 
 <h2 id="audit">6. The audit trail (the on-disk story of what happened)</h2>
 
-<p>There are two log files in <code>.mpi/</code>:</p>
+<p><b>Two sources of truth, by domain.</b> Tools that ask "what's done?" query the <i>manifest</i>. Tools that ask "what happened?" query the <i>audit log</i>. Don't conflate them:</p>
 
 <ul>
-  <li><b><code>audit.jsonl</code></b> — the <b>source of truth</b>. One structured JSON object per line, with fields named after standard observability conventions (ECS / OpenTelemetry). Machine-readable; greppable with <code>jq</code>.</li>
+  <li><b><code>.mpi/project.json</code> (manifest)</b> is the source of truth for <b>state</b> — which substeps are <code>pending</code>, <code>done</code>, <code>flagged</code>, <code>error</code> right now. Used by anything that decides what to run next.</li>
+  <li><b><code>.mpi/audit.jsonl</code> (audit log)</b> is the source of truth for <b>history</b> — what happened, when, by which actor, with what input/output. Used by anything that reconstructs a run, replays decisions, or computes aggregate statistics.</li>
+</ul>
+
+<p>Plus a third file derived from the audit log:</p>
+
+<ul>
+  <li><b><code>audit.jsonl</code></b> — already covered above. One structured JSON object per line, with fields named after standard observability conventions (ECS / OpenTelemetry). Machine-readable; greppable with <code>jq</code>.</li>
   <li><b><code>reasoning.log</code></b> — a <b>human-readable view</b> of the same data, regenerated on demand by <code>mpi_step.py render</code>. It's <i>derived</i> from the JSONL, not written separately, so the two can never drift out of sync.</li>
 </ul>
 
@@ -650,7 +680,8 @@ The agent writes its proposal to disk with a rationale.
 
 <h3>The JSONL record</h3>
 
-<pre>{"stage": "diachronic", "participant": "p1s1",
+<pre>{"stage": "diachronic",
+ "participant": "p1", "suggestion": "s1", "transcript_id": "p1s1",
  "timestamp": "2026-05-17T15:08:21Z",
  "primary_model": "claude-haiku-4-5",
  "alternate_model": "claude-sonnet-4-6",
@@ -658,12 +689,18 @@ The agent writes its proposal to disk with a rationale.
    "mode": "llm_auto_accepted",
    "mapping": [{"primary": "Initial Sensation", "alternate": "First Awareness",
                 "confidence": 0.82, "rationale": "..."}, ...],
-   "unmatched_primary": [], "unmatched_alternate": ["Surprise Reflection"]},
+   "unmatched_primary": [], "unmatched_alternate": ["Surprise Reflection"],
+   "confidence_distribution": {"min": 0.61, "p25": 0.74, "median": 0.82,
+                               "p75": 0.88, "max": 0.93}},
  "metrics": {
-   "alpha":   {"point": 0.64, "ci_lo": 0.42, "ci_hi": 0.79, "n_categories_union": 7,
+   "alpha":   {"point": 0.78, "ci_lo": 0.61, "ci_hi": 0.89, "n_categories_union": 7,
                "literature_thresholds": {"tentative": 0.667, "acceptable": 0.8,
                                          "source": "Krippendorff 2018"}},
-   "kappa":   {"point": 0.61, "ci_lo": 0.39, "ci_hi": 0.78,
+   "alpha_pre_alignment": {"point": 0.12, "ci_lo": 0.04, "ci_hi": 0.21,
+                           "note": "labels-as-names; shows alignment's contribution"},
+   "alpha_sensitivity_low_conf_excluded": {"point": 0.71, "ci_lo": 0.54, "ci_hi": 0.84,
+                                           "note": "drops mappings with confidence < 0.7"},
+   "kappa":   {"point": 0.74, "ci_lo": 0.58, "ci_hi": 0.86,
                "literature_thresholds": {"manual_kev": 0.6, "substantial": 0.61,
                                          "almost_perfect": 0.81,
                                          "source": "S&D 2025; Landis & Koch 1977"}},
@@ -676,6 +713,8 @@ The agent writes its proposal to disk with a rationale.
  "disagreement_types": {"assignment_count": 3, "partial_overlap": 4, "no_overlap": 1},
  "primary_threshold": 0.6,
  "outcome": "passed"}</pre>
+
+<p>In this example α point=0.78, ci_lo=0.61 → ci_lo ≥ 0.6 → <code>outcome="passed"</code>. (If α.ci_lo were 0.42, the same rule would yield <code>outcome="low"</code>.) The <code>alpha_pre_alignment</code> = 0.12 makes the alignment step's contribution visible — most of the headline 0.78 came from the LLM aligner mapping primary's "Initial Sensation" to alternate's "First Awareness". A reviewer should ask: is that mapping defensible? The <code>alpha_sensitivity_low_conf_excluded</code> row recomputes α after dropping low-confidence mappings; a large drop between headline and sensitivity α would mean the result depends on shaky alignments.</p>
 
 <div class="callout callout-warning">
 <b>Important caveat on the literature thresholds.</b> These bright-lines were established for <i>human analysts after training</i> (Krippendorff, Landis & Koch, the S&D manual). Transferring them to LLM-as-rater is by analogy, not evidence. A model that hits α &gt; 0.667 vs an alternate model is more reliable than one that doesn't, but the absolute threshold doesn't carry the same calibration meaning. Treat them as conventions to anchor your reading, not as scientific pass/fail bars.
@@ -707,8 +746,9 @@ The agent writes its proposal to disk with a rationale.
 
 <ol>
   <li><code>/mpi init --run runs/phase1/ --transcripts data/phase1/</code><br>Claude reads transcripts, proposes <code>IV: score-category {low: 0-1, mod: 2-3, high: 4-5}</code> and <code>DVs: [imagination, cognition, sensation, emotion]</code>. You confirm via prompts.</li>
-  <li><code>/mpi all --yolo</code><br>Claude proceeds through every stage automatically. Per-participant diachronic and synchronic substeps fan out in parallel (one subagent per participant). Each subagent writes its three artifact files and calls <code>mpi_step.py close</code>.</li>
-  <li>After per-participant stages finish, cross-participant stages run sequentially: <code>generic_diachronic</code> per event, <code>generic_synchronic</code> per worksheet, <code>global_synchronic</code> per (generic-IDU × IV), then <code>hypothesis</code> per DV focus plus a global review.</li>
+  <li><code>/mpi all --yolo</code><br>Claude proceeds through every stage automatically, <b>strictly sequentially</b> — one participant at a time, one substep at a time. Each substep's subagent writes its three artifact files and calls <code>mpi_step.py close</code>. Wall-clock scales linearly with participant count (no parallel fan-out); this is by design (see section 7).</li>
+  <li>After per-transcript stages finish (sequentially, no parallel fan-out), cross-participant stages run sequentially: <code>generic_diachronic</code> per event, <code>generic_synchronic</code> per worksheet, <code>global_synchronic</code> per (generic-IDU × IV), then <code>hypothesis</code> per DV focus plus a global review.</li>
+  <li>IRR calibration fires automatically as a sidecar after the calibration transcript's diachronic and synchronic — does not block the rest.</li>
   <li>Final outputs land in <code>analyses/</code> (per-participant) and <code>hypotheses/</code> (per-DV).</li>
   <li><code>git log --oneline</code> shows one commit per substep close — typically 100-200 commits for a 21-transcript run.</li>
   <li><code>python scripts/mpi_step.py render</code> regenerates a human-readable <code>.mpi/reasoning.log</code> summarising every decision.</li>
@@ -803,7 +843,7 @@ The agent writes its proposal to disk with a rationale.
 <tbody>
 <tr><td>Substep stays <code>pending</code> after a run</td><td>Either the subagent returned ERROR, or one of the four close artifacts didn't land.</td><td>Inspect <code>analyses/&lt;participant&gt;-&lt;substep&gt;.*</code> for partial files; check the audit log for a <code>close_aborted</code> or <code>stage_failed</code> event with a reason.</td></tr>
 <tr><td>Helper refuses with <code>dirty_worktree_refused</code></td><td>You have uncommitted files outside <code>analyses/</code> and <code>.mpi/</code>.</td><td>Commit or stash them, then retry.</td></tr>
-<tr><td>Helper refuses with <code>head_mismatch</code></td><td>The repo's current HEAD doesn't match the manifest's last recorded commit (e.g., you rebased).</td><td>Inspect; restore HEAD to the recorded SHA, or accept the new state by manually editing the manifest (rare).</td></tr>
+<tr><td>Helper refuses with <code>head_mismatch</code></td><td>The repo's current HEAD doesn't match the manifest's last recorded commit (e.g., you rebased or cherry-picked an external commit).</td><td>Two sanctioned paths: (a) <code>git reset --hard &lt;recorded_sha&gt;</code> to restore the prior HEAD; (b) <code>mpi_step.py accept-head --reason "&lt;why&gt;"</code> to record the new HEAD in the manifest with an audited <code>accepted_head</code> event. <b>Do not manually edit <code>.mpi/project.json</code></b> — it breaks the audit story.</td></tr>
 <tr><td><code>concurrent_close_blocked</code> after 30s</td><td>Another close is holding the lock.</td><td>Wait, or if you're sure no other process is running, <code>mpi_step.py unlock --reason "..."</code>.</td></tr>
 <tr><td><code>irr_warning</code> events in audit</td><td>Most-recent IRR record has <code>outcome: "low"</code> — α's CI lower bound is below 0.6.</td><td>The auto-trigger already ran once per stage. To retry: <code>mpi-irr calibrate --participant pNsN --stage diachronic|synchronic</code> with <code>--alternate-model</code> or <code>--alternate-prompt</code> overrides. Compare with literature thresholds in the record's <code>metrics.*.literature_thresholds</code> fields. If IRR stays low, swap the primary model or revise prompts — this is a model-quality signal.</td></tr>
 <tr><td>IV bin overlap rejected at init</td><td>Your IV levels share a value (e.g., <code>med 3-4 / high 4-5</code> both contain 4).</td><td>Pre-release: no <code>--allow-overlap</code> escape hatch. Fix the bins (e.g., <code>med 2-3 / high 4-5</code>) and re-run <code>/mpi init</code>.</td></tr>
@@ -829,7 +869,13 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation. Runs <b>strictly sequentially</b> — one participant at a time, substeps in DAG order — to eliminate races, renumbering thrash, and audit-event interleaving. Wall-clock scales linearly with participant count.</dd>
   <dt><b>Prompt-capture artifact (schema_version 2)</b></dt><dd>Per-substep <code>.prompt.json</code> file containing everything needed to replay the LLM call offline: full message chain, sampling parameters (temperature, top_p, top_k, max_tokens, seed, stop sequences), agent definition file SHA, tool call sequence with inputs and results, token usage (including cache hits), vendor request ID. Replay-grade, not audit-only.</dd>
   <dt><b>Literature thresholds (IRR)</b></dt><dd>Conventional bright-lines from the methodological literature, surfaced in each IRR record alongside the metric value: α — 0.667 tentative / 0.8 acceptable (Krippendorff 2018); κ — 0.6 (S&D manual) / 0.61 substantial / 0.81 almost perfect (Landis & Koch 1977); αU — same cutoffs as nominal α (Krippendorff 2016); ARI — no bright-line, diagnostic only. <b>Caveat:</b> all calibrated for human analysts after training; transfer to LLM raters is by analogy, not evidence.</dd>
-  <dt><b>Replay artifact</b></dt><dd>A prompt-capture artifact at schema_version 2 supports being fed to <code>mpi_step.py replay</code> to reconstruct the original API call. The schema captures every knob that affects model output. If the agent definition file's SHA no longer matches what's recorded in the artifact, drift is detectable.</dd>
+  <dt><b>Replay artifact</b></dt><dd>A prompt-capture artifact at schema_version 2 supports being fed to <code>mpi_step.py replay</code> to reconstruct the original API call. The schema captures every knob that affects model output. If the agent definition file's SHA no longer matches what's recorded in the artifact, drift is detectable. <b>Caveat:</b> replay verifies call integrity (same prompt produces a comparable response), not output groundedness — if the model fabricates an unsupported claim, replay reproduces the fabrication. Stronger anti-fabrication = transcript-span grounding (a candidate scope expansion).</dd>
+  <dt><b>Manifest vs audit (sources of truth)</b></dt><dd>Two SoTs with strict domain separation: manifest is SoT for <i>state</i> (done/pending); audit.jsonl is SoT for <i>history</i> (what happened). Tools deciding next-action query the manifest; tools reconstructing a run query the audit log. Never mix.</dd>
+  <dt><b>Candidate mechanism hypothesis</b></dt><dd>The hypothesis stage's output. Generative conjecture inferred from qualitative pattern variation across IV levels in a small sample. <b>Not</b> a causal estimate from a hypothesis test; not a result that supports a causal claim. Inputs for downstream causal testing in a separate study. Every artifact carries a verbatim disclaimer.</dd>
+  <dt><b>Calibration transcript</b></dt><dd>The transcript used for IRR calibration. Set at init via <code>--calibration</code>: <code>"first"</code> (default; first-to-complete), a specific <code>transcript_id</code> (pre-chosen example), or <code>"stratified"</code> (one per IV-level stratum, deterministic seeded sampling). Recorded immutably in <code>study.calibration_transcript</code>.</dd>
+  <dt><b>Pre-alignment α</b></dt><dd>α computed before the LLM aligner step, treating non-identical labels as disagreement. Always reported alongside the headline post-alignment α so reviewers can see the alignment's contribution. A large gap between pre and post means the LLM aligner is doing most of the work — defensible if alignment confidence is high, suspect otherwise.</dd>
+  <dt><b>accept-head</b></dt><dd><code>mpi_step.py accept-head --reason "&lt;text&gt;"</code>. The sanctioned audited path for reconciling a HEAD-mismatch (after rebase, cherry-pick, external commit). Records the new SHA in the manifest and emits an <code>accepted_head</code> audit event. Manual edits to <code>.mpi/project.json</code> are never recommended.</dd>
+  <dt><b>Dedicated run repo</b></dt><dd>Operational requirement: <code>mpi-init --run &lt;dir&gt;</code> should point at an empty directory (or a dedicated study repo), not an active development repo's worktree. A 21-transcript run produces ~100–200 commits, which conflicts with pre-commit hooks, GPG signing, CI triggers, branch protections in an active repo. The helper's dirty-worktree refusal exists in part to prevent accidental nesting.</dd>
   <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
   <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
   <dt><b>IRR calibration</b></dt><dd>Automatic model-quality check after first diachronic and first synchronic. Three steps: LLM-mediated category alignment → union-of-categories coincidence matrix → four metrics with bootstrap CIs. Outcome based on α's CI lower bound ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>
