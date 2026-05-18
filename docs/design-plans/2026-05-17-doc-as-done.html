@@ -24,12 +24,58 @@
   ul li, ol li { margin-bottom: .3rem; }
   .step { background: #ebdbb2; border-radius: 6px; padding: .8rem 1rem; margin: .8rem 0; }
   .step b { color: #af3a03; }
+  figure { margin: 1.5rem 0; text-align: center; }
+  figure svg { max-width: 100%; height: auto; background: #f9f5d7;
+               border: 1px solid #d5c4a1; border-radius: 6px; padding: .5rem; }
+  figcaption { font-size: 0.88em; color: #504945; margin-top: .4rem;
+               font-style: italic; }
+  /* SVG palette */
+  .svg-box { fill: #ebdbb2; stroke: #7c6f64; stroke-width: 1.2; }
+  .svg-box-llm { fill: #d3869b; stroke: #b16286; }
+  .svg-box-orch { fill: #8ec07c; stroke: #427b58; }
+  .svg-box-user { fill: #fabd2f; stroke: #b57614; }
+  .svg-box-artifact { fill: #fbf1c7; stroke: #d65d0e; }
+  .svg-box-audit { fill: #83a598; stroke: #076678; }
+  .svg-arrow { stroke: #3c3836; stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+  .svg-arrow-dashed { stroke: #cc241d; stroke-width: 1.4; fill: none;
+                       marker-end: url(#arrow-red); stroke-dasharray: 4 3; }
+  .svg-arrow-derived { stroke: #b57614; stroke-width: 1.4; fill: none;
+                        marker-end: url(#arrow-amber); stroke-dasharray: 2 2; }
+  .svg-text { font: 12px -apple-system, "Segoe UI", sans-serif; fill: #1d2021; }
+  .svg-text-small { font: 10px -apple-system, "Segoe UI", sans-serif; fill: #504945; }
+  .svg-text-label { font: 11px italic -apple-system, "Segoe UI", sans-serif; fill: #9d0006; }
+  .legend { display: inline-flex; gap: 1.2rem; flex-wrap: wrap;
+            font-size: 0.85em; margin-top: .4rem; justify-content: center; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+                          margin-right: .35rem; vertical-align: middle; border-radius: 2px; }
+  .legend .l-llm::before    { background: #d3869b; border: 1px solid #b16286; }
+  .legend .l-orch::before   { background: #8ec07c; border: 1px solid #427b58; }
+  .legend .l-user::before   { background: #fabd2f; border: 1px solid #b57614; }
+  .legend .l-art::before    { background: #fbf1c7; border: 1px solid #d65d0e; }
+  .legend .l-audit::before  { background: #83a598; border: 1px solid #076678; }
   .toc { background: #ebdbb2; border-radius: 6px; padding: .6rem 1rem; font-size: 0.92em; }
   .toc ol { margin: .3rem 0 .3rem 1.2rem; padding: 0; }
   a { color: #076678; }
 </style>
 </head>
 <body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3c3836"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#cc241d"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b57614"/>
+    </marker>
+  </defs>
+</svg>
 
 <h1>The MPI Pipeline — How It Works</h1>
 <p class="small">A plain-English walkthrough of the Microphenomenological Interview analysis pipeline implemented by this Claude Code plugin. Written for readers new to the methodology and the codebase. Source design: <code>docs/design-plans/2026-05-17-doc-as-done.md</code>.</p>
@@ -108,6 +154,81 @@ The agent writes its proposal to disk with a rationale.
 </tbody>
 </table>
 
+<figure>
+<svg viewBox="0 0 760 360" role="img" aria-label="Pipeline stage dependency graph">
+  <!-- init -->
+  <rect class="svg-box svg-box-user" x="20" y="20" width="120" height="48" rx="6"/>
+  <text class="svg-text" x="80" y="42" text-anchor="middle">init</text>
+  <text class="svg-text-small" x="80" y="58" text-anchor="middle">user confirms IV/DV</text>
+
+  <!-- transcript_prep -->
+  <rect class="svg-box svg-box-orch" x="20" y="100" width="120" height="48" rx="6"/>
+  <text class="svg-text" x="80" y="122" text-anchor="middle">transcript_prep</text>
+  <text class="svg-text-small" x="80" y="138" text-anchor="middle">per participant</text>
+
+  <!-- diachronic -->
+  <rect class="svg-box svg-box-llm" x="20" y="180" width="120" height="48" rx="6"/>
+  <text class="svg-text" x="80" y="202" text-anchor="middle">diachronic</text>
+  <text class="svg-text-small" x="80" y="218" text-anchor="middle">per participant</text>
+
+  <!-- synchronic -->
+  <rect class="svg-box svg-box-llm" x="20" y="260" width="120" height="48" rx="6"/>
+  <text class="svg-text" x="80" y="282" text-anchor="middle">synchronic</text>
+  <text class="svg-text-small" x="80" y="298" text-anchor="middle">per IDU</text>
+
+  <!-- kappa calibration (side branch) -->
+  <rect class="svg-box svg-box-user" x="180" y="260" width="130" height="48" rx="6"/>
+  <text class="svg-text" x="245" y="282" text-anchor="middle">kappa calibrate</text>
+  <text class="svg-text-small" x="245" y="298" text-anchor="middle">one-shot, warn-only</text>
+
+  <!-- generic_diachronic -->
+  <rect class="svg-box svg-box-llm" x="340" y="180" width="160" height="48" rx="6"/>
+  <text class="svg-text" x="420" y="202" text-anchor="middle">generic_diachronic</text>
+  <text class="svg-text-small" x="420" y="218" text-anchor="middle">per event</text>
+
+  <!-- generic_synchronic -->
+  <rect class="svg-box svg-box-llm" x="340" y="260" width="160" height="48" rx="6"/>
+  <text class="svg-text" x="420" y="282" text-anchor="middle">generic_synchronic</text>
+  <text class="svg-text-small" x="420" y="298" text-anchor="middle">per event × IV × g-IDU</text>
+
+  <!-- global_synchronic -->
+  <rect class="svg-box svg-box-llm" x="540" y="220" width="160" height="48" rx="6"/>
+  <text class="svg-text" x="620" y="242" text-anchor="middle">global_synchronic</text>
+  <text class="svg-text-small" x="620" y="258" text-anchor="middle">per g-IDU × IV</text>
+
+  <!-- hypothesis -->
+  <rect class="svg-box svg-box-llm" x="540" y="100" width="160" height="48" rx="6"/>
+  <text class="svg-text" x="620" y="122" text-anchor="middle">hypothesis</text>
+  <text class="svg-text-small" x="620" y="138" text-anchor="middle">per DV + global review</text>
+
+  <!-- arrows -->
+  <path class="svg-arrow" d="M80,68 L80,100"/>
+  <path class="svg-arrow" d="M80,148 L80,180"/>
+  <path class="svg-arrow" d="M80,228 L80,260"/>
+  <path class="svg-arrow-dashed" d="M140,284 L180,284"/>
+  <text class="svg-text-label" x="160" y="278" text-anchor="middle">warns</text>
+
+  <path class="svg-arrow" d="M140,200 L340,200"/>
+  <path class="svg-arrow" d="M140,280 L340,280"/>
+
+  <path class="svg-arrow" d="M500,204 L540,232"/>
+  <path class="svg-arrow" d="M500,280 L540,256"/>
+
+  <path class="svg-arrow" d="M620,220 L620,148"/>
+  <path class="svg-arrow" d="M500,200 C520,140 540,124 540,124"/>
+
+  <!-- return edge -->
+  <path class="svg-arrow-dashed" d="M80,260 C-20,250 -20,200 20,200"/>
+  <text class="svg-text-label" x="0" y="225" text-anchor="middle">IDU split</text>
+</svg>
+<figcaption>Pipeline stage dependency graph. Per-participant work (left) feeds cross-participant work (centre and right). Kappa calibration sits beside synchronic as a one-shot sanity check. The red dashed return-edge shows the manual's "if synchronic reveals temporal order, return to diachronic and split the IDU" rule.</figcaption>
+<div class="legend">
+  <span class="l-user">user-driven</span>
+  <span class="l-orch">orchestrator</span>
+  <span class="l-llm">LLM subagent</span>
+</div>
+</figure>
+
 <h2 id="substeps">4. Why substeps matter</h2>
 
 <p>Each stage is broken into smaller "substeps" — typically two or three. This matters for two reasons:</p>
@@ -137,6 +258,56 @@ The agent writes its proposal to disk with a rationale.
 
 <p>Synchronic similarly decomposes into <code>theme_grouping_within_idu</code> → <code>isu_naming</code> → <code>isu_second_level_grouping</code>, iterated <b>per IDU</b> (not per phase — there are no phases).</p>
 
+<figure>
+<svg viewBox="0 0 780 280" role="img" aria-label="Diachronic and synchronic substep DAG">
+  <!-- diachronic row -->
+  <text class="svg-text-label" x="20" y="38">diachronic (per participant)</text>
+  <rect class="svg-box svg-box-llm" x="20" y="55" width="160" height="46" rx="6"/>
+  <text class="svg-text" x="100" y="78" text-anchor="middle">criteria_grouping</text>
+  <text class="svg-text-small" x="100" y="93" text-anchor="middle">LLM · 1 call</text>
+
+  <rect class="svg-box svg-box-llm" x="220" y="55" width="160" height="46" rx="6"/>
+  <text class="svg-text" x="300" y="78" text-anchor="middle">criteria_revision</text>
+  <text class="svg-text-small" x="300" y="93" text-anchor="middle">LLM · loops ≤5</text>
+
+  <rect class="svg-box svg-box-llm" x="420" y="55" width="180" height="46" rx="6"/>
+  <text class="svg-text" x="510" y="78" text-anchor="middle">idu_naming_ordering</text>
+  <text class="svg-text-small" x="510" y="93" text-anchor="middle">LLM · 1 call</text>
+
+  <path class="svg-arrow" d="M180,78 L220,78"/>
+  <path class="svg-arrow" d="M380,78 L420,78"/>
+  <!-- revision self-loop -->
+  <path class="svg-arrow" d="M380,68 C400,40 200,40 220,68"/>
+  <text class="svg-text-label" x="300" y="40" text-anchor="middle">while decision = "more_revision_needed"</text>
+
+  <!-- synchronic row -->
+  <text class="svg-text-label" x="20" y="148">synchronic (per IDU within participant)</text>
+  <rect class="svg-box svg-box-llm" x="20" y="165" width="170" height="46" rx="6"/>
+  <text class="svg-text" x="105" y="188" text-anchor="middle">theme_grouping_within_idu</text>
+  <text class="svg-text-small" x="105" y="203" text-anchor="middle">LLM · per IDU</text>
+
+  <rect class="svg-box svg-box-llm" x="230" y="165" width="130" height="46" rx="6"/>
+  <text class="svg-text" x="295" y="188" text-anchor="middle">isu_naming</text>
+  <text class="svg-text-small" x="295" y="203" text-anchor="middle">LLM · per IDU</text>
+
+  <rect class="svg-box svg-box-llm" x="400" y="165" width="200" height="46" rx="6"/>
+  <text class="svg-text" x="500" y="188" text-anchor="middle">isu_second_level_grouping</text>
+  <text class="svg-text-small" x="500" y="203" text-anchor="middle">LLM · per IDU</text>
+
+  <path class="svg-arrow" d="M190,188 L230,188"/>
+  <path class="svg-arrow" d="M360,188 L400,188"/>
+
+  <!-- vertical link from diachronic.idu_naming_ordering to synchronic.theme_grouping -->
+  <path class="svg-arrow" d="M510,101 C510,130 105,135 105,165"/>
+  <text class="svg-text-label" x="350" y="130" text-anchor="middle">requires idu_naming_ordering: done</text>
+
+  <!-- return edge from synchronic.theme_grouping back to diachronic.criteria_revision -->
+  <path class="svg-arrow-dashed" d="M105,211 C105,250 300,250 300,101"/>
+  <text class="svg-text-label" x="200" y="248" text-anchor="middle">temporal_order_within_idu = true → re-revise → cascade reset downstream</text>
+</svg>
+<figcaption>Substep DAG for the per-participant stages. Black arrows are forward dependencies; the orange self-loop is the bounded revision loop; the red dashed return-edge is the manual's IDU-split rule, which triggers a cascade reset of all downstream substeps that depended on the old IDU shape.</figcaption>
+</figure>
+
 <h2 id="four">5. The four-part "close" — how each step finishes</h2>
 
 <p>Every substep — LLM-driven or orchestrator-driven — finishes by performing a single transactional operation called <b>close</b>. Closure requires four things to land together:</p>
@@ -152,6 +323,63 @@ The agent writes its proposal to disk with a rationale.
 </table>
 
 <p>All four are done by a single CLI helper: <code>scripts/mpi_step.py close</code>. It runs pre-checks (artifacts exist, schema validates, upstream substeps are done), then appends to audit, then atomically updates the manifest, then commits. If any step fails after pre-checks, the manifest is left untouched and the substep stays <code>pending</code> — the next run will retry it.</p>
+
+<figure>
+<svg viewBox="0 0 720 360" role="img" aria-label="Four-part close transaction sequence">
+  <!-- lanes -->
+  <text class="svg-text" x="80"  y="20" text-anchor="middle" font-weight="bold">subagent</text>
+  <text class="svg-text" x="260" y="20" text-anchor="middle" font-weight="bold">mpi_step.py close</text>
+  <text class="svg-text" x="460" y="20" text-anchor="middle" font-weight="bold">disk</text>
+  <text class="svg-text" x="640" y="20" text-anchor="middle" font-weight="bold">git</text>
+  <line x1="80"  y1="28" x2="80"  y2="340" stroke="#7c6f64" stroke-dasharray="2 2"/>
+  <line x1="260" y1="28" x2="260" y2="340" stroke="#7c6f64" stroke-dasharray="2 2"/>
+  <line x1="460" y1="28" x2="460" y2="340" stroke="#7c6f64" stroke-dasharray="2 2"/>
+  <line x1="640" y1="28" x2="640" y2="340" stroke="#7c6f64" stroke-dasharray="2 2"/>
+
+  <!-- 0. write artifacts -->
+  <text class="svg-text-label" x="20" y="55">0</text>
+  <path class="svg-arrow" d="M80,55 L460,55"/>
+  <text class="svg-text-small" x="270" y="50" text-anchor="middle">write .json + .md + .prompt.json</text>
+
+  <!-- 1. invoke close -->
+  <text class="svg-text-label" x="20" y="95">1</text>
+  <path class="svg-arrow" d="M80,95 L260,95"/>
+  <text class="svg-text-small" x="170" y="90" text-anchor="middle">invoke close --artifact ...</text>
+
+  <!-- 2. pre-checks -->
+  <text class="svg-text-label" x="20" y="135">2</text>
+  <path class="svg-arrow" d="M260,135 L460,135"/>
+  <text class="svg-text-small" x="360" y="130" text-anchor="middle">read manifest, verify artifacts, validate schema</text>
+  <text class="svg-text-label" x="280" y="150">fail → ERROR, no state mutation</text>
+
+  <!-- 3. acquire lock -->
+  <text class="svg-text-label" x="20" y="180">3</text>
+  <path class="svg-arrow" d="M260,180 L460,180"/>
+  <text class="svg-text-small" x="360" y="175" text-anchor="middle">acquire .mpi/close.lock</text>
+
+  <!-- 4. append audit -->
+  <text class="svg-text-label" x="20" y="215">4</text>
+  <path class="svg-arrow" d="M260,215 L460,215"/>
+  <text class="svg-text-small" x="360" y="210" text-anchor="middle">append events → .mpi/audit.jsonl (fsync)</text>
+
+  <!-- 5. atomic manifest -->
+  <text class="svg-text-label" x="20" y="250">5</text>
+  <path class="svg-arrow" d="M260,250 L460,250"/>
+  <text class="svg-text-small" x="360" y="245" text-anchor="middle">write project.json.tmp → os.replace</text>
+
+  <!-- 6. git commit -->
+  <text class="svg-text-label" x="20" y="285">6</text>
+  <path class="svg-arrow" d="M260,285 L640,285"/>
+  <text class="svg-text-small" x="450" y="280" text-anchor="middle">git add artifacts + audit + manifest; commit</text>
+  <text class="svg-text-label" x="290" y="300">fail → rollback manifest, audit "commit_failed"</text>
+
+  <!-- 7. release + return -->
+  <text class="svg-text-label" x="20" y="330">7</text>
+  <path class="svg-arrow" d="M260,330 L80,330"/>
+  <text class="svg-text-small" x="170" y="325" text-anchor="middle">release lock → return OK / ERROR</text>
+</svg>
+<figcaption>The seven operations inside a single <code>close</code> call. Steps 4-6 happen under the <code>.mpi/close.lock</code>; failure at step 6 rolls back step 5 and the substep stays <code>pending</code>. The subagent only does step 0 and step 1; the helper owns the rest.</figcaption>
+</figure>
 
 <div class="callout">
 <b>The prompt.json artifact is the secret weapon against fabrication.</b> Every LLM call writes the exact prompt and the exact response to disk. If you suspect the agent made something up, you can re-run the prompt offline against the same model and compare. Fabrication becomes detectable by replay, not just rule-violation.
@@ -201,6 +429,86 @@ The agent writes its proposal to disk with a rationale.
 
 <pre>[2026-05-17T14:32:07Z] mpi-analyst p1s1 diachronic.idu_naming_ordering: Movement noted as discrete onset moment; 3 utterances align. 1 units, 0 flagged. commit=a82d63b</pre>
 
+<figure>
+<svg viewBox="0 0 720 220" role="img" aria-label="Audit JSONL is source of truth; reasoning.log is derived">
+  <!-- substeps -->
+  <rect class="svg-box svg-box-llm"  x="20"  y="20" width="100" height="38" rx="6"/>
+  <text class="svg-text" x="70" y="44" text-anchor="middle">subagent A</text>
+  <rect class="svg-box svg-box-llm"  x="20"  y="70" width="100" height="38" rx="6"/>
+  <text class="svg-text" x="70" y="94" text-anchor="middle">subagent B</text>
+  <rect class="svg-box svg-box-orch" x="20" y="120" width="100" height="38" rx="6"/>
+  <text class="svg-text" x="70" y="144" text-anchor="middle">orchestrator</text>
+
+  <!-- audit jsonl -->
+  <rect class="svg-box svg-box-audit" x="220" y="60" width="220" height="80" rx="6"/>
+  <text class="svg-text" x="330" y="90" text-anchor="middle" font-weight="bold">.mpi/audit.jsonl</text>
+  <text class="svg-text-small" x="330" y="108" text-anchor="middle">source of truth</text>
+  <text class="svg-text-small" x="330" y="122" text-anchor="middle">append-only · UUID per event</text>
+  <text class="svg-text-small" x="330" y="136" text-anchor="middle">written under .mpi/close.lock</text>
+
+  <!-- arrows in -->
+  <path class="svg-arrow" d="M120,40  C170,40  180,80  220,80"/>
+  <path class="svg-arrow" d="M120,90  L220,100"/>
+  <path class="svg-arrow" d="M120,140 C170,140 180,120 220,120"/>
+
+  <!-- render command -->
+  <rect class="svg-box svg-box-orch" x="490" y="60" width="100" height="38" rx="6"/>
+  <text class="svg-text" x="540" y="84" text-anchor="middle">mpi_step.py</text>
+  <text class="svg-text-small" x="540" y="96" text-anchor="middle">render</text>
+
+  <!-- reasoning.log -->
+  <rect class="svg-box svg-box-artifact" x="490" y="120" width="200" height="50" rx="6"/>
+  <text class="svg-text" x="590" y="142" text-anchor="middle" font-weight="bold">.mpi/reasoning.log</text>
+  <text class="svg-text-small" x="590" y="158" text-anchor="middle">derived · human-readable</text>
+
+  <!-- arrows out -->
+  <path class="svg-arrow-derived" d="M440,90 L490,80"/>
+  <path class="svg-arrow-derived" d="M540,98 L540,120"/>
+  <text class="svg-text-label" x="465" y="78">read</text>
+  <text class="svg-text-label" x="555" y="115">write</text>
+</svg>
+<figcaption>Audit is the source of truth; the human-readable reasoning log is a <i>derived view</i>, regenerable at any time. Removes the drift mode where one sink lags the other.</figcaption>
+</figure>
+
+<figure>
+<svg viewBox="0 0 720 220" role="img" aria-label="Scope hierarchy across substeps">
+  <text class="svg-text" x="360" y="20" text-anchor="middle" font-weight="bold">Scope identifiers nest by stage</text>
+
+  <!-- levels -->
+  <rect class="svg-box" x="40"  y="50" width="120" height="40" rx="6"/>
+  <text class="svg-text" x="100" y="68" text-anchor="middle">pNsN</text>
+  <text class="svg-text-small" x="100" y="82" text-anchor="middle">participant</text>
+
+  <rect class="svg-box" x="200" y="50" width="140" height="40" rx="6"/>
+  <text class="svg-text" x="270" y="68" text-anchor="middle">pNsN-iduN</text>
+  <text class="svg-text-small" x="270" y="82" text-anchor="middle">IDU within participant</text>
+
+  <rect class="svg-box" x="380" y="50" width="150" height="40" rx="6"/>
+  <text class="svg-text" x="455" y="68" text-anchor="middle">eventE-catC</text>
+  <text class="svg-text-small" x="455" y="82" text-anchor="middle">event × IV category</text>
+
+  <rect class="svg-box" x="560" y="50" width="140" height="40" rx="6"/>
+  <text class="svg-text" x="630" y="68" text-anchor="middle">eventE-catC-giduG</text>
+  <text class="svg-text-small" x="630" y="82" text-anchor="middle">worksheet cell</text>
+
+  <rect class="svg-box" x="380" y="110" width="150" height="40" rx="6"/>
+  <text class="svg-text" x="455" y="128" text-anchor="middle">giduG-catC</text>
+  <text class="svg-text-small" x="455" y="142" text-anchor="middle">generic IDU × IV</text>
+
+  <rect class="svg-box" x="560" y="110" width="140" height="40" rx="6"/>
+  <text class="svg-text" x="630" y="128" text-anchor="middle">global</text>
+  <text class="svg-text-small" x="630" y="142" text-anchor="middle">hypothesis + kappa</text>
+
+  <!-- labels of which stages use which -->
+  <text class="svg-text-small" x="100" y="115">transcript_prep, diachronic</text>
+  <text class="svg-text-small" x="270" y="115">synchronic</text>
+  <text class="svg-text-small" x="455" y="170">global_synchronic</text>
+  <text class="svg-text-small" x="455" y="100">generic_diachronic</text>
+  <text class="svg-text-small" x="630" y="100">generic_synchronic</text>
+</svg>
+<figcaption>Scope identifiers used across the pipeline. Per-participant work uses <code>pNsN</code>; synchronic narrows to <code>pNsN-iduN</code>; cross-participant work groups by event and IV category; the final hypothesis stage operates globally.</figcaption>
+</figure>
+
 <h2 id="yolo">7. Yolo mode: running the whole thing unattended</h2>
 
 <p>The pipeline has two execution modes:</p>
@@ -226,6 +534,47 @@ The agent writes its proposal to disk with a rationale.
 <tr><td><b>Cascade reset</b></td><td>If you (or the agent) revise an IDU after synchronic analysis revealed a temporal split, the manifest automatically resets all downstream substeps that depended on that IDU's old form back to <code>pending</code>. No analysis ever runs on stale inputs.</td></tr>
 </tbody>
 </table>
+
+<figure>
+<svg viewBox="0 0 720 300" role="img" aria-label="Cascade reset triggered by criteria_revision re-close">
+  <!-- trigger -->
+  <rect class="svg-box svg-box-llm" x="20" y="120" width="160" height="46" rx="6"/>
+  <text class="svg-text" x="100" y="143" text-anchor="middle">criteria_revision</text>
+  <text class="svg-text-small" x="100" y="158" text-anchor="middle">re-closed (p5s2)</text>
+
+  <!-- affected: idu_naming_ordering -->
+  <rect class="svg-box svg-box-llm" x="240" y="40" width="180" height="46" rx="6" opacity="0.5"/>
+  <text class="svg-text" x="330" y="63" text-anchor="middle">idu_naming_ordering</text>
+  <text class="svg-text-small" x="330" y="78" text-anchor="middle">p5s2 → pending</text>
+
+  <!-- affected: synchronic per IDU -->
+  <rect class="svg-box svg-box-llm" x="240" y="100" width="180" height="46" rx="6" opacity="0.5"/>
+  <text class="svg-text" x="330" y="123" text-anchor="middle">synchronic.*</text>
+  <text class="svg-text-small" x="330" y="138" text-anchor="middle">all p5s2-idu* → pending</text>
+
+  <!-- affected: cross-participant -->
+  <rect class="svg-box svg-box-llm" x="240" y="160" width="180" height="46" rx="6" opacity="0.5"/>
+  <text class="svg-text" x="330" y="183" text-anchor="middle">generic_diachronic.*</text>
+  <text class="svg-text-small" x="330" y="198" text-anchor="middle">all events → pending</text>
+
+  <rect class="svg-box svg-box-llm" x="240" y="220" width="180" height="46" rx="6" opacity="0.5"/>
+  <text class="svg-text" x="330" y="243" text-anchor="middle">generic_synchronic.*, global_synchronic.*, hypothesis.*</text>
+  <text class="svg-text-small" x="330" y="258" text-anchor="middle">all → pending</text>
+
+  <!-- arrows -->
+  <path class="svg-arrow-dashed" d="M180,140 L240,63"/>
+  <path class="svg-arrow-dashed" d="M180,143 L240,123"/>
+  <path class="svg-arrow-dashed" d="M180,148 L240,183"/>
+  <path class="svg-arrow-dashed" d="M180,155 L240,243"/>
+
+  <!-- single manifest write -->
+  <rect class="svg-box svg-box-audit" x="500" y="120" width="180" height="46" rx="6"/>
+  <text class="svg-text" x="590" y="143" text-anchor="middle">single manifest write</text>
+  <text class="svg-text-small" x="590" y="158" text-anchor="middle">+ cascade_reset events</text>
+  <path class="svg-arrow" d="M420,143 L500,143"/>
+</svg>
+<figcaption>Cascade reset on IDU revision. Re-closing <code>diachronic.criteria_revision</code> for one participant resets that participant's <code>idu_naming_ordering</code>, every affected <code>synchronic.*</code> substep, and <i>all</i> cross-participant substeps to <code>pending</code> — atomically, in one manifest write, with one <code>cascade_reset</code> audit event per reset substep.</figcaption>
+</figure>
 
 <h2 id="kappa">8. Kappa calibration: a sanity check</h2>
 
@@ -260,6 +609,86 @@ The agent writes its proposal to disk with a rationale.
 </ol>
 
 <p>If anything went wrong mid-run, you can re-run the same <code>/mpi all --yolo</code> — the pipeline reads the manifest, sees which substeps are already <code>done</code>, and resumes from the first <code>pending</code> one.</p>
+
+<figure>
+<svg viewBox="0 0 720 320" role="img" aria-label="Generic diachronic worksheet for one event">
+  <text class="svg-text" x="360" y="20" text-anchor="middle" font-weight="bold">generic_diachronic worksheet — Suggestion 1</text>
+
+  <!-- column headers (IDU positions) -->
+  <text class="svg-text-small" x="170" y="50" text-anchor="middle">IDU 1</text>
+  <text class="svg-text-small" x="260" y="50" text-anchor="middle">IDU 2</text>
+  <text class="svg-text-small" x="350" y="50" text-anchor="middle">IDU 3</text>
+  <text class="svg-text-small" x="440" y="50" text-anchor="middle">IDU 4</text>
+  <text class="svg-text-small" x="530" y="50" text-anchor="middle">IDU 5</text>
+
+  <!-- IV: high -->
+  <text class="svg-text-label" x="20" y="80" font-weight="bold">high (4-5)</text>
+  <text class="svg-text-small" x="100" y="80">p1s1</text>
+  <rect x="135" y="65" width="70" height="22" fill="#b8bb26" stroke="#79740e"/>
+  <text class="svg-text" x="170" y="80" text-anchor="middle">Settle</text>
+  <rect x="225" y="65" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="260" y="80" text-anchor="middle">Imagine</text>
+  <rect x="315" y="65" width="70" height="22" fill="#fb4934" stroke="#9d0006"/>
+  <text class="svg-text" x="350" y="80" text-anchor="middle">Feel move</text>
+  <rect x="405" y="65" width="70" height="22" fill="#83a598" stroke="#076678"/>
+  <text class="svg-text" x="440" y="80" text-anchor="middle">Surprise</text>
+
+  <text class="svg-text-small" x="100" y="105">p4s1</text>
+  <rect x="135" y="90" width="70" height="22" fill="#b8bb26" stroke="#79740e"/>
+  <text class="svg-text" x="170" y="105" text-anchor="middle">Settle</text>
+  <rect x="225" y="90" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="260" y="105" text-anchor="middle">Imagery</text>
+  <rect x="315" y="90" width="70" height="22" fill="#fb4934" stroke="#9d0006"/>
+  <text class="svg-text" x="350" y="105" text-anchor="middle">Movement</text>
+  <rect x="405" y="90" width="70" height="22" fill="#83a598" stroke="#076678"/>
+  <text class="svg-text" x="440" y="105" text-anchor="middle">Reflect</text>
+
+  <text class="svg-text-small" x="100" y="130">p6s1</text>
+  <rect x="135" y="115" width="70" height="22" fill="#b8bb26" stroke="#79740e"/>
+  <text class="svg-text" x="170" y="130" text-anchor="middle">Prep</text>
+  <rect x="225" y="115" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="260" y="130" text-anchor="middle">Visualise</text>
+  <rect x="315" y="115" width="70" height="22" fill="#fb4934" stroke="#9d0006"/>
+  <text class="svg-text" x="350" y="130" text-anchor="middle">Hands move</text>
+  <rect x="405" y="115" width="70" height="22" fill="#83a598" stroke="#076678"/>
+  <text class="svg-text" x="440" y="130" text-anchor="middle">Surprise</text>
+
+  <!-- IV: moderate -->
+  <text class="svg-text-label" x="20" y="170" font-weight="bold">moderate (2-3)</text>
+  <text class="svg-text-small" x="100" y="170">p3s1</text>
+  <rect x="135" y="155" width="70" height="22" fill="#b8bb26" stroke="#79740e"/>
+  <text class="svg-text" x="170" y="170" text-anchor="middle">Settle</text>
+  <rect x="225" y="155" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="260" y="170" text-anchor="middle">Try imagine</text>
+  <rect x="315" y="155" width="70" height="22" fill="#d3869b" stroke="#b16286"/>
+  <text class="svg-text" x="350" y="170" text-anchor="middle">Doubt</text>
+
+  <text class="svg-text-small" x="100" y="195">p7s1</text>
+  <rect x="135" y="180" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="170" y="195" text-anchor="middle">Anticipate</text>
+  <rect x="225" y="180" width="70" height="22" fill="#fb4934" stroke="#9d0006"/>
+  <text class="svg-text" x="260" y="195" text-anchor="middle">Slight move</text>
+  <rect x="315" y="180" width="70" height="22" fill="#d3869b" stroke="#b16286"/>
+  <text class="svg-text" x="350" y="195" text-anchor="middle">Uncertain</text>
+
+  <!-- IV: low -->
+  <text class="svg-text-label" x="20" y="235" font-weight="bold">low (0-1)</text>
+  <text class="svg-text-small" x="100" y="235">p2s2</text>
+  <rect x="135" y="220" width="70" height="22" fill="#b8bb26" stroke="#79740e"/>
+  <text class="svg-text" x="170" y="235" text-anchor="middle">Settle</text>
+  <rect x="225" y="220" width="70" height="22" fill="#fabd2f" stroke="#b57614"/>
+  <text class="svg-text" x="260" y="235" text-anchor="middle">Try imagine</text>
+  <rect x="315" y="220" width="70" height="22" fill="#d3869b" stroke="#b16286"/>
+  <text class="svg-text" x="350" y="235" text-anchor="middle">No movement</text>
+  <rect x="405" y="220" width="70" height="22" fill="#d3869b" stroke="#b16286"/>
+  <text class="svg-text" x="440" y="235" text-anchor="middle">Rationalise</text>
+
+  <!-- generic IDUs / patterns -->
+  <text class="svg-text" x="360" y="275" text-anchor="middle" font-weight="bold">cross_iv_contrast output:</text>
+  <text class="svg-text-small" x="360" y="295" text-anchor="middle">high uniquely shows <tspan fill="#fb4934">Feel move</tspan> + <tspan fill="#83a598">Surprise</tspan>; moderate/low end at <tspan fill="#d3869b">Doubt/Rationalise</tspan> after <tspan fill="#fabd2f">Imagine</tspan>.</text>
+</svg>
+<figcaption>Worksheet view of <code>generic_diachronic</code> for one suggestion. Same colour = same generic IDU. <code>idu_similarity_grouping</code> assigns the colours (an LLM judgment, not a deterministic heuristic). <code>pattern_identification</code> finds common ordered patterns within each IV row. <code>cross_iv_contrast</code> states explicitly how the patterns differ between IV levels — the manual's actual analytic goal.</figcaption>
+</figure>
 
 <h2 id="troubleshoot">10. When things go wrong</h2>
 
