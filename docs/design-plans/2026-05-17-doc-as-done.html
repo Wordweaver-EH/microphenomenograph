@@ -37,7 +37,7 @@
   <li><a href="#four">The four-part "close" — how each step finishes</a></li>
   <li><a href="#audit">The audit trail (the on-disk story of what happened)</a></li>
   <li><a href="#yolo">Yolo mode: running the whole thing unattended</a></li>
-  <li><a href="#kappa">Kappa calibration: a sanity check</a></li>
+  <li><a href="#kappa">IRR calibration: an automatic model-quality check</a></li>
   <li><a href="#walk">A concrete walkthrough</a></li>
   <li><a href="#troubleshoot">When things go wrong</a></li>
   <li><a href="#glossary">Glossary</a></li>
@@ -81,7 +81,7 @@ The agent writes its proposal to disk with a rationale.
 </div>
 
 <div class="callout">
-<b>IV bin rules.</b> By default, IV levels can't overlap in their numeric ranges. If you really want overlap (e.g., a value that belongs to both "moderate" and "high"), you have to pass <code>--allow-overlap</code> and write a rationale; you also pick a <b>tie-resolution rule</b> (the value goes to the upper bin, the lower bin, or to both). Bins also have to cover every score that actually appears in the corpus, or you have to explicitly declare which scores you're dropping.
+<b>IV bin rules.</b> IV levels can't overlap in their numeric ranges — overlap is rejected at init with a named error pointing at the offending pair, and the user fixes the bins. (Pre-release: no escape hatch.) Bins also have to cover every score that actually appears in the corpus, or you have to explicitly declare which scores you're dropping via <code>excluded_scores</code>. Example: <code>low 1-2 / med 3-4 / high 4-5</code> overlaps at 4 and is rejected; correct to <code>low 0-1 / med 2-3 / high 4-5</code> (the manual's example bins) or similar.
 </div>
 
 <h2 id="stages">3. The seven analysis stages</h2>
@@ -91,13 +91,15 @@ The agent writes its proposal to disk with a rationale.
 <table>
 <thead><tr><th>Stage</th><th>What it does (in plain English)</th><th>Scope</th></tr></thead>
 <tbody>
+<tr><td><code>init</code></td><td>Scans transcripts, parses headers, proposes IV scheme + DV foci via LLM, gets user confirmation; persists immutable <code>study</code> block to manifest.</td><td>one-shot</td></tr>
 <tr><td><code>transcript_prep</code></td><td>Cleans up each transcript: strips BOMs, normalises spacing, fixes speaker labels.</td><td>per participant</td></tr>
 <tr><td><code>diachronic</code></td><td>Reads one transcript at a time and breaks the experience into temporally-ordered moments (<b>IDUs</b> — "Incipient Diachronic Units"). What happened first, second, third?</td><td>per participant</td></tr>
 <tr><td><code>synchronic</code></td><td>For each IDU within a participant, identifies the themes present at that moment (<b>ISUs</b> — "Incipient Synchronic Units"). What aspects of experience co-occurred?</td><td>per (participant × IDU)</td></tr>
+<tr><td><code>irr_calibration</code></td><td>Auto-triggered after the first participant's diachronic and synchronic complete. Runs an alternate-agent re-analysis, aligns categories via LLM, computes four agreement metrics with bootstrap 95% CIs. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</td><td>after 1st participant's diachronic; after 1st participant's synchronic</td></tr>
 <tr><td><code>generic_diachronic</code></td><td>Compares IDUs across participants who share an IV level. Identifies common temporal patterns and how those patterns differ between IV levels.</td><td>per event</td></tr>
 <tr><td><code>generic_synchronic</code></td><td>Across participants in the same IV category, groups the ISUs that appear within each common generic IDU.</td><td>per (event × IV × generic-IDU)</td></tr>
 <tr><td><code>global_synchronic</code></td><td>Where the same generic IDU appears in multiple events (suggestions), aggregates the ISUs across events.</td><td>per (generic-IDU × IV)</td></tr>
-<tr><td><code>hypothesis</code></td><td>Generates candidate causal hypotheses about how participant experience differs by IV level, framed per DV focus, with traceability back to the evidence.</td><td>per DV focus; global review</td></tr>
+<tr><td><code>hypothesis</code></td><td>Generates candidate causal hypotheses about how participant experience differs by IV level, framed per DV focus, with traceability back to evidence in all three of generic_diachronic, generic_synchronic, and global_synchronic.</td><td>per DV focus; global review</td></tr>
 </tbody>
 </table>
 
@@ -803,7 +805,10 @@ The agent writes its proposal to disk with a rationale.
 <tr><td>Helper refuses with <code>dirty_worktree_refused</code></td><td>You have uncommitted files outside <code>analyses/</code> and <code>.mpi/</code>.</td><td>Commit or stash them, then retry.</td></tr>
 <tr><td>Helper refuses with <code>head_mismatch</code></td><td>The repo's current HEAD doesn't match the manifest's last recorded commit (e.g., you rebased).</td><td>Inspect; restore HEAD to the recorded SHA, or accept the new state by manually editing the manifest (rare).</td></tr>
 <tr><td><code>concurrent_close_blocked</code> after 30s</td><td>Another close is holding the lock.</td><td>Wait, or if you're sure no other process is running, <code>mpi_step.py unlock --reason "..."</code>.</td></tr>
-<tr><td><code>irr_warning</code> events in audit</td><td>Most-recent IRR record has <code>outcome: "low"</code> (either κ&lt;0.6 with α&lt;0.6, or κ unalignable and α&lt;0.6).</td><td>The auto-trigger already ran once per stage. To retry: <code>mpi-irr calibrate --participant pNsN --stage diachronic|synchronic</code> with <code>--alternate-model</code> or <code>--alternate-prompt</code> overrides. If IRR stays low, swap the primary model or revise prompts — this is a model-quality signal.</td></tr>
+<tr><td><code>irr_warning</code> events in audit</td><td>Most-recent IRR record has <code>outcome: "low"</code> — α's CI lower bound is below 0.6.</td><td>The auto-trigger already ran once per stage. To retry: <code>mpi-irr calibrate --participant pNsN --stage diachronic|synchronic</code> with <code>--alternate-model</code> or <code>--alternate-prompt</code> overrides. Compare with literature thresholds in the record's <code>metrics.*.literature_thresholds</code> fields. If IRR stays low, swap the primary model or revise prompts — this is a model-quality signal.</td></tr>
+<tr><td>IV bin overlap rejected at init</td><td>Your IV levels share a value (e.g., <code>med 3-4 / high 4-5</code> both contain 4).</td><td>Pre-release: no <code>--allow-overlap</code> escape hatch. Fix the bins (e.g., <code>med 2-3 / high 4-5</code>) and re-run <code>/mpi init</code>.</td></tr>
+<tr><td>Yolo run takes hours instead of minutes</td><td>Expected — yolo is strictly sequential. ~5–10 min × N participants × stages.</td><td>This is by design (eliminates races and audit interleaving). For faster turnaround during development, use single-stage commands like <code>/mpi diachronic p1s1</code> in parallel terminals.</td></tr>
+<tr><td><code>prompt_artifact_sha_mismatch</code></td><td>The <code>actor.agent_file_sha256</code> in a prompt.json no longer matches the current agent file — someone edited the agent definition since this prompt was recorded.</td><td>For replay: roll back to the agent file's recorded SHA, or accept the drift explicitly. For audit only: ignore the warning; the record is still a faithful capture of what ran at the time.</td></tr>
 <tr><td>Cross-participant skill errors with <code>upstream_pending</code></td><td>A required per-participant substep isn't done.</td><td>Check <code>/mpi status</code> for which one; re-run if needed.</td></tr>
 <tr><td>An LLM-substep result looks fabricated</td><td>Possible but detectable.</td><td>Read the corresponding <code>.prompt.json</code> file. Re-run the prompt offline. Compare. If outputs differ unreasonably, file a bug against the agent prompt.</td></tr>
 </tbody>
@@ -821,7 +826,10 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Generic IDU</b></dt><dd>An IDU pattern shared by multiple participants. Produced by generic_diachronic.</dd>
   <dt><b>Substep</b></dt><dd>The methodology's natural unit of analytic work, finer than a stage. Each substep closes its own four-part transaction.</dd>
   <dt><b>Close</b></dt><dd>The transactional operation that finishes a substep: artifact + audit event + manifest update + git commit, atomically.</dd>
-  <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation.</dd>
+  <dt><b>Yolo mode</b></dt><dd><code>/mpi all --yolo</code>. Fully automated execution with no human-in-the-loop confirmation. Runs <b>strictly sequentially</b> — one participant at a time, substeps in DAG order — to eliminate races, renumbering thrash, and audit-event interleaving. Wall-clock scales linearly with participant count.</dd>
+  <dt><b>Prompt-capture artifact (schema_version 2)</b></dt><dd>Per-substep <code>.prompt.json</code> file containing everything needed to replay the LLM call offline: full message chain, sampling parameters (temperature, top_p, top_k, max_tokens, seed, stop sequences), agent definition file SHA, tool call sequence with inputs and results, token usage (including cache hits), vendor request ID. Replay-grade, not audit-only.</dd>
+  <dt><b>Literature thresholds (IRR)</b></dt><dd>Conventional bright-lines from the methodological literature, surfaced in each IRR record alongside the metric value: α — 0.667 tentative / 0.8 acceptable (Krippendorff 2018); κ — 0.6 (S&D manual) / 0.61 substantial / 0.81 almost perfect (Landis & Koch 1977); αU — same cutoffs as nominal α (Krippendorff 2016); ARI — no bright-line, diagnostic only. <b>Caveat:</b> all calibrated for human analysts after training; transfer to LLM raters is by analogy, not evidence.</dd>
+  <dt><b>Replay artifact</b></dt><dd>A prompt-capture artifact at schema_version 2 supports being fed to <code>mpi_step.py replay</code> to reconstruct the original API call. The schema captures every knob that affects model output. If the agent definition file's SHA no longer matches what's recorded in the artifact, drift is detectable.</dd>
   <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
   <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
   <dt><b>IRR calibration</b></dt><dd>Automatic model-quality check after first diachronic and first synchronic. Three steps: LLM-mediated category alignment → union-of-categories coincidence matrix → four metrics with bootstrap CIs. Outcome based on α's CI lower bound ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>
