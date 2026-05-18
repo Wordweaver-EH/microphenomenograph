@@ -21,7 +21,7 @@ import uuid
 from pathlib import Path
 
 from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
-from _mpi_schemas import validate_units, SUBSTEP_PREREQUISITES, LLM_SUBSTEPS
+from _mpi_schemas import validate_units, validate_prompt_artifact, SUBSTEP_PREREQUISITES, LLM_SUBSTEPS
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +217,7 @@ def _build_audit_event(
     scope: str,
     reason: str,
     outcome: str = "success",
+    actor_kind: str = "subagent",
     extra: dict | None = None,
 ) -> dict:
     from datetime import datetime, timezone
@@ -225,7 +226,7 @@ def _build_audit_event(
         "@timestamp": datetime.now(timezone.utc).isoformat(),
         "trace_id": load_or_create_run_id(run_dir / ".mpi" / "run_id"),
         "span_id": str(uuid.uuid4()),
-        "actor": {"kind": "subagent", "name": actor},
+        "actor": {"kind": actor_kind, "name": actor},
         "event": {"kind": "event", "action": action, "outcome": outcome},
         "mpi": {
             "participant_id": participant,
@@ -239,6 +240,27 @@ def _build_audit_event(
     if extra:
         event["mpi"].update(extra)
     return event
+
+
+# ---------------------------------------------------------------------------
+# Units extraction helper
+# ---------------------------------------------------------------------------
+
+def _extract_units(payload: dict | list) -> list:
+    """
+    Extract a flat list of analytic units from a substep payload.
+    Handles three shapes:
+    1. Diachronic: payload["idus"]
+    2. Synchronic flat: payload["isus"]
+    3. Synchronic nested (per-IDU): payload["isus"] = [{idu_name, isus: [...]}]
+    Returns a flat list of unit dicts; empty list if no units found.
+    """
+    _raw = payload if isinstance(payload, list) else payload.get("idus", payload.get("isus", []))
+    if isinstance(_raw, list) and _raw and isinstance(_raw[0], dict) and "isus" in _raw[0]:
+        # per-IDU shape: list of {idu_name, isus: [...]}
+        return [isu for idu_entry in _raw for isu in idu_entry.get("isus", [])]
+    else:
+        return _raw if isinstance(_raw, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +286,7 @@ def cmd_close(args: argparse.Namespace) -> int:
         run_dir=run_dir,
         close_id=close_id,
         actor=args.actor,
+        actor_kind=getattr(args, "actor_kind", "subagent"),
         participant=args.participant,
         stage=args.stage,
         substep=args.substep,
@@ -278,6 +301,7 @@ def cmd_close(args: argparse.Namespace) -> int:
         e = _build_audit_event(
             action="close_aborted", outcome="failure",
             run_dir=run_dir, close_id=close_id, actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
             participant=args.participant, stage=args.stage, substep=args.substep,
             scope=args.scope, reason=reason,
         )
@@ -310,7 +334,6 @@ def cmd_close(args: argparse.Namespace) -> int:
         return _abort(f"schema_validation_failed: {schema_errors[0]}")
 
     # Check LLM substep requires --prompt-artifact and validate it
-    from _mpi_schemas import validate_prompt_artifact
     if (args.stage, args.substep) in LLM_SUBSTEPS:
         if not getattr(args, "prompt_artifact", None):
             msg = (f"prompt_artifact_required: substep ({args.stage}, {args.substep}) "
@@ -328,6 +351,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             msg = f"prompt_artifact_invalid_json: {exc}"
             print(f"ERROR {msg}", file=sys.stderr)
             return _abort(msg)
+        # AC11.3: Schema validation only at close time; SHA-mismatch enforcement
+        # (full replay-grade path resolution and verification) deferred to mpi_replay.py.
         pa_errors = validate_prompt_artifact(pa_data, check_agent_sha=False)
         if pa_errors:
             for err in pa_errors:
@@ -363,6 +388,7 @@ def cmd_close(args: argparse.Namespace) -> int:
         run_dir=run_dir,
         close_id=close_id,
         actor=args.actor,
+        actor_kind=getattr(args, "actor_kind", "subagent"),
         participant=args.participant,
         stage=args.stage,
         substep=args.substep,
@@ -374,20 +400,13 @@ def cmd_close(args: argparse.Namespace) -> int:
 
     # --- Phase 3: audit_appended ---
     # Write per-unit events
-    # Extract flat list of analytic units from any substep payload shape.
-    # Diachronic: payload["idus"]; synchronic top-level: payload["isus"];
-    # synchronic nested (per-IDU): flatten payload["isus"] across IDU entries.
-    _raw = units_payload if isinstance(units_payload, list) else units_payload.get("idus", units_payload.get("isus", []))
-    if isinstance(_raw, list) and _raw and isinstance(_raw[0], dict) and "isus" in _raw[0]:
-        # per-IDU shape: list of {idu_name, isus: [...]}
-        units: list = [isu for idu_entry in _raw for isu in idu_entry.get("isus", [])]
-    else:
-        units = _raw if isinstance(_raw, list) else []
+    units = _extract_units(units_payload)
     e_audit = _build_audit_event(
         action="audit_appended",
         run_dir=run_dir,
         close_id=close_id,
         actor=args.actor,
+        actor_kind=getattr(args, "actor_kind", "subagent"),
         participant=args.participant,
         stage=args.stage,
         substep=args.substep,
@@ -436,6 +455,7 @@ def cmd_close(args: argparse.Namespace) -> int:
         run_dir=run_dir,
         close_id=close_id,
         actor=args.actor,
+        actor_kind=getattr(args, "actor_kind", "subagent"),
         participant=args.participant,
         stage=args.stage,
         substep=args.substep,
@@ -462,6 +482,7 @@ def cmd_close(args: argparse.Namespace) -> int:
             action="manifest_rolled_back",
             outcome="failure",
             run_dir=run_dir, close_id=close_id, actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
             participant=args.participant, stage=args.stage, substep=args.substep,
             scope=args.scope, reason="git add failed",
         )
@@ -477,6 +498,7 @@ def cmd_close(args: argparse.Namespace) -> int:
             action="git_commit_failed",
             outcome="failure",
             run_dir=run_dir, close_id=close_id, actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
             participant=args.participant, stage=args.stage, substep=args.substep,
             scope=args.scope, reason=r_commit.stderr.strip(),
         )
@@ -485,6 +507,7 @@ def cmd_close(args: argparse.Namespace) -> int:
             action="manifest_rolled_back",
             outcome="failure",
             run_dir=run_dir, close_id=close_id, actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
             participant=args.participant, stage=args.stage, substep=args.substep,
             scope=args.scope, reason="git commit failed",
         )
@@ -497,6 +520,7 @@ def cmd_close(args: argparse.Namespace) -> int:
         run_dir=run_dir,
         close_id=close_id,
         actor=args.actor,
+        actor_kind=getattr(args, "actor_kind", "subagent"),
         participant=args.participant,
         stage=args.stage,
         substep=args.substep,
@@ -684,6 +708,8 @@ def build_parser() -> argparse.ArgumentParser:
     # close
     p_close = sub.add_parser("close", help="Transactional substep close.")
     p_close.add_argument("--actor", required=True)
+    p_close.add_argument("--actor-kind", default="subagent", choices=["subagent", "orchestrator"],
+                         help="Actor kind: 'subagent' (default) or 'orchestrator'.")
     p_close.add_argument("--participant", required=True)
     p_close.add_argument("--stage", required=True)
     p_close.add_argument("--substep", required=True)

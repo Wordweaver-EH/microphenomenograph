@@ -271,6 +271,69 @@ class TestLocalOnlyDefault:
 
 
 # ---------------------------------------------------------------------------
+# Units extraction helper tests (Issue #5)
+# ---------------------------------------------------------------------------
+
+class TestExtractUnits:
+    def test_extract_units_diachronic_shape(self):
+        """Extract units from diachronic shape: payload["idus"]"""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [
+                {"idu_number": 1, "idu_name": "Unit1"},
+                {"idu_number": 2, "idu_name": "Unit2"},
+            ],
+        }
+        units = mpi_step._extract_units(payload)
+        assert len(units) == 2
+        assert units[0]["idu_name"] == "Unit1"
+        assert units[1]["idu_name"] == "Unit2"
+
+    def test_extract_units_synchronic_flat_shape(self):
+        """Extract units from synchronic flat shape: payload["isus"]"""
+        payload = {
+            "analysis_type": "synchronic",
+            "participant": "p1s1",
+            "idu_name": "Opening",
+            "isus": [
+                {"isu_name": "Warmth"},
+                {"isu_name": "Coolness"},
+            ],
+        }
+        units = mpi_step._extract_units(payload)
+        assert len(units) == 2
+        assert units[0]["isu_name"] == "Warmth"
+        assert units[1]["isu_name"] == "Coolness"
+
+    def test_extract_units_synchronic_nested_per_idu_shape(self):
+        """Extract units from synchronic nested shape: payload["isus"] = [{idu_name, isus:[...]}]"""
+        payload = {
+            "analysis_type": "synchronic",
+            "isus": [
+                {
+                    "idu_name": "Opening",
+                    "isus": [
+                        {"isu_name": "Warmth"},
+                        {"isu_name": "Coolness"},
+                    ],
+                },
+                {
+                    "idu_name": "Middle",
+                    "isus": [
+                        {"isu_name": "Tension"},
+                    ],
+                },
+            ],
+        }
+        units = mpi_step._extract_units(payload)
+        assert len(units) == 3
+        assert units[0]["isu_name"] == "Warmth"
+        assert units[1]["isu_name"] == "Coolness"
+        assert units[2]["isu_name"] == "Tension"
+
+
+# ---------------------------------------------------------------------------
 # Phase 2: close transaction tests
 # ---------------------------------------------------------------------------
 

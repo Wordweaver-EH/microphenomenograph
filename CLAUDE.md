@@ -16,7 +16,7 @@ Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline i
 | `docs/test-plans/` | Acceptance-criteria test plans. |
 | `bookowhy_rev.md` | Causal framing reference used by the `mpi-hypothesis` skill. |
 | `manual_2018.md`, `manual_kev.md` | Microphenomenology methodology references. |
-| `runs/` | MPI run directories (e.g. `runs/phase1-2026-05-17/`). Each run is its own git scope; see Operational requirements. |
+| `runs/` | MPI run directories (e.g. `runs/phase1-2026-05-17/` from Phase 1 exploration). Each run is its own git scope; see Operational requirements. |
 
 ## Plugin contracts
 
