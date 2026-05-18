@@ -1,5 +1,6 @@
 """Phase 1 unit tests for mpi_step.py — CLI scaffolding."""
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -414,6 +415,46 @@ class TestCloseHappyPath:
         assert substep.get("expected_action") == "git_commit_succeeded"
         # No git_commit_sha in manifest (self-reference impossibility)
         assert "git_commit_sha" not in substep
+        # AC10.1: stage status is derived from substeps (all done → done)
+        assert manifest["participants"]["p1s1"]["stages"]["diachronic"]["status"] == "done"
+
+
+class TestManifestAtomicity:
+    def test_os_replace_failure_leaves_manifest_unchanged(self, tmp_path, monkeypatch):
+        """AC3.2: if os.replace fails, manifest reverts to pre-close state and .tmp unlinked."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        manifest_before = (run_dir / ".mpi" / "project.json").read_text()
+
+        # Monkeypatch os.replace to fail
+        original_replace = os.replace
+        def failing_replace(src, dst):
+            raise OSError("Simulated os.replace failure")
+
+        monkeypatch.setattr("os.replace", failing_replace)
+
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        # Restore original function
+        monkeypatch.setattr("os.replace", original_replace)
+
+        assert rc != 0
+        # Manifest should be unchanged
+        manifest_after = (run_dir / ".mpi" / "project.json").read_text()
+        assert manifest_before == manifest_after
+        # No .tmp file should be left
+        tmp_file = run_dir / ".mpi" / "project.json.tmp"
+        assert not tmp_file.exists()
 
 
 class TestCloseFailures:
@@ -487,3 +528,147 @@ class TestCloseFailures:
         ])
         manifest_after = (run_dir / ".mpi" / "project.json").read_text()
         assert manifest_before == manifest_after
+
+    def test_malformed_units_wrong_field_name_fails(self, tmp_path):
+        """AC4.2: units with wrong field name (title instead of idu_name) rejected."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        # Malformed: title instead of idu_name
+        malformed_units = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "reasoning_summary": "test",
+            "idus": [
+                {
+                    "idu_number": 1, "title": "Start",  # WRONG: should be idu_name
+                    "moment": 1, "criteria": "...",
+                    "confidence": 4, "flag_for_review": False,
+                    "utterance_numbers": ["1", "2"], "hinge_to_next": None,
+                }
+            ],
+        }
+        units = _write_units_json(run_dir, "units.json", malformed_units)
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_malformed_units_confidence_out_of_range_fails(self, tmp_path):
+        """AC4.3: units with confidence outside 1-5 rejected."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        # Malformed: confidence out of range
+        malformed_units = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "reasoning_summary": "test",
+            "idus": [
+                {
+                    "idu_number": 1, "idu_name": "Start", "moment": 1,
+                    "criteria": "...", "confidence": 10,  # WRONG: should be 1-5
+                    "flag_for_review": False,
+                    "utterance_numbers": ["1", "2"], "hinge_to_next": None,
+                }
+            ],
+        }
+        units = _write_units_json(run_dir, "units.json", malformed_units)
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+        # Verify no git_commit_succeeded event in audit
+        audit = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        events = [json.loads(l) for l in audit if l.strip()]
+        actions = [e["event"]["action"] for e in events]
+        assert "git_commit_succeeded" not in actions
+
+
+class TestVerify:
+    def test_verify_returns_zero_after_successful_close(self, tmp_path):
+        """Verify returns 0 after a successful close."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        # First do a successful close
+        rc_close = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "criteria grouped", "--run-dir", str(run_dir),
+        ])
+        assert rc_close == 0
+
+        # Now verify should return 0
+        rc_verify = mpi_step.main(["verify", "--run-dir", str(run_dir)])
+        assert rc_verify == 0
+
+    def test_verify_fails_with_tampered_close_id(self, tmp_path):
+        """Verify returns non-zero if manifest close_id is tampered."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        # Do a successful close
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        # Tamper the manifest's close_id
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest["participants"]["p1s1"]["stages"]["diachronic"]["substeps"]["criteria_grouping"]["close_id"] = "tampered-id"
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Verify should fail
+        rc_verify = mpi_step.main(["verify", "--run-dir", str(run_dir)])
+        assert rc_verify != 0
+
+    def test_verify_fails_if_audit_git_commit_succeeded_missing(self, tmp_path):
+        """Verify returns non-zero if matching git_commit_succeeded event missing."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        # Do a successful close
+        mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art), "--units-json", str(units),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        # Delete the git_commit_succeeded audit line
+        audit_lines = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        filtered_lines = [
+            l for l in audit_lines
+            if not (l.strip() and "git_commit_succeeded" in l)
+        ]
+        (run_dir / ".mpi" / "audit.jsonl").write_text("\n".join(filtered_lines) + "\n" if filtered_lines else "")
+
+        # Verify should fail
+        rc_verify = mpi_step.main(["verify", "--run-dir", str(run_dir)])
+        assert rc_verify != 0

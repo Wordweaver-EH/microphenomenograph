@@ -246,8 +246,6 @@ def _build_audit_event(
 # ---------------------------------------------------------------------------
 
 def cmd_close(args: argparse.Namespace) -> int:
-    import hashlib
-
     run_dir = Path(getattr(args, "run_dir", ".")).resolve()
     audit_path = run_dir / ".mpi" / "audit.jsonl"
 
@@ -410,7 +408,11 @@ def cmd_close(args: argparse.Namespace) -> int:
     manifest_path = run_dir / ".mpi" / "project.json"
     manifest_backup = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "{}"
 
-    _save_manifest(run_dir, manifest)
+    try:
+        _save_manifest(run_dir, manifest)
+    except OSError as e:
+        print(f"ERROR manifest_write_failed: {e}", file=sys.stderr)
+        return _abort(f"manifest_write_failed: {e}")
 
     e_manifest = _build_audit_event(
         action="manifest_replaced",

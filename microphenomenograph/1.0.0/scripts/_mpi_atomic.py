@@ -6,12 +6,21 @@ from pathlib import Path
 
 
 def atomic_write(path: str | Path, content: str) -> None:
-    """Write content to path atomically via .tmp -> os.replace."""
+    """Write content to path atomically via .tmp -> os.replace.
+
+    On failure: leaves tmp file unlinked and original path untouched.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        # Clean up tmp file on failure
+        if tmp.exists():
+            tmp.unlink()
+        raise
 
 
 def append_jsonl(path: str | Path, obj: dict) -> None:
