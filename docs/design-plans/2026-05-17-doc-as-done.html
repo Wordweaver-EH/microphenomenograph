@@ -343,24 +343,30 @@ The agent writes its proposal to disk with a rationale.
 
 <h2 id="four">5. The four-part "close" — how each step finishes</h2>
 
-<p>Every substep — LLM-driven or orchestrator-driven — finishes by performing a single transactional operation called <b>close</b>. The four artifacts do <b>not</b> all land at the same instant; the honest contract is:</p>
+<p>Every substep finishes via a <b>phased close protocol</b>. The four artifacts (output files, audit events, manifest update, git commit) do <b>not</b> land at the same instant — they land in a known sequence, with each phase emitting its own audit event so failures are fully reconstructable:</p>
 
 <ol>
-  <li><b>Output files</b> may exist on disk <i>before</i> close runs — subagents write them first.</li>
-  <li><b>Audit events</b> are appended to <code>.mpi/audit.jsonl</code> first inside close — including events for failed close attempts.</li>
-  <li><b>Manifest mutation</b> is the atomic commit-point: the substep status flips from <code>pending</code> to <code>done</code> in a single <code>os.replace</code>.</li>
-  <li><b>Git commit</b> binds (1)+(2)+(3) into one revision; the commit SHA is recorded in the manifest entry.</li>
+  <li><code>close_attempted</code> — close invoked; allocates a <code>close_id</code> (UUID4).</li>
+  <li><code>artifacts_validated</code> — pre-checks pass: artifacts exist & validate against schema, upstream prerequisites are done, artifact-path reservation acquired.</li>
+  <li><code>audit_appended</code> — per-decision events (IDU codings, etc.) appended to <code>audit.jsonl</code>, all tagged with <code>close_id</code>.</li>
+  <li><code>manifest_replaced</code> — manifest atomically swapped via <code>os.replace</code>. The manifest entry records <code>close_id</code>, <code>parent_head_sha</code>, <code>artifact_shas</code>, and <code>expected_action: "commit_created"</code> — but <b>NOT</b> the commit SHA of the same commit it sits inside (see callout below).</li>
+  <li><code>git_commit_succeeded</code> OR <code>git_commit_failed</code> — <code>git add</code> + <code>git commit</code> runs. On success, the event carries <code>mpi.git_commit_sha</code> (post-commit, now computable). On failure, the next event is...</li>
+  <li><code>manifest_rolled_back</code> (failure path only) — manifest restored to pre-step-4 state; substep stays <code>pending</code>.</li>
 </ol>
 
-<p>A substep is <code>done</code> iff <b>(a)</b> the manifest's status says so AND <b>(b)</b> the named commit SHA exists in <code>git log</code>. Either alone is insufficient — a manifest with a <code>done</code> status but no matching commit (or vice versa) is an inconsistent state, which the helper detects at next start via the HEAD-mismatch check.</p>
+<p>A substep is <b><code>done</code></b> iff (a) manifest status is <code>done</code>, (b) <code>audit.jsonl</code> contains a <code>git_commit_succeeded</code> event with matching <code>close_id</code>, AND (c) that event's <code>mpi.git_commit_sha</code> resolves to a commit in <code>git log</code> whose tree contains the manifest entry as recorded.</p>
+
+<div class="callout callout-warning">
+<b>The manifest cannot record the SHA of its own commit.</b> The commit SHA is a hash of the tree, which includes the manifest. If the manifest contained the SHA, changing the SHA would change the tree, which would change the SHA — infinite regression. So the manifest records only the close's <i>identity</i> (<code>close_id</code>, <code>parent_head_sha</code>, <code>artifact_shas</code>); the <i>result</i> (the actual <code>git_commit_sha</code>) is recorded in the post-commit audit event keyed by the same <code>close_id</code>. Tools that need "which commit closed this substep?" do a one-line lookup: <code>jq '.[] | select(.mpi.close_id=="&lt;id&gt;" and .event.action=="commit_created") | .mpi.git_commit_sha' .mpi/audit.jsonl</code>.
+</div>
 
 <table>
 <thead><tr><th>#</th><th>Artifact</th><th>Why</th></tr></thead>
 <tbody>
 <tr><td>1</td><td><b>Output file(s)</b> in <code>analyses/</code></td><td>The actual analysis result — a JSON file with the structured output, a Markdown file with the human-readable table, and (for LLM substeps) a <b>prompt.json</b> with the exact prompt + response + model + tokens used to produce it.</td></tr>
 <tr><td>2</td><td><b>Audit event(s)</b> in <code>.mpi/audit.jsonl</code></td><td>One line per analytic decision, including which IDU/ISU was coded, what confidence, whether it was flagged, what files were produced.</td></tr>
-<tr><td>3</td><td><b>Manifest update</b> in <code>.mpi/project.json</code></td><td>The atomic commit-point. Source of truth for <i>state</i> (which substeps are done/pending). Atomically written (tmp file → rename) so concurrent readers never see a partial state.</td></tr>
-<tr><td>4</td><td><b>Git commit</b></td><td>One commit per substep close, message format <code>mpi: &lt;actor&gt; &lt;stage&gt;.&lt;substep&gt; &lt;scope&gt; (&lt;N&gt;units &lt;K&gt;flagged)</code>. Recorded SHA goes into the manifest. Substep is <i>only</i> truly done when both manifest says so AND this commit exists in <code>git log</code>.</td></tr>
+<tr><td>3</td><td><b>Manifest update</b> in <code>.mpi/project.json</code></td><td>The atomic commit-point inside the close. Source of truth for <i>state</i> (which substeps are done/pending). Atomically written (tmp file → rename) so concurrent readers never see a partial state. Records <code>close_id</code>, <code>parent_head_sha</code>, and <code>artifact_shas</code> — not the SHA of the same commit it sits inside.</td></tr>
+<tr><td>4</td><td><b>Git commit</b></td><td>One commit per substep close, message format <code>mpi: &lt;actor&gt; &lt;stage&gt;.&lt;substep&gt; &lt;scope&gt; (&lt;N&gt;units &lt;K&gt;flagged)</code>. The post-commit SHA is recorded in the <code>git_commit_succeeded</code> audit event (keyed by <code>close_id</code>) — the join across manifest and audit replaces the impossible self-referential SHA.</td></tr>
 </tbody>
 </table>
 
@@ -845,7 +851,9 @@ The agent writes its proposal to disk with a rationale.
 <tr><td>Substep stays <code>pending</code> after a run</td><td>Either the subagent returned ERROR, or one of the four close artifacts didn't land.</td><td>Inspect <code>analyses/&lt;participant&gt;-&lt;substep&gt;.*</code> for partial files; check the audit log for a <code>close_aborted</code> or <code>stage_failed</code> event with a reason.</td></tr>
 <tr><td>Helper refuses with <code>dirty_worktree_refused</code></td><td>You have uncommitted files outside <code>analyses/</code> and <code>.mpi/</code>.</td><td>Commit or stash them, then retry.</td></tr>
 <tr><td>Helper refuses with <code>head_mismatch</code></td><td>The repo's current HEAD doesn't match the manifest's last recorded commit (e.g., you rebased or cherry-picked an external commit).</td><td>Two sanctioned paths: (a) <code>git reset --hard &lt;recorded_sha&gt;</code> to restore the prior HEAD; (b) <code>mpi_step.py accept-head --reason "&lt;why&gt;"</code> to record the new HEAD in the manifest with an audited <code>accepted_head</code> event. <b>Do not manually edit <code>.mpi/project.json</code></b> — it breaks the audit story.</td></tr>
-<tr><td><code>concurrent_close_blocked</code> after 30s</td><td>Another close is holding the lock.</td><td>Wait, or if you're sure no other process is running, <code>mpi_step.py unlock --reason "..."</code>.</td></tr>
+<tr><td><code>concurrent_close_blocked</code> after 30s</td><td>Another close is holding <code>.mpi/close.lock</code> (the manifest+audit+commit critical section).</td><td>Wait, or if you're sure no other process is running, <code>mpi_step.py unlock --reason "..."</code>.</td></tr>
+<tr><td><code>run_lease_held</code> at <code>/mpi all</code> start</td><td>Another <code>/mpi all</code> orchestration is running against this run directory (<code>.mpi/run.lease</code> is held). Two concurrent orchestrations would dispatch duplicate LLM work and race to close.</td><td>Wait for the other run to finish. If certain no other process is running, <code>mpi_step.py unlock --lease --reason "..."</code>.</td></tr>
+<tr><td><code>substep_reservation_held</code></td><td>A reservation file exists for this `(stage, substep, scope)` from a previous close attempt that hasn't either committed or rolled back. Indicates a crashed close.</td><td>Inspect <code>analyses/&lt;scope&gt;-&lt;stage&gt;.&lt;substep&gt;.reservation.json</code> for the holder's PID; if dead, <code>mpi_step.py clear-reservation --substep &lt;...&gt; --reason "..."</code>.</td></tr>
 <tr><td><code>irr_warning</code> events in audit</td><td>Most-recent IRR record has <code>outcome: "low"</code> — α's CI lower bound is below 0.6.</td><td>The auto-trigger already ran once per stage. To retry: <code>mpi-irr calibrate --transcript pNsN --stage diachronic|synchronic</code> with <code>--alternate-model</code> or <code>--alternate-prompt</code> overrides. Compare with literature thresholds in the record's <code>metrics.*.literature_thresholds</code> fields. If IRR stays low, swap the primary model or revise prompts — this is a model-quality signal.</td></tr>
 <tr><td>IV bin overlap rejected at init</td><td>Your IV levels share a value (e.g., <code>med 3-4 / high 4-5</code> both contain 4).</td><td>Pre-release: no <code>--allow-overlap</code> escape hatch. Fix the bins (e.g., <code>med 2-3 / high 4-5</code>) and re-run <code>/mpi init</code>.</td></tr>
 <tr><td>Yolo run takes hours instead of minutes</td><td>Expected — yolo is strictly sequential. Wall-clock scales with transcripts × enabled stages × IDUs per transcript, not a single linear factor.</td><td>This is by design (eliminates races and audit interleaving). For faster turnaround during development, use single-stage commands like <code>/mpi diachronic p1s1</code> in parallel terminals against a scratch run directory.</td></tr>
