@@ -254,10 +254,5 @@ class TestLocalOnlyDefault:
     def test_mpi_step_never_calls_git_remote_add(self):
         """AC33.7: mpi_step.py must never call 'git remote add' (static source check)."""
         source = (SCRIPTS_DIR / "mpi_step.py").read_text()
-        # Check that the source does not contain the string "remote add"
-        assert '"remote", "add"' not in source and "'remote', 'add'" not in source and \
-               '"add"' not in source.split("remote")[0:], \
-            "mpi_step.py should never call 'git remote add'"
-        # More targeted: no 'remote add' substring at all
         assert "remote add" not in source, \
             "mpi_step.py should never call 'git remote add'; found 'remote add' string"
