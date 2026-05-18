@@ -35,6 +35,7 @@
   <li><a href="#stages">The state machine: setup + 7 stages + 1 sidecar check</a></li>
   <li><a href="#substeps">Why substeps matter</a></li>
   <li><a href="#four">The four-part "close" — how each step finishes</a></li>
+  <li><a href="#grounding">Transcript-span grounding (the anti-fabrication mechanism)</a></li>
   <li><a href="#audit">The audit trail (the on-disk story of what happened)</a></li>
   <li><a href="#yolo">Yolo mode: running the whole thing unattended</a></li>
   <li><a href="#kappa">IRR calibration: an automatic model-quality check</a></li>
@@ -102,7 +103,7 @@ The agent writes its proposal to disk with a rationale.
 <thead><tr><th>Stage</th><th>What it does (in plain English)</th><th>Scope</th></tr></thead>
 <tbody>
 <tr><td><code>init</code> <i>(setup)</i></td><td>Scans transcripts, parses headers, proposes IV scheme + DV foci via LLM, gets user confirmation; persists immutable <code>study</code> block to manifest.</td><td>one-shot</td></tr>
-<tr><td><code>transcript_prep</code> <i>(stage 1/7)</i></td><td>Cleans up each transcript: strips BOMs, normalises spacing, fixes speaker labels.</td><td>per transcript</td></tr>
+<tr><td><code>transcript_prep</code> <i>(stage 1/7)</i></td><td>Three substeps per transcript: <code>hash_raw</code> (compute SHA256 of raw delivery, mark read-only), <code>normalize</code> (produce analyst-facing version with BOM stripped, whitespace normalised, speaker labels canonicalised — saved alongside raw, never overwriting), <code>register_offsets</code> (build line-number-to-raw-byte-offset map so downstream span refs anchor in immutable raw text).</td><td>per transcript</td></tr>
 <tr><td><code>diachronic</code> <i>(stage 2/7)</i></td><td>Reads one transcript at a time and breaks the experience into temporally-ordered moments (<b>IDUs</b> — "Incipient Diachronic Units"). What happened first, second, third?</td><td>per transcript</td></tr>
 <tr><td><code>synchronic</code> <i>(stage 3/7)</i></td><td>For each IDU within a transcript, identifies the themes present at that moment (<b>ISUs</b> — "Incipient Synchronic Units"). What aspects of experience co-occurred?</td><td>per (transcript × IDU)</td></tr>
 <tr><td><code>irr_calibration</code> <i>(sidecar check)</i></td><td>Auto-triggered after the calibration transcript's diachronic and synchronic complete. Runs an alternate-agent re-analysis, aligns categories via LLM, computes four agreement metrics with bootstrap 95% CIs. <b>Soft check</b> by default (warns but proceeds); <b>hard gate</b> only with <code>--strict-irr</code>. Not in the dependency chain unless strict.</td><td>after the calibration transcript's diachronic; after its synchronic (once per calibration transcript when <code>stratified</code>; + aggregate summary)</td></tr>
@@ -432,6 +433,44 @@ The agent writes its proposal to disk with a rationale.
 <div class="callout">
 <b>Prompt capture makes LLM calls auditable and replayable.</b> Every LLM call writes its exact prompt and response to disk. You can re-run the prompt offline against the same model and verify the call's integrity — that the recorded prompt produces a comparable response. <b>Replay does not verify output groundedness</b>: if the model fabricated an unsupported claim deterministically, replay reproduces the fabrication rather than detecting it. Groundedness still requires <i>transcript-span evidence</i> — every IDU/ISU/hypothesis claim citing utterance line numbers, validated against the transcript. That's a candidate scope expansion, not part of v3.16.
 </div>
+
+<h2 id="grounding">5.5. Transcript-span grounding (the anti-fabrication mechanism)</h2>
+
+<p>Replay verifies that a recorded prompt produces a recorded response. It does <b>not</b> verify the response is anchored in the transcript. The mechanism that does is <b>mandatory transcript-span grounding</b>:</p>
+
+<p>Every analytic unit emitted by any generative substep — every IDU, ISU, ISU 2nd Level, GDU pattern, generic-synchronic theme, global-synchronic theme, and hypothesis claim — carries a non-empty array:</p>
+
+<pre>{
+  "idu_name": "Initial Sensation",
+  "moment": 1,
+  "criteria": "The utterances talk about initial tactile awareness.",
+  "utterance_refs": [
+    {"transcript_id": "p1s1", "utterance_number": 12,
+     "char_start": 0, "char_end": 87,
+     "raw_excerpt": "P1: I felt this kind of tacky, sticky feeling in my hands..."},
+    {"transcript_id": "p1s1", "utterance_number": 14,
+     "char_start": 0, "char_end": 64,
+     "raw_excerpt": "P1: Like glue almost, before anything visual came in."}
+  ],
+  "confidence": 5
+}</pre>
+
+<p>The helper validates every <code>utterance_refs</code> entry by resolving the <code>transcript_id</code> + <code>utterance_number</code> through <code>transcripts/offsets/&lt;transcript_id&gt;.json</code>, fetching the raw byte range from <code>transcripts/raw/&lt;transcript_id&gt;.txt</code>, and confirming the bytes match <code>raw_excerpt</code>. Failure modes:</p>
+
+<ul>
+  <li><code>missing_span_refs</code> — analytic unit has empty/absent <code>utterance_refs</code></li>
+  <li><code>span_out_of_range</code> — transcript_id not in manifest, utterance_number missing, or char range outside the resolved utterance bytes</li>
+  <li><code>span_excerpt_mismatch</code> — <code>raw_excerpt</code> doesn't match the bytes at the named range</li>
+  <li><code>raw_transcript_mutated</code> — raw file SHA no longer matches the manifest's recorded SHA</li>
+</ul>
+
+<p>Any of these rejects the close. The manifest stays untouched.</p>
+
+<div class="callout">
+<b>Why this matters more than replay.</b> Replay catches "did the model output this exact thing?" — useful but weak. Span grounding catches "is what the model said anchored in the transcript at all?" — the actual anti-fabrication question. A model that fabricates an unsupported claim either (a) cites no spans (rejected: <code>missing_span_refs</code>), (b) cites spans that don't exist (rejected: <code>span_out_of_range</code>), or (c) cites spans whose excerpts don't match the words it claimed to be quoting (rejected: <code>span_excerpt_mismatch</code>). Replay cannot do any of these checks; grounding does all three.
+</div>
+
+<p>The grounding chain extends through cross-participant stages: a generic IDU's <code>utterance_refs</code> are the union of its constituent per-transcript IDU refs; a hypothesis claim's refs trace back through generic / global artifacts to specific transcript utterances. Any hypothesis is followable, claim by claim, to raw text.</p>
 
 <h2 id="audit">6. The audit trail (the on-disk story of what happened)</h2>
 
@@ -859,7 +898,10 @@ The agent writes its proposal to disk with a rationale.
 <tr><td>Yolo run takes hours instead of minutes</td><td>Expected — yolo is strictly sequential. Wall-clock scales with transcripts × enabled stages × IDUs per transcript, not a single linear factor.</td><td>This is by design (eliminates races and audit interleaving). For faster turnaround during development, use single-stage commands like <code>/mpi diachronic p1s1</code> in parallel terminals against a scratch run directory.</td></tr>
 <tr><td><code>prompt_artifact_sha_mismatch</code></td><td>The <code>actor.agent_file_sha256</code> in a prompt.json no longer matches the current agent file — someone edited the agent definition since this prompt was recorded.</td><td>For replay: roll back to the agent file's recorded SHA, or accept the drift explicitly. For audit only: ignore the warning; the record is still a faithful capture of what ran at the time.</td></tr>
 <tr><td>Cross-participant skill errors with <code>upstream_pending</code></td><td>A required per-transcript substep isn't done.</td><td>Check <code>/mpi status</code> for which one; re-run if needed.</td></tr>
-<tr><td>An LLM-substep result looks fabricated</td><td>Possible but detectable.</td><td>Read the corresponding <code>.prompt.json</code> file. Re-run the prompt offline. Compare. If outputs differ unreasonably, file a bug against the agent prompt.</td></tr>
+<tr><td>An LLM-substep result looks fabricated</td><td>Possible but detectable. The substep should have already been rejected by the helper if the fabrication touched span refs.</td><td>Open the substep's <code>.json</code> artifact and check the <code>utterance_refs</code> on each unit; click through to the cited raw lines. If the words don't say what the claim says they do, the substep should have errored <code>span_excerpt_mismatch</code> — file a bug. Replay via <code>mpi_step.py replay --prompt-artifact &lt;path&gt;</code> only catches deterministic divergence from the recorded call; grounding catches unanchored claims.</td></tr>
+<tr><td><code>missing_span_refs</code> at close</td><td>An analytic unit (IDU, ISU, hypothesis claim) had no <code>utterance_refs</code>.</td><td>The agent prompt is misconfigured or the agent didn't follow it. Inspect the rejected artifact; re-prompt the agent with explicit reminder that every unit needs <code>utterance_refs</code>.</td></tr>
+<tr><td><code>span_out_of_range</code> or <code>span_excerpt_mismatch</code> at close</td><td>An <code>utterance_refs</code> entry pointed at a non-existent location or its <code>raw_excerpt</code> didn't match the bytes at that location.</td><td>The agent invented or transcribed a span incorrectly. Re-run the substep; if it keeps happening, the prompt may be allowing creative paraphrase — tighten it.</td></tr>
+<tr><td><code>raw_transcript_mutated</code></td><td>The SHA of <code>transcripts/raw/&lt;transcript_id&gt;.txt</code> no longer matches what the manifest recorded at init.</td><td>Either restore the raw file from git history (it should never have been edited), or run <code>mpi-init --force-reconfigure</code> to start a new run with the new raw. Do not silently rerun against mutated raw — that breaks the grounding chain.</td></tr>
 </tbody>
 </table>
 
@@ -885,6 +927,13 @@ The agent writes its proposal to disk with a rationale.
   <dt><b>Pre-alignment α</b></dt><dd>α computed before the LLM aligner step, treating non-identical labels as disagreement. Always reported alongside the headline post-alignment α so reviewers can see the alignment's contribution. A large gap between pre and post means the LLM aligner is doing most of the work — defensible if alignment confidence is high, suspect otherwise.</dd>
   <dt><b>accept-head</b></dt><dd><code>mpi_step.py accept-head --reason "&lt;text&gt;"</code>. The sanctioned audited path for reconciling a HEAD-mismatch (after rebase, cherry-pick, external commit). Records the new SHA in the manifest and emits an <code>accepted_head</code> audit event. Manual edits to <code>.mpi/project.json</code> are never recommended.</dd>
   <dt><b>Dedicated run repo</b></dt><dd>Operational requirement: <code>mpi-init --run &lt;dir&gt;</code> should point at an empty directory (or a dedicated study repo), not an active development repo's worktree. A 21-transcript run produces ~100–200 commits, which conflicts with pre-commit hooks, GPG signing, CI triggers, branch protections in an active repo. The helper's dirty-worktree refusal exists in part to prevent accidental nesting.</dd>
+  <dt><b>Transcript-span grounding</b></dt><dd>Mandatory v1 anti-fabrication mechanism: every analytic unit (IDU, ISU, GDU pattern, hypothesis claim) carries <code>utterance_refs</code> with <code>raw_excerpt</code>; helper rejects close if any ref doesn't resolve or doesn't match the raw bytes. The actual anti-fabrication mechanism (replay only verifies call integrity).</dd>
+  <dt><b>Raw transcript immutability</b></dt><dd>Raw transcripts live read-only at <code>transcripts/raw/</code>; SHA recorded in manifest; mutations detected at next close. Normalised version lives at <code>transcripts/normalized/</code> with a unified diff at <code>transcripts/diff/</code>. Offset registry at <code>transcripts/offsets/</code> maps normalised line numbers to raw byte ranges so every downstream span ref anchors in immutable raw.</dd>
+  <dt><b>Phased close protocol</b></dt><dd>Six audit events emitted during close, all sharing one <code>close_id</code>: <code>close_attempted</code>, <code>artifacts_validated</code>, <code>audit_appended</code>, <code>manifest_replaced</code>, then <code>git_commit_succeeded</code> (or <code>git_commit_failed</code> followed by <code>manifest_rolled_back</code>). The manifest records <code>close_id</code> + <code>parent_head_sha</code>; the actual <code>git_commit_sha</code> appears only on the post-commit audit event (the SHA self-reference impossibility).</dd>
+  <dt><b>Run lease</b></dt><dd><code>.mpi/run.lease</code>: file held for the entire <code>/mpi all</code> orchestration. Prevents two concurrent runs from dispatching duplicate LLM work. Plus per-substep <code>.reservation.json</code> files for safety even within a single run.</dd>
+  <dt><b>Block bootstrap (αU)</b></dt><dd>Bootstrap CI for αU resamples contiguous utterance blocks (block length ≈ √N) rather than individual utterances. Necessary because αU measures boundary placement on a continuum; naive utterance bootstrap would destroy the contiguity αU is measuring. Naive bootstrap is fine for α, κ, ARI (those operate on per-utterance label assignments, not boundaries).</dd>
+  <dt><b>Cascade-reset tombstones</b></dt><dd>When a revision triggers cascade reset, affected artifacts are moved to <code>analyses/_superseded/&lt;close_id&gt;/</code> rather than left in place. A <code>tombstone.json</code> sibling records the cascade source, timestamp, reason. Prevents humans/scripts from opening stale files.</dd>
+  <dt><b>Claim-level evidence (hypothesis)</b></dt><dd>Each hypothesis claim carries its own <code>{supports, contradicts, ambiguous, n_transcripts, n_iv_levels_covered, uncertainty_language, negative_cases}</code> object, with <code>raw_span_refs</code> on every entry. The substantive audit happens claim-by-claim; stage-level evidence-source coverage is a navigation aid, not the binding contract.</dd>
   <dt><b>Trace ID / Run ID</b></dt><dd>UUID identifying a single pipeline run. Shared by every audit event from that run.</dd>
   <dt><b>Cascade reset</b></dt><dd>Automatic resetting of downstream substeps to <code>pending</code> when an upstream substep is revised. Ensures no analysis runs on stale inputs.</dd>
   <dt><b>IRR calibration</b></dt><dd>Automatic model-quality check after first diachronic and first synchronic. Three steps: LLM-mediated category alignment → union-of-categories coincidence matrix → four metrics with bootstrap CIs. Outcome based on α's CI lower bound ≥ 0.6. Warning-by-default; opt-in <code>--strict-irr</code> blocks.</dd>

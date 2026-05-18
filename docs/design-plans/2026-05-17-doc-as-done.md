@@ -68,7 +68,34 @@ Three granularity and fidelity decisions distinguish this design from the previo
 
    `outcome = "passed"` iff the **lower bound of α's 95% CI ≥ 0.6** (more conservative than point-estimate threshold; honest about sample-size uncertainty). Cross-participant stages emit `irr_warning` if low, but do not block. `--strict-irr` opts into hard blocking. The `literature_thresholds` fields are informational — they let a reader see where each metric's value sits relative to published cutoffs without having to look them up. **Important caveat surfaced in the human-readable rendering**: these thresholds are calibrated for *human analysts after training*, not for LLM raters; transfer to LLM-as-rater is by analogy and should be treated as a convention, not evidence.
 
-9. **Hypothesis generation is three substeps, not one — and produces *candidate mechanism* hypotheses, not causal estimates.** The manual frames hypothesis generation as patterns varying by IV level across **all three** of generic diachronic, generic synchronic, and global synchronic outputs. Important framing: qualitative pattern extraction from interview transcripts is **candidate generation for downstream testing**, not causal identification. The pipeline calls these outputs "candidate mechanism hypotheses" and every artifact carries a verbatim disclaimer: *"These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."* The three substeps: `hypothesis.evidence_extraction` (LLM, per DV focus — gathers pattern variations from **all three upstream sources**: `generic_diachronic.cross_iv_contrast` outputs for IV-level pattern differences, `generic_synchronic.isu_second_level_grouping` outputs for theme variations within generic IDUs, AND `global_synchronic` outputs for cross-event theme patterns; preserves full traceability with citation paths to every source artifact). `hypothesis.candidate_drafting` (LLM, per DV focus — drafts candidate mechanism hypotheses framed against IV-level differences; each hypothesis declares **which evidence classes support it** with explicit `not_applicable` allowed where no relevant evidence exists, rather than forcing token-citations from each class to satisfy a schema quota). `hypothesis.weak_evidence_review` (LLM, global — flags hypotheses whose supporting evidence is thin given the participant count; also flags unsupported causal language not anchored to cited evidence). Output: one `hypotheses/dv-<focus>.{evidence,candidates}.md` per DV focus plus a global `hypotheses/review_summary.md`.
+10. **Every analytic claim cites transcript spans, and the helper validates the spans exist.** The honest anti-fabrication mechanism: each IDU, ISU, ISU-2nd-level, GDU, GSS, global ISU, and hypothesis claim carries a `utterance_refs: [{transcript_id, utterance_number, char_start, char_end, raw_excerpt}, ...]` array. The helper resolves each ref through the `transcripts/offsets/<transcript_id>.json` registry built in `transcript_prep.register_offsets`, fetches the raw byte range, computes its SHA, and rejects the close if any ref points outside the raw file, if `raw_excerpt` doesn't match the resolved bytes, or if the raw file's SHA doesn't match what's in the manifest. Empty `utterance_refs` is a schema validation failure for any generative substep — there is no "uncited claim" path. This is what makes the pipeline auditable in a way replay alone is not: a reviewer can take any claim, follow its refs, and see the exact raw words it's anchored in. Without this, the pipeline preserves hallucination faithfully; with it, fabrication has nowhere to hide (a fabricated claim either points outside the file or carries a mismatched excerpt — both detected).
+
+9. **Hypothesis generation is three substeps, not one — and produces *candidate mechanism* hypotheses with claim-level evidence audit, not causal estimates.** Pattern extraction from interview transcripts is **candidate generation for downstream testing**, not causal identification. Every artifact carries a verbatim disclaimer (see AC23.3). The three substeps:
+
+   - `hypothesis.evidence_extraction` (LLM, per DV focus) — gathers pattern variations from all three upstream sources with full traceability.
+   - `hypothesis.candidate_drafting` (LLM, per DV focus) — drafts candidate mechanism hypotheses. Each candidate is an object with **claim-level evidence**, not stage-level coverage:
+     ```json
+     {
+       "hypothesis": "...",
+       "claims": [
+         {
+           "claim_text": "...",
+           "supports": [{"source_artifact": "...", "raw_span_refs": [...]}, ...],
+           "contradicts": [{"source_artifact": "...", "raw_span_refs": [...]}, ...],
+           "ambiguous": [...],
+           "n_transcripts": <int>,
+           "n_iv_levels_covered": <int>,
+           "uncertainty_language": "associated with|tends to|may|...",
+           "negative_cases": [{"transcript_id": "...", "note": "..."}]
+         }, ...
+       ],
+       "sample_summary": {"by_iv_level": {"low": <n>, "moderate": <n>, "high": <n>}}
+     }
+     ```
+     Every `supports`/`contradicts`/`ambiguous` entry MUST carry `raw_span_refs` (utterance-level back-references resolved through the transcript offset registry, per DoD #10). No claim can close without at least one of {`supports`, `contradicts`} being non-empty OR an explicit `not_applicable` rationale at the claim level.
+   - `hypothesis.weak_evidence_review` (LLM, global) — for each claim, checks: does `uncertainty_language` match the support/contradict balance? Are `n_transcripts` and `n_iv_levels_covered` sufficient for the strength of language used? Are negative cases acknowledged? Emits `coverage_overclaim`, `unsupported_causal_language`, or `negative_case_ignored` rows in the review summary.
+
+   Output: one `hypotheses/dv-<focus>.evidence.md` + one `hypotheses/dv-<focus>.candidates.md` per DV focus plus a global `hypotheses/review_summary.md`.
 
 ## Acceptance Criteria
 
@@ -180,7 +207,7 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC16.3 Failure:** Cross-participant skills invoked between cascade-reset write and downstream re-close exit with `upstream_pending` error and produce no artifacts.
 - **doc-as-done.AC16.4 Failure (generic_diachronic gate):** `generic_diachronic.*` substep close is rejected with `prereq_unsatisfied` if any participant assigned to the event has pending diachronic or synchronic substeps, OR if any synchronic artifact for that participant carries an unresolved `temporal_order_within_idu: true` or `concurrent_with_adjacent_idu` flag (no follow-up `criteria_revision` close has been done).
 - **doc-as-done.AC16.5 Failure (hypothesis gate):** `hypothesis.evidence_extraction` close is rejected with `prereq_unsatisfied` unless `generic_diachronic.*`, `generic_synchronic.*`, AND `global_synchronic.*` are all `done` for the manifest's full event × IV × generic-IDU coverage. Verified by helper pre-check against the manifest.
-- **doc-as-done.AC16.6 Success (hypothesis evidence-coverage schema):** Each `hypothesis.evidence_extraction` artifact JSON contains an `evidence_coverage` object with keys `generic_diachronic`, `generic_synchronic`, `global_synchronic`. Each key's value is an object `{status: "supported"|"absent"|"not_applicable", citations: [...], rationale: "<one sentence>"}`. Schema rules: when `status == "supported"`, `citations` MUST be non-empty; when `status == "absent"` or `"not_applicable"`, `citations` MUST be empty and `rationale` MUST be non-empty. The downstream `hypothesis.weak_evidence_review` substep uses this structure as the hook to flag hypotheses whose causal/mechanism language is stronger than their `evidence_coverage` justifies. Supersedes earlier drafts that required "non-empty arrays for all three" (evidence quota → junk citations).
+- **doc-as-done.AC16.6 Success (hypothesis evidence-extraction stage-level coverage):** `hypothesis.evidence_extraction` artifacts contain a stage-level `evidence_coverage` summary (per-class `{status: "supported"|"absent"|"not_applicable", citations: [artifact-path...], rationale}`) which serves as a high-level index. The substantive claim audit is per-claim, transcript-span-anchored (AC23.1–AC23.2), not stage-level. Stage-level coverage exists only as a navigation aid for reviewers; it does not gate hypothesis admission. The claim-level `raw_span_refs` are the binding contract (DoD #10).
 
 ### doc-as-done.AC17: Hypothesis is three substeps with traceability
 - **doc-as-done.AC17.1 Success:** `hypothesis.evidence_extraction` runs once per DV focus and writes `hypotheses/dv-<focus>.evidence.{json,md,prompt.json}`; the JSON cites source artifact paths for every claim.
@@ -216,13 +243,15 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC22.1 Success:** `synchronic.{theme_grouping_within_idu, isu_naming}` artifacts contain coding decisions for every utterance in their IDU regardless of DV-focus match; no utterance is dropped for being off-focus.
 - **doc-as-done.AC22.2 Success:** `hypothesis.evidence_extraction` produces one artifact per DV focus, scoped; `hypothesis.candidate_drafting` produces one candidates artifact per DV focus, framed against that focus.
 
-### doc-as-done.AC23: Hypothesis evidence-coverage is structured, not quota-filled
-- **doc-as-done.AC23.1 Success:** Each candidate hypothesis in `hypothesis.candidate_drafting` artifacts carries an `evidence_coverage` object matching the AC16.6 schema (per-class `{status, citations, rationale}` triples for `generic_diachronic`, `generic_synchronic`, `global_synchronic`).
-- **doc-as-done.AC23.2 Failure (review):** `hypothesis.weak_evidence_review` flags any hypothesis whose claim language exceeds what `evidence_coverage` justifies. Examples: causal phrasing ("X causes Y", "X drives Y") with no class showing `status: "supported"`; cross-event claims with `global_synchronic.status != "supported"`. Output as an `unsupported_causal_language` or `coverage_overclaim` row in the review summary.
-- **doc-as-done.AC23.3 Success:** Every hypothesis output (candidates and review) carries a verbatim disclaimer: *"These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."* The schema validator enforces presence of the disclaimer field.
+### doc-as-done.AC23: Hypothesis evidence audit is claim-level, transcript-span-anchored
+- **doc-as-done.AC23.1 Success:** Each candidate in `hypothesis.candidate_drafting` artifacts is an object with a `claims: [...]` array, each claim carrying `{claim_text, supports[], contradicts[], ambiguous[], n_transcripts, n_iv_levels_covered, uncertainty_language, negative_cases[]}`.
+- **doc-as-done.AC23.2 Success (raw-span anchoring):** Every entry in `supports`/`contradicts`/`ambiguous` carries `raw_span_refs: [{transcript_id, utterance_number, char_start, char_end, raw_excerpt}, ...]` (DoD #10 grounding contract). Helper rejects close if any ref doesn't resolve or its `raw_excerpt` doesn't match.
+- **doc-as-done.AC23.3 Failure (review hooks):** `weak_evidence_review` emits `unsupported_causal_language` when a claim uses causal phrasing with no `supports` entry; `coverage_overclaim` when `uncertainty_language` is hedged less than `n_transcripts`/`n_iv_levels_covered` justifies; `negative_case_ignored` when contradicting transcripts exist in the corpus but the claim's `negative_cases` is empty.
+- **doc-as-done.AC23.4 Success:** Every hypothesis output (candidates and review) carries a verbatim disclaimer: *"These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."* The schema validator enforces presence of the disclaimer field.
+- **doc-as-done.AC23.5 Success:** Each candidate also carries `sample_summary.by_iv_level: {<level>: <n_transcripts>, ...}` so a reviewer can immediately see the n behind every claim.
 
 ### doc-as-done.AC24: IRR calibration transcript is configurable
-- **doc-as-done.AC24.1 Success:** `study.calibration_transcript` field in the manifest is set at init from `/mpi init --calibration <strategy>`. Valid strategies: `"first"`, a specific `transcript_id`, or `"stratified"`. Default: `"first"`.
+- **doc-as-done.AC24.1 Success:** `study.calibration_transcript` field in the manifest is set at init from `/mpi init --calibration <strategy>`. Valid strategies: `"stratified"` (default), a specific `transcript_id`, or `"first"` (smoke-test, sets `study.calibration_mode="smoke_test"`).
 - **doc-as-done.AC24.2 Success:** When `"stratified"`, init generates one calibration transcript per (suggestion × IV-level) cell via deterministic seeded sampling; the resulting list is persisted into `study.calibration_transcript_ids: [...]` and one calibration runs per listed transcript.
 - **doc-as-done.AC24.3 Failure:** `"stratified"` is rejected at init when any stratum has zero transcripts (the schema validator names the offending stratum).
 - **doc-as-done.AC24.4 Success (output structure):** When `study.calibration_transcript = "stratified"`, `.mpi/irr_calibration.jsonl` contains one record per calibration transcript per stage (e.g., for 3 strata × 2 stages = 6 records) plus one aggregate summary record per stage with `record_type: "aggregate"`, `n_strata`, and `metrics.*` recomputed by pooling the per-stratum bootstrap distributions. The aggregate row's `outcome` is `passed` iff the *pooled* α's CI lower bound ≥ 0.6.
@@ -235,6 +264,33 @@ Three granularity and fidelity decisions distinguish this design from the previo
 ### doc-as-done.AC26: HEAD mismatch resolution is audited, never manual
 - **doc-as-done.AC26.1 Success:** `mpi_step.py accept-head --reason "<text>"` is the documented sanctioned path for accepting a new HEAD after rebase/cherry-pick/external commit. It updates the manifest's recorded SHA and emits an `accepted_head` audit event with the reason and actor identity.
 - **doc-as-done.AC26.2 Failure (documentation):** The troubleshooting documentation does NOT instruct users to manually edit `.mpi/project.json`. Manual editing breaks the audit story and is never recommended.
+
+### doc-as-done.AC28: Transcript-span grounding is mandatory, not optional
+- **doc-as-done.AC28.1 Success:** Every generative substep schema (`diachronic.*`, `synchronic.*`, `generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic`, `hypothesis.*`) requires a non-empty `utterance_refs` array on every analytic unit emitted (IDU, ISU, GDU pattern, hypothesis claim).
+- **doc-as-done.AC28.2 Failure:** A close attempt with any analytic unit missing `utterance_refs`, or with an empty array, is rejected with `missing_span_refs` and the offending unit named. Manifest unchanged.
+- **doc-as-done.AC28.3 Failure (span out of range):** A span ref pointing at a `transcript_id` not in the manifest, or at an `utterance_number` outside that transcript's offset registry, or at a `char_start`/`char_end` outside the resolved utterance's byte range, is rejected with `span_out_of_range`. Manifest unchanged.
+- **doc-as-done.AC28.4 Failure (excerpt mismatch):** A span ref whose `raw_excerpt` doesn't match the bytes resolved through the offset registry is rejected with `span_excerpt_mismatch` and both excerpts surfaced for diff. Manifest unchanged.
+- **doc-as-done.AC28.5 Success (cross-stage chain):** Generic and global units inherit span refs from their constituent per-transcript units; helper validates the chain is followable from any hypothesis claim back to a specific transcript utterance via the manifest's per-transcript artifacts.
+
+### doc-as-done.AC29: Raw transcripts are immutable; normalization is auditable
+- **doc-as-done.AC29.1 Success:** Raw transcripts live at `transcripts/raw/<transcript_id>.txt` and are made read-only by `transcript_prep.hash_raw`. Their SHA256 is recorded in `study.transcripts[transcript_id].raw_sha256` in the manifest.
+- **doc-as-done.AC29.2 Failure:** Any subsequent close detects raw-file mutation by SHA mismatch and errors `raw_transcript_mutated`; the substep stays `pending`.
+- **doc-as-done.AC29.3 Success (normalization audit):** `transcript_prep.normalize` produces `transcripts/normalized/<transcript_id>.txt` plus `transcripts/diff/<transcript_id>.diff` (unified diff raw → normalized). The diff is committed and reviewable.
+- **doc-as-done.AC29.4 Success (offset registry):** `transcript_prep.register_offsets` produces `transcripts/offsets/<transcript_id>.json` mapping normalized line numbers to raw `(line, char_start, char_end)` ranges; SHA256 recorded in the manifest. Every downstream `utterance_refs` resolves through it.
+
+### doc-as-done.AC30: Cascade reset moves superseded artifacts aside, not just status
+- **doc-as-done.AC30.1 Success:** When `cascade_reset` fires, every affected artifact file (`analyses/<scope>-<stage>.<substep>.{json,md,prompt.json}`) is moved to `analyses/_superseded/<close_id>/<scope>-<stage>.<substep>.*` (preserving relative path under `_superseded`). The move is atomic per file (`os.rename`); the cascade itself is one transaction emitting one `cascade_reset` event per moved artifact.
+- **doc-as-done.AC30.2 Success:** A `tombstone.json` is written in each `_superseded/<close_id>/` directory recording `{cascade_source: <revision_close_id>, reset_at: <ts>, reset_substeps: [...], reason: "<one-line>"}`. The tombstone is included in the cascade's git commit so the move is reviewable in `git log`.
+- **doc-as-done.AC30.3 Success:** `/mpi status` surfaces superseded counts loudly (e.g., `analyses/_superseded/ contains 3 close_ids worth of artifacts`); render command flags them in `reasoning.log`. Stale files no longer haunt the active workspace.
+
+### doc-as-done.AC31: Calibration default is `stratified`, not `first`
+- **doc-as-done.AC31.1 Success:** `/mpi init` with no `--calibration` flag defaults to `"stratified"`. `"first"` is opt-in via `--calibration first` and the init prompts the user to confirm with a `calibration_mode: smoke_test` flag in the manifest so it's visible later that the run used the convenience setting.
+- **doc-as-done.AC31.2 Success:** When the corpus is too small for stratified (any IV-level stratum has zero transcripts), init refuses with `stratified_unavailable` and prompts the user to either supply a specific `transcript_id` or accept `"first"` with the smoke-test flag.
+
+### doc-as-done.AC32: αU bootstrap uses block resampling, not naive utterance resampling
+- **doc-as-done.AC32.1 Success:** Bootstrap CI for αU resamples **contiguous utterance blocks** (block bootstrap with block length √N rounded to nearest int, per Politis & Romano 1994 stationary bootstrap heuristic for dependent data), not individual utterances. Justification: αU measures boundary placement on a continuum; independent utterance resampling destroys the contiguity αU is measuring. Block length is recorded in the JSONL record's `bootstrap.alpha_u_block_length` field.
+- **doc-as-done.AC32.2 Success:** Bootstrap CIs for α, κ, ARI continue to use naive utterance resampling (no block structure needed — they operate on per-utterance label assignments, not segment boundaries). The JSONL record's `bootstrap.method` field is `"naive_utterance"` for those three, `"block_utterance"` for αU.
+- **doc-as-done.AC32.3 Success:** `scripts/irr.py` unit tests cover: identical inputs → all four metrics' bootstrap CIs centred at 1.0; block bootstrap on shuffled-utterance input recovers near-zero αU; naive bootstrap on the same input over-estimates αU (demonstrating the block-bootstrap fix is necessary, not cosmetic).
 
 ## Glossary
 
@@ -288,7 +344,7 @@ Why this shape: the commit SHA is computed from the tree, which includes the man
 | Stage | Substeps | Iteration |
 |---|---|---|
 | `init` | `scan_transcripts`, `propose_study_config`, `confirm_study_config` | one-shot at init |
-| `transcript_prep` | one | per transcript |
+| `transcript_prep` | `hash_raw`, `normalize`, `register_offsets` | per transcript |
 | `diachronic` | `criteria_grouping`, `criteria_revision`, `idu_naming_ordering` | per transcript |
 | `synchronic` | `theme_grouping_within_idu`, `isu_naming`, `isu_second_level_grouping` | per transcript × **per IDU** |
 | `irr_calibration` | `independent_analyst` (LLM, alternate agent — re-runs all substeps of the calibrated stage), `alignment` (LLM, fresh cross-analyst — proposes category correspondence with rationale; user-validated in assisted mode, auto-accepted in yolo), `agreement_computation` (orch — builds union coincidence matrix, computes α/κ/αU/ARI with bootstrap CIs via `irr.py`) | auto-triggered after calibration transcript's diachronic, and again after its synchronic; warning-by-default (soft check); opt-in `--strict-irr` makes it a hard gate |
@@ -340,6 +396,14 @@ The manifest's `study` block is immutable after `init.confirm_study_config` clos
 - `<scope>-<stage>.<substep>.json` — structured output (the raw analyst result)
 - `<scope>-<stage>.<substep>.md` — human-readable spec-format markdown
 - `<scope>-<stage>.<substep>.prompt.json` — exact LLM prompt + response + model id + finish reason + token counts (replay artifact)
+
+**Transcript immutability + offset registry.** `transcript_prep` does NOT mutate the raw transcript on disk. Three substeps:
+
+- `transcript_prep.hash_raw` (orchestrator) — compute SHA256 of the raw file as delivered; record into `study.transcripts[transcript_id].raw_sha256`. Raw lives at `transcripts/raw/<transcript_id>.txt`, marked read-only via `chmod 0444` on POSIX and the read-only attribute on Windows. Any subsequent overwrite is detected at next run by SHA mismatch and errors `raw_transcript_mutated`.
+- `transcript_prep.normalize` (orchestrator) — produces the analyst-facing version at `transcripts/normalized/<transcript_id>.txt` with BOM stripped, whitespace normalized, speaker labels canonicalized. The normalization is **lossless at the utterance level** — every utterance keeps a stable line number. A diff `transcripts/diff/<transcript_id>.diff` shows exactly what changed and is committed alongside.
+- `transcript_prep.register_offsets` (orchestrator) — builds `transcripts/offsets/<transcript_id>.json`, a mapping from normalized line numbers to raw (line, char_start, char_end) ranges. Every downstream utterance reference resolves through this map back to raw byte offsets, so any analytic claim citing utterance N is anchored in the immutable raw text, not the normalized version. The map is content-addressed (its own SHA recorded in the manifest).
+
+MPI analysis is wording-sensitive (pauses, repairs, interviewer/participant attribution can affect coding); preserving raw with cryptographic anchoring lets reviewers verify that normalization didn't smuggle in interpretation. The earlier draft's `transcript_prep` that overwrote the raw in place is rejected.
 
 **Identifier convention.** Three distinct identifiers in the manifest, never conflated:
 
@@ -637,7 +701,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
   - `bootstrap_ci(metric_fn, utterances, n_bootstrap=5000, alpha=0.05)` — generic bootstrap. Resamples utterance assignments with replacement; recomputes `metric_fn` on each; returns `{point, ci_lo, ci_hi, n_bootstrap}`. Same bootstrap sample indices reused across all four metrics within one calibration call (caller passes the shared sample list).
   - `compute_irr(primary, alternate, alignment, level)` — top-level convenience: runs the four point estimates + four bootstrap CIs and returns the full record dict matching the JSONL schema in DoD #8.
 - `scripts/kappa.py` (existing) is deleted; its logic merges into `irr.py`. Pre-release: no backwards-compatibility shim.
-- Orchestrator hook in `/mpi all`: after the **calibration transcript's** `diachronic.idu_naming_ordering` close, schedule `mpi-irr calibrate --transcript <calibration_transcript_id> --stage diachronic`. After its last `synchronic.isu_second_level_grouping` close, schedule the synchronic-stage calibration. The calibration transcript is resolved from `study.calibration_transcript` at init: `"first"` (the first transcript to finish diachronic — default; operationally simple, adversarially weakest), a specific `transcript_id` (defensible if chosen and documented in advance), or `"stratified"` (one transcript per (event × IV-level) stratum — strongest coverage but multiplies calibration cost). Both calibration runs happen automatically — user does not invoke them.
+- Orchestrator hook in `/mpi all`: after each calibration transcript's `diachronic.idu_naming_ordering` close, schedule `mpi-irr calibrate --transcript <id> --stage diachronic`. After its last `synchronic.isu_second_level_grouping` close, schedule the synchronic-stage calibration. The calibration transcript(s) come from `study.calibration_transcript` set at init: `"stratified"` (**default**: one transcript per (event × IV-level) stratum, deterministic seeded sampling — the methodologically defensible choice), a specific `transcript_id` (defensible if chosen and documented in advance), or `"first"` (smoke-test only; sets `study.calibration_mode = "smoke_test"` in the manifest so the choice is visible later). Both calibration runs happen automatically — user does not invoke them.
 - The calibrate operation:
   1. Runs the alternate-agent analysis through the same substep DAG, writing per-substep alternate artifacts to `analyses/independent/<pNsN>-<stage>.<substep>.{json,md,prompt.json}`.
   2. Invokes `irr.align_categories(...)` — a fresh mpi-cross-analyst subagent that proposes a category mapping with per-pair confidence + rationale (writes its own prompt-capture artifact). In assisted mode, surfaces the proposed mapping via AskUserQuestion for accept/edit; in yolo, auto-accepts with an `irr_alignment_auto_accepted` audit event.
