@@ -161,20 +161,69 @@ The agent writes its proposal to disk with a rationale.
   <path class="svg-arrow" d="M500,204 L540,232"/>
   <path class="svg-arrow" d="M500,280 L540,256"/>
 
+  <!-- hypothesis takes inputs from generic_diachronic, generic_synchronic, AND global_synchronic -->
   <path class="svg-arrow" d="M620,220 L620,148"/>
-  <path class="svg-arrow" d="M500,200 C520,140 540,124 540,124"/>
+  <text class="svg-text-label" x="630" y="190" text-anchor="start">global_synchronic</text>
+  <path class="svg-arrow" d="M500,200 C525,160 525,135 540,124"/>
+  <text class="svg-text-label" x="495" y="155" text-anchor="end">generic_dia</text>
+  <path class="svg-arrow" d="M500,280 C525,200 540,150 540,140"/>
+  <text class="svg-text-label" x="495" y="180" text-anchor="end">generic_sync</text>
 
   <!-- return edge -->
   <path class="svg-arrow-dashed" d="M80,260 C-20,250 -20,200 20,200"/>
   <text class="svg-text-label" x="0" y="220" text-anchor="middle">IDU split</text>
   <text class="svg-text-label" x="0" y="235" text-anchor="middle">(or merge, opt-in)</text>
 </svg>
-<figcaption>Pipeline stage dependency graph. Per-participant work (left) feeds cross-participant work (centre and right). Kappa calibration sits beside synchronic as a one-shot sanity check. The red dashed return-edge shows the manual's "if synchronic reveals temporal order, return to diachronic and split the IDU" rule — plus an opt-in merge variant for synchronic-revealed concurrent IDUs (extension beyond the manual's literal wording).</figcaption>
+<figcaption>Pipeline stage dependency graph. Per-participant work (left) feeds cross-participant work (centre and right). Kappa calibration sits beside synchronic as a one-shot sanity check. The red dashed return-edge shows the manual's "if synchronic reveals temporal order, return to diachronic and split the IDU" rule — plus an opt-in merge variant for synchronic-revealed concurrent IDUs (extension beyond the manual's literal wording). <b>Hypothesis takes inputs from all three of generic_diachronic, generic_synchronic, AND global_synchronic</b>, per the manual ("By developing generic diachronic analyses, generic synchronic analyses, and global synchronic analyses, it is now possible to look for patterns..."). <b>generic_diachronic does not start until synchronic has completed AND there are no unresolved split/merge feedback flags</b> — enforced as a hard prerequisite gate.</figcaption>
 <div class="legend">
   <span class="l-user">user-driven</span>
   <span class="l-orch">orchestrator</span>
   <span class="l-llm">LLM subagent</span>
 </div>
+</figure>
+
+<figure>
+<svg viewBox="0 0 720 280" role="img" aria-label="Prerequisite gates for cross-participant stages">
+  <text class="svg-text" x="360" y="20" text-anchor="middle" font-weight="bold">Prerequisite gates (helper close pre-checks)</text>
+
+  <!-- generic_diachronic gate -->
+  <rect class="svg-box svg-box-llm" x="20" y="50" width="200" height="60" rx="6"/>
+  <text class="svg-text" x="120" y="74" text-anchor="middle" font-weight="bold">generic_diachronic.* close</text>
+  <text class="svg-text-small" x="120" y="92" text-anchor="middle">requires, for every participant:</text>
+  <text class="svg-text-small" x="120" y="104" text-anchor="middle">all diachronic + all synchronic done,</text>
+
+  <rect class="svg-box svg-box-artifact" x="260" y="50" width="220" height="60" rx="6"/>
+  <text class="svg-text-small" x="370" y="68" text-anchor="middle">• all 3 diachronic.* substeps done</text>
+  <text class="svg-text-small" x="370" y="82" text-anchor="middle">• all synchronic.* substeps done per IDU</text>
+  <text class="svg-text-small" x="370" y="96" text-anchor="middle">• NO unresolved temporal_order_within_idu</text>
+  <text class="svg-text-small" x="370" y="108" text-anchor="middle">• NO unresolved concurrent_with_adjacent_idu</text>
+  <path class="svg-arrow" d="M220,80 L260,80"/>
+
+  <!-- hypothesis gate -->
+  <rect class="svg-box svg-box-llm" x="20" y="150" width="200" height="80" rx="6"/>
+  <text class="svg-text" x="120" y="178" text-anchor="middle" font-weight="bold">hypothesis.* close</text>
+  <text class="svg-text-small" x="120" y="196" text-anchor="middle">requires all three:</text>
+  <text class="svg-text-small" x="120" y="210" text-anchor="middle">generic_diachronic,</text>
+  <text class="svg-text-small" x="120" y="222" text-anchor="middle">generic_synchronic, global_synchronic</text>
+
+  <rect class="svg-box svg-box-artifact" x="260" y="150" width="220" height="80" rx="6"/>
+  <text class="svg-text-small" x="370" y="170" text-anchor="middle">evidence_sources schema requires:</text>
+  <text class="svg-text-small" x="370" y="186" text-anchor="middle">• ≥1 citation from generic_diachronic</text>
+  <text class="svg-text-small" x="370" y="200" text-anchor="middle">• ≥1 citation from generic_synchronic</text>
+  <text class="svg-text-small" x="370" y="214" text-anchor="middle">• ≥1 citation from global_synchronic</text>
+  <path class="svg-arrow" d="M220,190 L260,190"/>
+
+  <!-- error path -->
+  <rect class="svg-box svg-box-audit" x="540" y="100" width="160" height="60" rx="6"/>
+  <text class="svg-text" x="620" y="124" text-anchor="middle">prereq_unsatisfied</text>
+  <text class="svg-text-small" x="620" y="140" text-anchor="middle">close rejected</text>
+  <text class="svg-text-small" x="620" y="152" text-anchor="middle">manifest untouched</text>
+  <path class="svg-arrow-dashed" d="M480,80 L540,118"/>
+  <path class="svg-arrow-dashed" d="M480,190 L540,150"/>
+  <text class="svg-text-label" x="510" y="100" text-anchor="middle">fail</text>
+  <text class="svg-text-label" x="510" y="180" text-anchor="middle">fail</text>
+</svg>
+<figcaption>Explicit prerequisite gates enforced by <code>mpi_step.py close</code>. Manual line: <i>"Due to the possibility of the synchronic analysis identifying issues with the diachronic analysis, it is not recommended to conduct generic diachronic analysis until the synchronic analysis has been completed."</i> This pipeline makes that recommendation a hard gate — including the case where synchronic has surfaced a still-unresolved split or merge signal. Hypothesis evidence extraction has its own gate: all three of generic_diachronic, generic_synchronic, and global_synchronic must be present in its citations.</figcaption>
 </figure>
 
 <h2 id="substeps">4. Why substeps matter</h2>
