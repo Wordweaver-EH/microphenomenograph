@@ -535,6 +535,10 @@ The agent writes its proposal to disk with a rationale.
   <li><b>yolo</b> — Claude runs every stage to completion without confirmation. <code>/mpi all --yolo</code>.</li>
 </ul>
 
+<div class="callout">
+<b>Yolo runs strictly sequentially, never in parallel.</b> One participant at a time; within a participant, substeps in DAG order; within synchronic, IDUs in numeric order. This eliminates three problems that parallel fan-out introduces: eager-flag races (synchronic flagging IDU 3 for split while IDU 5 is still being analysed), renumbering thrash (a mid-stream revision invalidates downstream work that was running against the old IDU map), and audit-event interleaving across participants. Cost: wall-clock time scales linearly with participants (~5–10 min × N participants for haiku-class models). Acceptable for unattended research runs. Single-stage commands (<code>/mpi diachronic p1s1</code>) are unaffected — they always operate on one participant by definition.
+</div>
+
 <p>In yolo, several safety mechanisms make sure the on-disk state remains coherent even with no human in the loop:</p>
 
 <table>
@@ -654,14 +658,26 @@ The agent writes its proposal to disk with a rationale.
                 "confidence": 0.82, "rationale": "..."}, ...],
    "unmatched_primary": [], "unmatched_alternate": ["Surprise Reflection"]},
  "metrics": {
-   "alpha":   {"point": 0.64, "ci_lo": 0.42, "ci_hi": 0.79, "n_categories_union": 7},
-   "kappa":   {"point": 0.61, "ci_lo": 0.39, "ci_hi": 0.78},
-   "alpha_u": {"point": 0.71, "ci_lo": 0.55, "ci_hi": 0.82},
-   "ari":     {"point": 0.68, "ci_lo": 0.48, "ci_hi": 0.81}},
+   "alpha":   {"point": 0.64, "ci_lo": 0.42, "ci_hi": 0.79, "n_categories_union": 7,
+               "literature_thresholds": {"tentative": 0.667, "acceptable": 0.8,
+                                         "source": "Krippendorff 2018"}},
+   "kappa":   {"point": 0.61, "ci_lo": 0.39, "ci_hi": 0.78,
+               "literature_thresholds": {"manual_kev": 0.6, "substantial": 0.61,
+                                         "almost_perfect": 0.81,
+                                         "source": "S&D 2025; Landis & Koch 1977"}},
+   "alpha_u": {"point": 0.71, "ci_lo": 0.55, "ci_hi": 0.82,
+               "literature_thresholds": {"tentative": 0.667, "acceptable": 0.8,
+                                         "source": "Krippendorff 2016"}},
+   "ari":     {"point": 0.68, "ci_lo": 0.48, "ci_hi": 0.81,
+               "literature_thresholds": {"note": "diagnostic only; no bright-line"}}},
  "n_utterances": 68, "n_bootstrap": 5000, "bootstrap_seed": 42,
  "disagreement_types": {"assignment_count": 3, "partial_overlap": 4, "no_overlap": 1},
- "threshold": 0.6,
+ "primary_threshold": 0.6,
  "outcome": "passed"}</pre>
+
+<div class="callout callout-warning">
+<b>Important caveat on the literature thresholds.</b> These bright-lines were established for <i>human analysts after training</i> (Krippendorff, Landis & Koch, the S&D manual). Transferring them to LLM-as-rater is by analogy, not evidence. A model that hits α &gt; 0.667 vs an alternate model is more reliable than one that doesn't, but the absolute threshold doesn't carry the same calibration meaning. Treat them as conventions to anchor your reading, not as scientific pass/fail bars.
+</div>
 
 <p><code>outcome = "passed"</code> iff <b>α's CI lower bound ≥ 0.6</b>. Note this is more conservative than the modal published practice (which uses the point estimate). Using the CI lower bound is honest about the small-sample-size noise inherent in single-transcript IRR calibration.</p>
 

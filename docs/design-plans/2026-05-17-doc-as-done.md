@@ -34,7 +34,7 @@ Three granularity and fidelity decisions distinguish this design from the previo
 
    **Bootstrap CIs.** For each metric, sample utterances with replacement N=5000 times, recompute on each bootstrap sample, report the 2.5th and 97.5th percentiles as the 95% CI. Resampling unit is the utterance (not categories, not raters). Same bootstrap samples reused across all four metrics for consistency. ~30 lines of pure-Python; no external dep.
 
-   **JSONL record schema:**
+   **JSONL record schema (with literature thresholds surfaced):**
    ```json
    {"stage":"diachronic","participant":"p1s1","timestamp":"...",
     "primary_model":"...", "alternate_model":"...",
@@ -43,16 +43,24 @@ Three granularity and fidelity decisions distinguish this design from the previo
                               "confidence":0.82,"rationale":"..."}, ...],
                   "unmatched_primary":["..."], "unmatched_alternate":["..."]},
     "metrics": {
-      "alpha":          {"point":0.64,"ci_lo":0.42,"ci_hi":0.79,"n_categories_union":7},
-      "kappa":          {"point":0.61,"ci_lo":0.39,"ci_hi":0.78},
-      "alpha_u":        {"point":0.71,"ci_lo":0.55,"ci_hi":0.82},
-      "ari":            {"point":0.68,"ci_lo":0.48,"ci_hi":0.81}},
-    "n_utterances":68, "n_bootstrap":5000,
+      "alpha":   {"point":0.64,"ci_lo":0.42,"ci_hi":0.79,"n_categories_union":7,
+                  "literature_thresholds":{"tentative":0.667,"acceptable":0.8,
+                                           "source":"Krippendorff 2018, Content Analysis"}},
+      "kappa":   {"point":0.61,"ci_lo":0.39,"ci_hi":0.78,
+                  "literature_thresholds":{"manual_kev":0.6,"substantial":0.61,"almost_perfect":0.81,
+                                           "source":"Sheldrake & Dienes 2025; Landis & Koch 1977"}},
+      "alpha_u": {"point":0.71,"ci_lo":0.55,"ci_hi":0.82,
+                  "literature_thresholds":{"tentative":0.667,"acceptable":0.8,
+                                           "source":"Krippendorff 2016 Quality & Quantity (uses same cutoffs as nominal α)"}},
+      "ari":     {"point":0.68,"ci_lo":0.48,"ci_hi":0.81,
+                  "literature_thresholds":{"note":"No established bright-line for ARI; chance-corrected so 0 = random, 1 = identical. Treat as diagnostic, not gate.",
+                                           "source":"Hubert & Arabie 1985"}}},
+    "n_utterances":68, "n_bootstrap":5000, "bootstrap_seed":42,
     "disagreement_types": {"assignment_count":3,"partial_overlap":4,"no_overlap":1},
-    "threshold":0.6, "outcome":"passed"}
+    "primary_threshold":0.6, "outcome":"passed"}
    ```
 
-   `outcome = "passed"` iff the **lower bound of α's 95% CI ≥ 0.6** (more conservative than point-estimate threshold; honest about sample-size uncertainty). Cross-participant stages emit `irr_warning` if low, but do not block. `--strict-irr` opts into hard blocking.
+   `outcome = "passed"` iff the **lower bound of α's 95% CI ≥ 0.6** (more conservative than point-estimate threshold; honest about sample-size uncertainty). Cross-participant stages emit `irr_warning` if low, but do not block. `--strict-irr` opts into hard blocking. The `literature_thresholds` fields are informational — they let a reader see where each metric's value sits relative to published cutoffs without having to look them up. **Important caveat surfaced in the human-readable rendering**: these thresholds are calibrated for *human analysts after training*, not for LLM raters; transfer to LLM-as-rater is by analogy and should be treated as a convention, not evidence.
 
 9. **Hypothesis generation is three substeps, not one.** The manual frames hypothesis generation as patterns varying by IV level across **all three** of generic diachronic, generic synchronic, and global synchronic outputs — synthesis, framing, and evidence audit are distinct cognitive loads that should not share a single LLM call. The three substeps: `hypothesis.evidence_extraction` (LLM, per DV focus — gathers pattern variations from **all three upstream sources**: `generic_diachronic.cross_iv_contrast` outputs for IV-level pattern differences, `generic_synchronic.isu_second_level_grouping` outputs for theme variations within generic IDUs, AND `global_synchronic` outputs for cross-event theme patterns; preserves full traceability with citation paths to every source artifact), `hypothesis.candidate_drafting` (LLM, per DV focus — drafts causal hypotheses framed against IV-level differences; cites evidence artifact paths), `hypothesis.weak_evidence_review` (LLM, global — flags hypotheses whose supporting evidence is thin given the participant count, mirroring the manual's "small number of participants … only provides weak evidence" guidance). Output: one `hypotheses/dv-<focus>.{evidence,candidates}.md` per DV focus plus a global `hypotheses/review_summary.md`.
 
@@ -114,11 +122,14 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC10.5 Success:** `agents/mpi-cross-analyst.md` Persistence subsection enumerates all cross-analyst LLM substeps: `generic_diachronic.{idu_similarity_grouping, pattern_identification, cross_iv_contrast}` (per event); `generic_synchronic.{select_generic_idus_of_interest, isu_second_level_grouping}`; `global_synchronic`; `hypothesis.{evidence_extraction, candidate_drafting, weak_evidence_review}`; and `irr_calibration.{independent_analyst, alignment}`. Orchestrator-only substeps (`participant_row_assembly`, `worksheet_assembly`, `irr_calibration.agreement_computation`) are NOT enumerated in the agent file because the agent does not execute them.
 - **doc-as-done.AC10.6 Success:** Every SKILL.md Closure subsection enumerates its substeps and the responsible actor for each.
 
-### doc-as-done.AC11: Every LLM call is captured as a replayable artifact
-- **doc-as-done.AC11.1 Success:** For every LLM-invoking substep close, a `<scope>-<stage>.<substep>.prompt.json` artifact exists on disk containing the exact prompt, response, model id, finish reason, and token counts.
+### doc-as-done.AC11: Every LLM call is captured as a replayable artifact (schema_version 2, replay-grade)
+- **doc-as-done.AC11.1 Success:** For every LLM-invoking substep close, a `<scope>-<stage>.<substep>.prompt.json` artifact exists on disk conforming to the schema_version 2 shape.
 - **doc-as-done.AC11.2 Failure:** A `close` invocation for an LLM-invoking substep without `--prompt-artifact` is rejected with a named error.
-- **doc-as-done.AC11.3 Failure:** A malformed `prompt.json` (missing required keys, wrong schema_version) is rejected at pre-check time; manifest unchanged.
+- **doc-as-done.AC11.3 Failure:** A malformed `prompt.json` (missing required keys, wrong schema_version, or `actor.agent_file_sha256` doesn't match the SHA of the agent file at recorded `agent_file_path`) is rejected at pre-check time; manifest unchanged.
 - **doc-as-done.AC11.4 Success:** Each audit event for an LLM-invoking substep carries `mpi.prompt_artifact_path` pointing at the on-disk prompt.json.
+- **doc-as-done.AC11.5 Success (replay):** A `mpi_step.py replay --prompt-artifact <path>` command exists (out of scope for this design's core phases, but the schema supports it) that reconstructs the exact API request from the artifact: same model, same sampling params, same system prompt, same message chain, same tools. The schema captures everything required for that reconstruction; passing the captured request to the same model returns a comparable response (modulo non-zero-temperature variation).
+- **doc-as-done.AC11.6 Success (sampling fidelity):** The schema's `sampling` block records temperature, top_p, top_k, max_tokens, seed (if provided), and stop_sequences — every knob that affects the model's output distribution. Token-usage block additionally records cache hits/writes (`cache_read_tokens`, `cache_write_tokens`) and the vendor-side `anthropic_request_id` so prompt-caching effects and vendor-side logs are auditable.
+- **doc-as-done.AC11.7 Success (agent integrity):** The `actor.agent_file_sha256` field allows reviewers to detect whether the agent definition file changed between when this prompt was captured and now. If the SHA doesn't match the current file's SHA, replay against the current agent would not reproduce the original call — the schema makes this drift visible.
 
 ### doc-as-done.AC12: Manual-native methodology fidelity
 - **doc-as-done.AC12.1 Success:** Synchronic substeps iterate **per IDU within a participant**, not per phase. There is no `diachronic.phases` substep, no `diachronic.du`, no `diachronic.refined_du`, no `generic_synchronic.sss_grouping`, no `generic_synchronic.gss_definition`. Substep names match manual_kev.md verbatim.
@@ -185,11 +196,11 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC20.2 Success:** Every close audit event records `mpi.artifact_sha256: {path: sha256, ...}` and `git.{branch, head_sha}`.
 - **doc-as-done.AC20.3 Failure:** Resuming with HEAD different from the manifest's last recorded commit SHA emits `head_mismatch` and refuses to close until resolved.
 - **doc-as-done.AC20.4 Success:** A stale lock is auto-reclaimed **only** when the holder PID is verifiably not running on the same host (POSIX: `os.kill(pid, 0)` raises ESRCH; Windows: `OpenProcess` returns null); emits `stale_lock_reclaimed`. Long-running closes never trigger reclaim regardless of age. Cross-host locks (different hostname in lock file) refuse to reclaim and error `cross_host_lock_unresolvable`. Manual override path `mpi_step.py unlock --reason ...` emits `manual_unlock` with the reason and is the documented recovery for PID-reuse, frozen processes, or shared-filesystem cases.
+- **doc-as-done.AC20.5 Success (sequential yolo):** `/mpi all --yolo` dispatches one substep at a time. No two subagents run concurrently. Participants processed in deterministic order (manifest insertion order). Within a participant, substeps follow the DAG; synchronic IDUs processed in IDU-number order. Audit log shows a strictly linear interleaving — no overlapping `stage_started`/`stage_completed` events for the same actor class.
 
-### doc-as-done.AC21: IV overlap has deterministic tie-resolution semantics
-- **doc-as-done.AC21.1 Success:** Without `--allow-overlap`, overlapping IV bins are rejected. With `--allow-overlap` and `tie_resolution: "upper"|"lower"`, each ambiguous score is deterministically assigned to one level; downstream worksheets show the participant in exactly that level's rows.
-- **doc-as-done.AC21.2 Success:** With `tie_resolution: "duplicate"`, the participant appears in both overlapping levels' generic-diachronic rows; every event mentioning this participant carries `mpi.duplicate_assignment: true`; downstream cross-IV contrast counts the participant once per assignment.
-- **doc-as-done.AC21.3 Success:** `tie_resolution` is recorded **per overlapping level pair** in `study.ivs[i].overlaps: [{lower_level, upper_level, shared_values, tie_resolution, rationale}]`, not per-IV. The manifest's `overlaps` array is empty if no overlaps exist.
+### doc-as-done.AC21: IV bins are non-overlapping (enforced)
+- **doc-as-done.AC21.1 Failure:** Overlapping IV bins are rejected at init schema validation with a named error pointing at the offending level pair; the manifest is not written. User fixes the bins and re-runs init.
+- **doc-as-done.AC21.2 Success:** No `--allow-overlap` flag exists. Pre-release: no escape hatch.
 
 ### doc-as-done.AC22: DV foci are attention hints, not filters
 - **doc-as-done.AC22.1 Success:** `synchronic.{theme_grouping_within_idu, isu_naming}` artifacts contain coding decisions for every utterance in their IDU regardless of DV-focus match; no utterance is dropped for being off-focus.
@@ -256,6 +267,15 @@ The substep DAG supports both feedback directions via two distinct flag fields i
 
 **Cascade reset on revision.** Re-closing `diachronic.criteria_revision` for participant `pNsN` triggers an automatic cascade in the manifest: `diachronic.idu_naming_ordering` for `pNsN` resets to `pending`; every `synchronic.*` substep scoped to a `pNsN-iduN` whose IDU was affected resets to `pending`; **all cross-participant substeps** (`generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic.*`, `hypothesis.*`) reset to `pending` because their inputs are no longer current. The cascade itself emits one `cascade_reset` audit event per reset substep, with `mpi.cascade_source` referencing the triggering revision's `event_id`. The orchestrator MUST process these resets in a single manifest write before re-dispatching downstream work; otherwise yolo would happily run cross-participant analysis on inconsistent inputs.
 
+**Sequential execution in yolo.** `/mpi all --yolo` runs **strictly sequentially** — never parallel. One participant at a time; within a participant, substeps in dependency order; synchronic IDUs in order; only after a participant's full per-participant work completes does the next participant start. Cross-participant stages run after all per-participant work completes, also sequentially. Rationale: parallel per-participant fan-out introduces three problems that sequential execution eliminates for free —
+- *Eager-flag races*: synchronic flagging `temporal_order_within_idu` for IDU 3 while synchronic for IDU 5 is still running produces races between the flag-triggered `criteria_revision` and the in-flight IDU 5 close. Sequential ordering guarantees all synchronic substeps for a participant finish before any revision triggers.
+- *Renumbering thrash*: a mid-stream revision that splits IDU 3 invalidates all downstream synchronic work for that participant. Sequential execution makes the revision's effect visible to all subsequent substeps deterministically.
+- *Audit volume*: parallel fan-out generates interleaved audit events across participants. Sequential generates a linear trace.
+
+Trade-off: wall-clock time scales linearly with participant count (~5–10 min per participant for haiku-class models). Acceptable for unattended research runs; the prior session's "fire 21 parallel subagents" pattern is explicitly NOT how the production pipeline runs.
+
+`/mpi <stage> [pNsN]` (single-stage invocations) remains free to operate on a specific participant in isolation. Only `/mpi all` is constrained to sequential.
+
 **Explicit prerequisite gates** (enforced by `mpi_step.py close` pre-checks; refusal emits `prereq_unsatisfied` error):
 
 - **`generic_diachronic.*` (any event)** requires, for every participant assigned to that event: (a) all three `diachronic.*` substeps `done`, (b) all `synchronic.*` substeps for every IDU of that participant `done`, AND (c) **no pending `temporal_order_within_idu: true` or `concurrent_with_adjacent_idu` flag** that hasn't been resolved by a follow-up `diachronic.criteria_revision` re-close. Manual: *"Due to the possibility of the synchronic analysis identifying issues with the diachronic analysis, it is not recommended to conduct generic diachronic analysis until the synchronic analysis has been completed."* This gate makes that recommendation a hard precondition.
@@ -271,7 +291,7 @@ The substep DAG supports both feedback directions via two distinct flag fields i
 
 The manifest's `study` block is immutable after `init.confirm_study_config` closes; changing it requires `mpi-init --force-reconfigure` (see Yolo auditability). DV foci shape `synchronic.isu_naming` (subagent is told which thematic dimensions matter most) and `hypothesis` substeps (causal hypotheses are framed per DV focus, by IV level).
 
-**IV bin schema.** Each IV's `levels` array must be non-overlapping by default — distinct closed integer ranges with no shared value. The validator rejects overlaps unless the user passes `--allow-overlap`, in which case `study.ivs[i].overlaps` becomes a required array: each overlap entry names the `lower_level`, `upper_level`, `shared_values` (the integer set in both bins), a `tie_resolution` in `{"upper", "lower", "duplicate"}`, and a free-text `rationale`. `"upper"` assigns ambiguous scores to the higher level; `"lower"` to the lower; `"duplicate"` assigns to BOTH levels (the participant appears in both generic-diachronic rows; downstream cross-IV contrast counts the participant once per assignment with `mpi.duplicate_assignment: true` audit annotation). Multi-level overlaps (three or more bins covering the same value) are explicitly rejected — they require a real category redesign, not a tie-resolution choice. The user's example bins `low 1-2 / med 3-4 / high 4-5` overlap at value 4: without `--allow-overlap`, rejected; with `overlaps: [{lower_level: "med", upper_level: "high", shared_values: [4], tie_resolution: "upper", rationale: "..."}]`, value 4 → high. Bins must also cover the full observed score range across the corpus or explicitly declare excluded scores via `study.ivs[i].excluded_scores: [...]`.
+**IV bin schema.** Each IV's `levels` array must be non-overlapping — distinct closed integer ranges with no shared value. The validator rejects overlaps with a named error pointing at the offending pair; the user fixes the bins and re-runs init. Pre-release: no `--allow-overlap` escape hatch. Bins must also cover the full observed score range across the corpus or explicitly declare excluded scores via `study.ivs[i].excluded_scores: [...]`. Example: `low 1-2 / med 3-4 / high 4-5` overlaps at value 4 and is rejected; user corrects to `low 0-1 / med 2-3 / high 4-5` (matching the manual's example) or similar non-overlapping scheme.
 
 **DV-focus scope (caveat).** DV foci are **attention hints**, not filters. `synchronic.isu_naming` receives the DV foci in its prompt so the agent prefers naming themes that intersect with study focus, but the manual's IDU/ISU coding still operates on the full transcript content — never drop utterances because they don't match a DV focus. The DV foci have their real bite in `hypothesis.evidence_extraction` (one extraction artifact per DV focus, scoped) and `hypothesis.candidate_drafting` (causal hypotheses framed per DV focus). This preserves the manual's stance that the DV "was generated from the utterances the participant made during the interview" — i.e., it emerges from data, with study focus shaping the framing not the data.
 
@@ -388,17 +408,42 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 **Goal:** Every LLM call that produces analytic content writes a replayable `<scope>-<stage>.<substep>.prompt.json` artifact. Audit events reference it.
 
 **Components:**
-- Prompt-artifact schema (single shape across all substeps):
+- Prompt-artifact schema (single shape across all substeps; **replay-ready**, not just audit-ready):
   ```json
   {
-    "schema_version": "1",
-    "actor": {"kind": "subagent|orchestrator", "name": "mpi-analyst", "model": "claude-haiku-4-5"},
+    "schema_version": "2",
+    "actor": {"kind": "subagent|orchestrator", "name": "mpi-analyst",
+              "agent_file_sha256": "<sha of agents/mpi-analyst.md at run time>",
+              "agent_file_path": "microphenomenograph/1.0.0/agents/mpi-analyst.md"},
+    "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+    "sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": null,
+                 "max_tokens": 8192, "seed": null,
+                 "stop_sequences": []},
     "stage": "diachronic", "substep": "idu_naming_ordering", "scope": "p1s1",
-    "prompt": {"system": "...", "user": "...", "tools_available": [...]},
-    "response": {"raw_text": "...", "parsed_units_path": "analyses/p1s1-diachronic.idu_naming_ordering.json"},
-    "metadata": {"finish_reason": "end_turn", "usage": {"input_tokens": 0, "output_tokens": 0}, "duration_ms": 0, "timestamp": "..."}
+    "prompt": {
+      "system": "<full system prompt as sent, including agent frontmatter contents>",
+      "messages": [
+        {"role": "user", "content": "..."},
+        {"role": "assistant", "content": "..."},
+        ...
+      ],
+      "tools_available": [{"name": "Read", "schema": {...}}, ...]
+    },
+    "response": {
+      "raw_text": "<exact model output>",
+      "tool_calls": [{"name": "Read", "input": {...}, "result": "..."}, ...],
+      "parsed_units_path": "analyses/p1s1-diachronic.idu_naming_ordering.json"
+    },
+    "metadata": {
+      "finish_reason": "end_turn",
+      "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
+      "duration_ms": 0,
+      "timestamp": "<RFC3339 UTC>",
+      "anthropic_request_id": "<from response headers, for vendor-side trace>"
+    }
   }
   ```
+  Schema version 2 (this design): captures everything needed to **replay the exact call against the same model offline** — the full message chain, sampling parameters, system prompt with agent-file SHA so post-hoc edits to the agent definition are detectable, tool call sequence with inputs and results so multi-turn tool use is reconstructable. Adds `cache_read_tokens` / `cache_write_tokens` to the usage block so prompt-caching effects are auditable. Adds `anthropic_request_id` so vendor-side logs can be cross-referenced.
 - Helper accepts `--prompt-artifact <path>` (required for substeps that invoke an LLM; absent for orchestrator-only substeps like `transcript_prep`). The path is recorded in the audit event under `mpi.prompt_artifact_path`.
 - Helper validates the prompt.json against its schema during pre-checks.
 - A small replay verifier `scripts/mpi_replay.py` (out of scope for the contract; deferred to a later plan) reads a prompt.json and re-invokes the model to compare outputs — design notes the hook but does not implement.
