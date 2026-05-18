@@ -1,0 +1,691 @@
+# Documentation-as-Done Contract Implementation Plan
+
+**Goal:** Expand `_mpi_schemas.py` with a complete per-substep schema for every `(stage, substep)` pair. Schema drift (the `idu_name` vs `title` class of bug) is rejected at write time by the `validate_units` function.
+
+**Architecture:** `_mpi_schemas.py` is extended from its Phase 1 stub into a full per-substep validator. Plain Python dicts — no `jsonschema` dependency. Validator function returns a list of `SchemaError` objects with named field pointers. Every generative substep schema mandates non-empty `utterance_refs` on every analytic unit. `diachronic.criteria_revision` schema mandates a `convergence` field.
+
+**Tech Stack:** Python 3.9+ stdlib only.
+
+**Scope:** Phase 4 of 6.
+
+**Codebase verified:** 2026-05-18
+
+---
+
+## Acceptance Criteria Coverage
+
+This phase implements and tests:
+
+### doc-as-done.AC4: Schema validation rejects malformed units at write time
+- **doc-as-done.AC4.1 Success:** A well-formed units payload (all required fields, no unknown keys, correct types) is accepted.
+- **doc-as-done.AC4.2 Failure:** A units payload using `title` instead of `idu_name`, or `utterance_lines` instead of `utterance_numbers`, is rejected with a named error pointing at the offending field.
+- **doc-as-done.AC4.3 Failure:** `confidence` outside 1–5, non-boolean `flag_for_review`, or missing `hinge_to_next` on a non-last IDU is rejected.
+
+### doc-as-done.AC10: Substep granularity replaces stage granularity
+- **doc-as-done.AC10.3 Success:** Each (stage, substep) pair has its own schema in `_mpi_schemas.py`; helper invokes the schema matching the `--substep` flag.
+
+### doc-as-done.AC28: Transcript-span grounding is mandatory, not optional
+- **doc-as-done.AC28.1 Success:** Every generative substep schema (`diachronic.*`, `synchronic.*`, `generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic`, `hypothesis.*`) requires a non-empty `utterance_refs` array on every analytic unit emitted.
+- **doc-as-done.AC28.2 Failure:** A close attempt with any analytic unit missing `utterance_refs`, or with an empty array, is rejected with `missing_span_refs` and the offending unit named.
+
+> **Deferred to Plan 2:** AC28.3 (`span_out_of_range`), AC28.4 (`span_excerpt_mismatch`), AC28.5 (cross-stage chain). These require resolving span refs through the offset registry (`transcripts/offsets/<transcript_id>.json`) and reading raw transcript bytes — work that belongs with the transcript_prep skill (Plan 2, Phase 8 scope). Phase 4 validates that `utterance_refs` is present and structurally correct; it does NOT validate byte ranges or excerpt content against the raw file.
+
+> **Deferred to Plan 2:** AC29.4 (offset registry schema). The offset registry is produced by `transcript_prep.register_offsets` (design Phase 8); its schema and the span-resolution logic are implemented together with that substep.
+
+---
+
+<!-- START_SUBCOMPONENT_A (tasks 1-3) -->
+
+<!-- START_TASK_1 -->
+### Task 1: Expand `_mpi_schemas.py` with full per-substep schemas
+
+**Files:**
+- Modify: `microphenomenograph/1.0.0/scripts/_mpi_schemas.py` (replace stub with full implementation)
+
+**Implementation:**
+
+Replace the entire file with the full schema registry. The key design decisions:
+- `utterance_ref` schema: `{transcript_id: str, utterance_number: int, byte_start: int, byte_end: int, raw_excerpt: str}` — `display_char_*` fields are optional (helper-computed at render time, never agent-authored).
+- Every generative substep's analytic unit requires `utterance_refs: list` that is non-empty.
+- `diachronic.criteria_revision` requires `convergence: {decision: str, reason: str}`.
+- Strict mode rejects unknown keys; non-strict mode (default) ignores them.
+
+```python
+"""Per-substep JSON schema registry for mpi_step.py."""
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class SchemaError:
+    field: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"{self.field}: {self.message}"
+
+
+# ---------------------------------------------------------------------------
+# Primitive validators
+# ---------------------------------------------------------------------------
+
+def _require_keys(obj: dict, keys: list[str], prefix: str) -> list[SchemaError]:
+    errors = []
+    for k in keys:
+        if k not in obj:
+            errors.append(SchemaError(f"{prefix}.{k}", f"required field missing"))
+    return errors
+
+
+def _reject_drift_keys(obj: dict, allowed: set[str], forbidden_aliases: dict[str, str], prefix: str) -> list[SchemaError]:
+    """Reject known bad aliases (drift names) and report the correct field name."""
+    errors = []
+    for bad_key, good_key in forbidden_aliases.items():
+        if bad_key in obj:
+            errors.append(SchemaError(f"{prefix}.{bad_key}", f"unknown field; use '{good_key}' instead"))
+    return errors
+
+
+def _check_confidence(obj: dict, prefix: str) -> list[SchemaError]:
+    conf = obj.get("confidence")
+    if conf is None:
+        return []
+    if not isinstance(conf, int) or conf < 1 or conf > 5:
+        return [SchemaError(f"{prefix}.confidence", f"must be int 1–5, got {conf!r}")]
+    return []
+
+
+def _check_flag_for_review(obj: dict, prefix: str) -> list[SchemaError]:
+    flag = obj.get("flag_for_review")
+    if flag is None:
+        return []
+    if not isinstance(flag, bool):
+        return [SchemaError(f"{prefix}.flag_for_review", f"must be bool, got {type(flag).__name__}")]
+    return []
+
+
+def _check_utterance_refs(obj: dict, prefix: str) -> list[SchemaError]:
+    """Require non-empty utterance_refs on every analytic unit."""
+    errors = []
+    refs = obj.get("utterance_refs")
+    if refs is None:
+        errors.append(SchemaError(f"{prefix}.utterance_refs", "missing_span_refs: required non-empty array"))
+        return errors
+    if not isinstance(refs, list) or len(refs) == 0:
+        errors.append(SchemaError(f"{prefix}.utterance_refs", "missing_span_refs: must be a non-empty array"))
+        return errors
+    for i, ref in enumerate(refs):
+        ref_prefix = f"{prefix}.utterance_refs[{i}]"
+        if not isinstance(ref, dict):
+            errors.append(SchemaError(ref_prefix, "must be an object"))
+            continue
+        errors.extend(_require_keys(ref, ["transcript_id", "utterance_number", "byte_start", "byte_end", "raw_excerpt"], ref_prefix))
+        if "utterance_number" in ref and not isinstance(ref["utterance_number"], int):
+            errors.append(SchemaError(f"{ref_prefix}.utterance_number", "must be int"))
+        if "byte_start" in ref and not isinstance(ref["byte_start"], int):
+            errors.append(SchemaError(f"{ref_prefix}.byte_start", "must be int"))
+        if "byte_end" in ref and not isinstance(ref["byte_end"], int):
+            errors.append(SchemaError(f"{ref_prefix}.byte_end", "must be int"))
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# IDU validator (shared by diachronic substeps)
+# ---------------------------------------------------------------------------
+
+_IDU_REQUIRED = ["idu_number", "idu_name", "moment", "criteria", "confidence",
+                  "flag_for_review", "utterance_numbers", "hinge_to_next", "utterance_refs"]
+_IDU_DRIFT_ALIASES = {
+    "title": "idu_name",
+    "name": "idu_name",
+    "utterance_lines": "utterance_numbers",
+    "utterance_ids": "utterance_numbers",
+}
+
+
+def _validate_idu(idu: dict, prefix: str, is_last: bool = False) -> list[SchemaError]:
+    errors = _require_keys(idu, _IDU_REQUIRED, prefix)
+    errors.extend(_reject_drift_keys(idu, set(_IDU_REQUIRED), _IDU_DRIFT_ALIASES, prefix))
+    errors.extend(_check_confidence(idu, prefix))
+    errors.extend(_check_flag_for_review(idu, prefix))
+    errors.extend(_check_utterance_refs(idu, prefix))
+    # hinge_to_next must be non-null for non-last IDUs
+    if not is_last and "hinge_to_next" in idu and idu["hinge_to_next"] is None:
+        errors.append(SchemaError(f"{prefix}.hinge_to_next", "must be a string for non-last IDU (null only allowed on last IDU)"))
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# ISU validator (shared by synchronic substeps)
+# ---------------------------------------------------------------------------
+
+# Base ISU fields — required from theme_grouping_within_idu and isu_naming.
+# isu_second_level_of_abstraction is NOT required until isu_second_level_grouping.
+_ISU_BASE_REQUIRED = ["isu_name", "criteria", "confidence", "flag_for_review", "utterance_refs"]
+_ISU_FULL_REQUIRED = _ISU_BASE_REQUIRED + ["isu_second_level_of_abstraction"]
+_ISU_DRIFT_ALIASES = {
+    "isu_2nd_level": "isu_second_level_of_abstraction",
+    "second_level": "isu_second_level_of_abstraction",
+}
+
+
+def _validate_isu(isu: dict, prefix: str, *, require_second_level: bool = False) -> list[SchemaError]:
+    required = _ISU_FULL_REQUIRED if require_second_level else _ISU_BASE_REQUIRED
+    errors = _require_keys(isu, required, prefix)
+    errors.extend(_reject_drift_keys(isu, set(required), _ISU_DRIFT_ALIASES, prefix))
+    errors.extend(_check_confidence(isu, prefix))
+    errors.extend(_check_flag_for_review(isu, prefix))
+    errors.extend(_check_utterance_refs(isu, prefix))
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Per-substep schema validators
+# ---------------------------------------------------------------------------
+
+def _validate_diachronic_criteria_grouping(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["analysis_type", "participant", "idus"], "payload")
+    idus = payload.get("idus", [])
+    if not isinstance(idus, list):
+        errors.append(SchemaError("payload.idus", "must be a list"))
+        return errors
+    for i, idu in enumerate(idus):
+        is_last = (i == len(idus) - 1)
+        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last))
+    return errors
+
+
+def _validate_diachronic_criteria_revision(payload: dict) -> list[SchemaError]:
+    errors = _validate_diachronic_criteria_grouping(payload)
+    # Require convergence field
+    conv = payload.get("convergence")
+    if conv is None:
+        errors.append(SchemaError("payload.convergence", "required field missing — must be {decision, reason}"))
+    elif not isinstance(conv, dict):
+        errors.append(SchemaError("payload.convergence", "must be an object {decision, reason}"))
+    else:
+        if "decision" not in conv:
+            errors.append(SchemaError("payload.convergence.decision", "required; must be 'more_revision_needed' or 'converged'"))
+        elif conv["decision"] not in ("more_revision_needed", "converged"):
+            errors.append(SchemaError("payload.convergence.decision",
+                                      f"must be 'more_revision_needed' or 'converged', got {conv['decision']!r}"))
+        if "reason" not in conv:
+            errors.append(SchemaError("payload.convergence.reason", "required one-sentence rationale"))
+    return errors
+
+
+def _validate_diachronic_idu_naming_ordering(payload: dict) -> list[SchemaError]:
+    return _validate_diachronic_criteria_grouping(payload)
+
+
+def _validate_synchronic_theme_grouping(payload: dict) -> list[SchemaError]:
+    """theme_grouping_within_idu — isu_second_level_of_abstraction not yet required."""
+    errors = _require_keys(payload, ["analysis_type", "participant", "idu_name", "isus"], "payload")
+    # temporal_order_within_idu and concurrent_with_adjacent_idu are optional booleans/objects
+    flag = payload.get("temporal_order_within_idu")
+    if flag is not None and not isinstance(flag, bool):
+        errors.append(SchemaError("payload.temporal_order_within_idu", "must be bool if present"))
+    isus = payload.get("isus", [])
+    if not isinstance(isus, list):
+        errors.append(SchemaError("payload.isus", "must be a list"))
+        return errors
+    for i, isu in enumerate(isus):
+        errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=False))
+    return errors
+
+
+def _validate_synchronic_isu_naming(payload: dict) -> list[SchemaError]:
+    """isu_naming — isu_second_level_of_abstraction not yet required."""
+    return _validate_synchronic_theme_grouping(payload)
+
+
+def _validate_synchronic_isu_second_level(payload: dict) -> list[SchemaError]:
+    """isu_second_level_grouping — isu_second_level_of_abstraction now required."""
+    errors = _require_keys(payload, ["analysis_type", "participant", "idu_name", "isus"], "payload")
+    isus = payload.get("isus", [])
+    if not isinstance(isus, list):
+        errors.append(SchemaError("payload.isus", "must be a list"))
+        return errors
+    for i, isu in enumerate(isus):
+        errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+    return errors
+
+
+def _validate_generic_diachronic_participant_row_assembly(payload: dict) -> list[SchemaError]:
+    # Orchestrator-only: no utterance_refs required (no LLM analytic units)
+    return _require_keys(payload, ["event", "rows"], "payload")
+
+
+def _validate_generic_diachronic_idu_similarity_grouping(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["event", "idu_labels"], "payload")
+    labels = payload.get("idu_labels", [])
+    if isinstance(labels, list):
+        for i, lbl in enumerate(labels):
+            if isinstance(lbl, dict):
+                errors.extend(_check_utterance_refs(lbl, f"payload.idu_labels[{i}]"))
+            else:
+                errors.append(SchemaError(f"payload.idu_labels[{i}]", f"must be an object, got {type(lbl).__name__}"))
+    return errors
+
+
+def _validate_generic_diachronic_pattern_identification(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["event", "patterns"], "payload")
+    patterns = payload.get("patterns", [])
+    if isinstance(patterns, list):
+        for i, pat in enumerate(patterns):
+            if isinstance(pat, dict):
+                errors.extend(_check_utterance_refs(pat, f"payload.patterns[{i}]"))
+            else:
+                errors.append(SchemaError(f"payload.patterns[{i}]", f"must be an object, got {type(pat).__name__}"))
+    return errors
+
+
+def _validate_generic_diachronic_cross_iv_contrast(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["event", "contrasts"], "payload")
+    contrasts = payload.get("contrasts", [])
+    if isinstance(contrasts, list):
+        for i, c in enumerate(contrasts):
+            if isinstance(c, dict):
+                errors.extend(_check_utterance_refs(c, f"payload.contrasts[{i}]"))
+            else:
+                errors.append(SchemaError(f"payload.contrasts[{i}]", f"must be an object, got {type(c).__name__}"))
+    return errors
+
+
+def _validate_generic_synchronic_select(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["event", "selected_generic_idus"], "payload")
+    selected = payload.get("selected_generic_idus", [])
+    if isinstance(selected, list):
+        for i, item in enumerate(selected):
+            if isinstance(item, dict):
+                errors.extend(_check_utterance_refs(item, f"payload.selected_generic_idus[{i}]"))
+            else:
+                errors.append(SchemaError(f"payload.selected_generic_idus[{i}]", f"must be an object, got {type(item).__name__}"))
+    return errors
+
+
+def _validate_generic_synchronic_worksheet_assembly(payload: dict) -> list[SchemaError]:
+    # Orchestrator-only
+    return _require_keys(payload, ["event", "iv_category", "generic_idu", "rows"], "payload")
+
+
+def _validate_generic_synchronic_isu_second_level(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["event", "iv_category", "generic_idu", "isus"], "payload")
+    isus = payload.get("isus", [])
+    if isinstance(isus, list):
+        for i, isu in enumerate(isus):
+            if isinstance(isu, dict):
+                errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+            else:
+                errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
+    return errors
+
+
+def _validate_global_synchronic(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["generic_idu", "iv_category", "isus"], "payload")
+    isus = payload.get("isus", [])
+    if isinstance(isus, list):
+        for i, isu in enumerate(isus):
+            if isinstance(isu, dict):
+                errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+            else:
+                errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
+    return errors
+
+
+def _validate_hypothesis_evidence_extraction(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["dv_focus", "evidence_items"], "payload")
+    items = payload.get("evidence_items", [])
+    if isinstance(items, list):
+        for i, item in enumerate(items):
+            if isinstance(item, dict):
+                errors.extend(_check_utterance_refs(item, f"payload.evidence_items[{i}]"))
+            else:
+                errors.append(SchemaError(f"payload.evidence_items[{i}]", f"must be an object, got {type(item).__name__}"))
+    return errors
+
+
+def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
+    errors = _require_keys(payload, ["dv_focus", "disclaimer", "candidates"], "payload")
+    # Require disclaimer text
+    disclaimer = payload.get("disclaimer", "")
+    required_phrase = "generative conjectures"
+    if isinstance(disclaimer, str) and required_phrase not in disclaimer:
+        errors.append(SchemaError("payload.disclaimer",
+                                  f"must contain the verbatim disclaimer phrase '{required_phrase}'"))
+    candidates = payload.get("candidates", [])
+    if isinstance(candidates, list):
+        for i, cand in enumerate(candidates):
+            if not isinstance(cand, dict):
+                continue
+            c_prefix = f"payload.candidates[{i}]"
+            errors.extend(_require_keys(cand, ["hypothesis", "claims", "sample_summary"], c_prefix))
+            claims = cand.get("claims", [])
+            if isinstance(claims, list):
+                for j, claim in enumerate(claims):
+                    cl_prefix = f"{c_prefix}.claims[{j}]"
+                    errors.extend(_require_keys(claim, ["claim_text", "supports", "contradicts",
+                                                         "ambiguous", "n_transcripts",
+                                                         "n_iv_levels_covered", "uncertainty_language",
+                                                         "negative_cases"], cl_prefix))
+    return errors
+
+
+def _validate_hypothesis_weak_evidence_review(payload: dict) -> list[SchemaError]:
+    return _require_keys(payload, ["review_items"], "payload")
+
+
+def _validate_irr_calibration_independent_analyst(payload: dict) -> list[SchemaError]:
+    return _require_keys(payload, ["stage", "participant_id", "substep_artifacts"], "payload")
+
+
+def _validate_irr_calibration_alignment(payload: dict) -> list[SchemaError]:
+    return _require_keys(payload, ["stage", "participant_id", "mapping",
+                                   "unmatched_primary", "unmatched_alternate"], "payload")
+
+
+def _validate_irr_calibration_agreement_computation(payload: dict) -> list[SchemaError]:
+    return _require_keys(payload, ["stage", "participant_id", "metrics", "outcome"], "payload")
+
+
+# ---------------------------------------------------------------------------
+# Dispatch table
+# ---------------------------------------------------------------------------
+
+_VALIDATORS: dict[tuple[str, str], Any] = {
+    ("diachronic", "criteria_grouping"): _validate_diachronic_criteria_grouping,
+    ("diachronic", "criteria_revision"): _validate_diachronic_criteria_revision,
+    ("diachronic", "idu_naming_ordering"): _validate_diachronic_idu_naming_ordering,
+    ("synchronic", "theme_grouping_within_idu"): _validate_synchronic_theme_grouping,
+    ("synchronic", "isu_naming"): _validate_synchronic_isu_naming,
+    ("synchronic", "isu_second_level_grouping"): _validate_synchronic_isu_second_level,
+    ("generic_diachronic", "participant_row_assembly"): _validate_generic_diachronic_participant_row_assembly,
+    ("generic_diachronic", "idu_similarity_grouping"): _validate_generic_diachronic_idu_similarity_grouping,
+    ("generic_diachronic", "pattern_identification"): _validate_generic_diachronic_pattern_identification,
+    ("generic_diachronic", "cross_iv_contrast"): _validate_generic_diachronic_cross_iv_contrast,
+    ("generic_synchronic", "select_generic_idus_of_interest"): _validate_generic_synchronic_select,
+    ("generic_synchronic", "worksheet_assembly"): _validate_generic_synchronic_worksheet_assembly,
+    ("generic_synchronic", "isu_second_level_grouping"): _validate_generic_synchronic_isu_second_level,
+    ("global_synchronic", "global_synchronic"): _validate_global_synchronic,
+    ("hypothesis", "evidence_extraction"): _validate_hypothesis_evidence_extraction,
+    ("hypothesis", "candidate_drafting"): _validate_hypothesis_candidate_drafting,
+    ("hypothesis", "weak_evidence_review"): _validate_hypothesis_weak_evidence_review,
+    ("irr_calibration", "independent_analyst"): _validate_irr_calibration_independent_analyst,
+    ("irr_calibration", "alignment"): _validate_irr_calibration_alignment,
+    ("irr_calibration", "agreement_computation"): _validate_irr_calibration_agreement_computation,
+}
+
+
+def validate_units(stage: str, substep: str, payload: Any) -> list[SchemaError]:
+    """
+    Validate a units payload against the schema for (stage, substep).
+    Returns a list of SchemaError; empty list means valid.
+    """
+    if not isinstance(payload, dict):
+        return [SchemaError("payload", "must be a JSON object (dict)")]
+
+    known_stages = {s for (s, _) in _VALIDATORS}
+    if stage not in known_stages:
+        return [SchemaError("stage", f"unknown stage '{stage}'; expected one of {sorted(known_stages)}")]
+
+    validator = _VALIDATORS.get((stage, substep))
+    if validator is None:
+        return [SchemaError("substep", f"unknown substep '{substep}' for stage '{stage}'")]
+
+    return validator(payload)
+
+
+# ---------------------------------------------------------------------------
+# Substep DAG (unchanged from Phase 1)
+# ---------------------------------------------------------------------------
+
+SUBSTEP_PREREQUISITES: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("diachronic", "criteria_grouping"): [],
+    ("diachronic", "criteria_revision"): [("diachronic", "criteria_grouping")],
+    ("diachronic", "idu_naming_ordering"): [("diachronic", "criteria_revision")],
+    ("synchronic", "theme_grouping_within_idu"): [("diachronic", "idu_naming_ordering")],
+    ("synchronic", "isu_naming"): [("synchronic", "theme_grouping_within_idu")],
+    ("synchronic", "isu_second_level_grouping"): [("synchronic", "isu_naming")],
+    ("generic_diachronic", "participant_row_assembly"): [],
+    ("generic_diachronic", "idu_similarity_grouping"): [("generic_diachronic", "participant_row_assembly")],
+    ("generic_diachronic", "pattern_identification"): [("generic_diachronic", "idu_similarity_grouping")],
+    ("generic_diachronic", "cross_iv_contrast"): [("generic_diachronic", "pattern_identification")],
+    ("generic_synchronic", "select_generic_idus_of_interest"): [],
+    ("generic_synchronic", "worksheet_assembly"): [("generic_synchronic", "select_generic_idus_of_interest")],
+    ("generic_synchronic", "isu_second_level_grouping"): [("generic_synchronic", "worksheet_assembly")],
+    ("global_synchronic", "global_synchronic"): [],
+    ("hypothesis", "evidence_extraction"): [],
+    ("hypothesis", "candidate_drafting"): [("hypothesis", "evidence_extraction")],
+    ("hypothesis", "weak_evidence_review"): [("hypothesis", "candidate_drafting")],
+    ("irr_calibration", "independent_analyst"): [],
+    ("irr_calibration", "alignment"): [("irr_calibration", "independent_analyst")],
+    ("irr_calibration", "agreement_computation"): [("irr_calibration", "alignment")],
+}
+
+LLM_SUBSTEPS: frozenset[tuple[str, str]] = frozenset({
+    ("diachronic", "criteria_grouping"),
+    ("diachronic", "criteria_revision"),
+    ("diachronic", "idu_naming_ordering"),
+    ("synchronic", "theme_grouping_within_idu"),
+    ("synchronic", "isu_naming"),
+    ("synchronic", "isu_second_level_grouping"),
+    ("generic_diachronic", "idu_similarity_grouping"),
+    ("generic_diachronic", "pattern_identification"),
+    ("generic_diachronic", "cross_iv_contrast"),
+    ("generic_synchronic", "select_generic_idus_of_interest"),
+    ("generic_synchronic", "isu_second_level_grouping"),
+    ("global_synchronic", "global_synchronic"),
+    ("hypothesis", "evidence_extraction"),
+    ("hypothesis", "candidate_drafting"),
+    ("hypothesis", "weak_evidence_review"),
+    ("irr_calibration", "independent_analyst"),
+    ("irr_calibration", "alignment"),
+})
+```
+
+**Verification:**
+```bash
+cd microphenomenograph/1.0.0/scripts
+python -c "
+import sys; sys.path.insert(0, '.')
+from _mpi_schemas import validate_units
+# AC4.2: title instead of idu_name
+errs = validate_units('diachronic', 'criteria_grouping', {'analysis_type': 'd', 'participant': 'p1s1', 'idus': [{'title': 'x', 'utterance_refs': [{'transcript_id': 'p1s1', 'utterance_number': 1, 'byte_start': 0, 'byte_end': 5, 'raw_excerpt': 'hello'}]}]})
+assert any('title' in str(e) for e in errs), errs
+# AC4.2: utterance_lines instead of utterance_numbers
+errs = validate_units('diachronic', 'criteria_grouping', {'analysis_type': 'd', 'participant': 'p1s1', 'idus': [{'utterance_lines': ['1'], 'utterance_refs': [{'transcript_id': 'p1s1', 'utterance_number': 1, 'byte_start': 0, 'byte_end': 5, 'raw_excerpt': 'hello'}]}]})
+assert any('utterance_lines' in str(e) for e in errs), errs
+print('OK')
+"
+```
+
+**Commit:** `feat: expand _mpi_schemas.py with full per-substep schemas (Phase 4)`
+
+<!-- END_TASK_1 -->
+
+<!-- START_TASK_2 -->
+### Task 2: Tests for Phase 4 — per-substep schemas
+
+**Verifies:** doc-as-done.AC4.1, doc-as-done.AC4.2, doc-as-done.AC4.3, doc-as-done.AC10.3, doc-as-done.AC28.1, doc-as-done.AC28.2
+
+**Files:**
+- Modify: `microphenomenograph/1.0.0/scripts/test_mpi_step.py` (append Phase 4 test classes)
+
+**Implementation:**
+
+Append these classes to `test_mpi_step.py`:
+
+```python
+# ---------------------------------------------------------------------------
+# Phase 4: per-substep schema tests
+# ---------------------------------------------------------------------------
+
+VALID_UTTERANCE_REF = {
+    "transcript_id": "p1s1",
+    "utterance_number": 1,
+    "byte_start": 0,
+    "byte_end": 10,
+    "raw_excerpt": "hello test",
+}
+
+VALID_IDU = {
+    "idu_number": 1, "idu_name": "Opening Experience", "moment": 1,
+    "criteria": "The utterances talk about the opening moment.",
+    "confidence": 4, "flag_for_review": False,
+    "utterance_numbers": ["1", "2"],
+    "hinge_to_next": None,
+    "utterance_refs": [VALID_UTTERANCE_REF],
+}
+
+VALID_DIACHRONIC_PAYLOAD = {
+    "analysis_type": "diachronic",
+    "participant": "p1s1",
+    "reasoning_summary": "Three IDUs identified.",
+    "idus": [VALID_IDU],
+}
+
+VALID_CRITERIA_REVISION_PAYLOAD = {
+    **VALID_DIACHRONIC_PAYLOAD,
+    "convergence": {"decision": "converged", "reason": "No further improvements needed."},
+}
+
+VALID_ISU = {
+    "isu_name": "Sense of Warmth",
+    "isu_second_level_of_abstraction": "Tactile Qualities",
+    "criteria": "The utterances talk about warmth.",
+    "confidence": 4,
+    "flag_for_review": False,
+    "utterance_refs": [VALID_UTTERANCE_REF],
+}
+
+VALID_SYNCHRONIC_PAYLOAD = {
+    "analysis_type": "synchronic",
+    "participant": "p1s1",
+    "idu_name": "Opening Experience",
+    "isus": [VALID_ISU],
+}
+
+
+class TestSchemaAcceptsValid:
+    def test_criteria_grouping_valid(self):
+        errs = validate_units("diachronic", "criteria_grouping", VALID_DIACHRONIC_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+    def test_criteria_revision_valid(self):
+        errs = validate_units("diachronic", "criteria_revision", VALID_CRITERIA_REVISION_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+    def test_synchronic_theme_grouping_valid(self):
+        errs = validate_units("synchronic", "theme_grouping_within_idu", VALID_SYNCHRONIC_PAYLOAD)
+        assert errs == [], [str(e) for e in errs]
+
+
+class TestSchemaDriftNames:
+    def test_title_instead_of_idu_name_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "idu_name"}
+        bad_idu["title"] = "Wrong"
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("title" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_utterance_lines_instead_of_utterance_numbers_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "utterance_numbers"}
+        bad_idu["utterance_lines"] = ["1"]
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_lines" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_isu_2nd_level_instead_of_isu_second_level_rejected(self):
+        bad_isu = {k: v for k, v in VALID_ISU.items() if k != "isu_second_level_of_abstraction"}
+        bad_isu["isu_2nd_level"] = "wrong"
+        bad_payload = {**VALID_SYNCHRONIC_PAYLOAD, "isus": [bad_isu]}
+        # Test against isu_second_level_grouping — that substep requires the field
+        errs = validate_units("synchronic", "isu_second_level_grouping", bad_payload)
+        assert any("isu_2nd_level" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_isu_second_level_not_required_at_theme_grouping(self):
+        """theme_grouping_within_idu does not require isu_second_level_of_abstraction."""
+        isu_no_second_level = {k: v for k, v in VALID_ISU.items() if k != "isu_second_level_of_abstraction"}
+        payload = {**VALID_SYNCHRONIC_PAYLOAD, "isus": [isu_no_second_level]}
+        errs = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert not any("isu_second_level" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaRangeErrors:
+    def test_confidence_out_of_range(self):
+        bad_idu = {**VALID_IDU, "confidence": 9}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("confidence" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_flag_for_review_non_bool(self):
+        bad_idu = {**VALID_IDU, "flag_for_review": "yes"}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("flag_for_review" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_hinge_null_on_non_last_idu(self):
+        idu1 = {**VALID_IDU, "idu_number": 1, "hinge_to_next": None}
+        idu2 = {**VALID_IDU, "idu_number": 2, "moment": 2, "hinge_to_next": None}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [idu1, idu2]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        # idu1 is non-last and has null hinge — should error
+        assert any("hinge_to_next" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaUtteranceRefs:
+    def test_missing_utterance_refs_rejected(self):
+        bad_idu = {k: v for k, v in VALID_IDU.items() if k != "utterance_refs"}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_refs" in str(e) for e in errs), [str(e) for e in errs]
+        assert any("missing_span_refs" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_empty_utterance_refs_rejected(self):
+        bad_idu = {**VALID_IDU, "utterance_refs": []}
+        bad_payload = {**VALID_DIACHRONIC_PAYLOAD, "idus": [bad_idu]}
+        errs = validate_units("diachronic", "criteria_grouping", bad_payload)
+        assert any("utterance_refs" in str(e) and "missing_span_refs" in str(e) for e in errs), [str(e) for e in errs]
+
+
+class TestSchemaConvergenceField:
+    def test_criteria_revision_missing_convergence(self):
+        errs = validate_units("diachronic", "criteria_revision", VALID_DIACHRONIC_PAYLOAD)
+        assert any("convergence" in str(e) for e in errs), [str(e) for e in errs]
+
+    def test_criteria_revision_bad_decision(self):
+        bad_payload = {
+            **VALID_DIACHRONIC_PAYLOAD,
+            "convergence": {"decision": "keep_going", "reason": "still working"},
+        }
+        errs = validate_units("diachronic", "criteria_revision", bad_payload)
+        assert any("decision" in str(e) for e in errs), [str(e) for e in errs]
+```
+
+**Verification:**
+```bash
+cd microphenomenograph/1.0.0/scripts
+python -m pytest test_mpi_step.py -k "Schema" -v
+```
+Expected: all schema tests pass.
+
+**Commit:** `test: add Phase 4 per-substep schema tests`
+
+<!-- END_TASK_2 -->
+
+<!-- START_TASK_3 -->
+### Task 3: Run full test suite
+
+**Verification:**
+```bash
+pytest microphenomenograph/1.0.0/scripts/test_mpi_step.py -v
+pytest tests/ -v
+```
+Expected: all pass.
+
+**Commit:** *(no additional commit — test run only)*
+
+<!-- END_TASK_3 -->
+
+<!-- END_SUBCOMPONENT_A -->
