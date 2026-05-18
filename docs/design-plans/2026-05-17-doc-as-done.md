@@ -108,8 +108,8 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC1.1 Success:** A successful `mpi_step.py close` emits the full event sequence in `.mpi/audit.jsonl`: `close_attempted` → `artifacts_validated` → `audit_appended` → `manifest_replaced` → `git_commit_succeeded`. All five share the same `close_id` (UUID4). The `git_commit_succeeded` event records `mpi.git_commit_sha` (post-commit, now computable).
 - **doc-as-done.AC1.2 Failure (commit):** If `git commit` fails, the helper emits `git_commit_failed` followed by `manifest_rolled_back`; manifest reverts to its pre-`manifest_replaced` state; substep stays `pending`.
 - **doc-as-done.AC1.3 Failure (audit append):** If audit append fails before manifest mutation, the helper emits no `manifest_replaced` event, leaves the manifest untouched, and exits non-zero.
-- **doc-as-done.AC1.4 Success (no SHA self-reference):** The manifest entry records `close_id`, `parent_head_sha`, `artifact_shas`, and `expected_action: "commit_created"` — NOT the SHA of the same commit it sits inside (which would be computationally impossible). The actual `git_commit_sha` is recorded in the `git_commit_succeeded` audit event with matching `close_id`.
-- **doc-as-done.AC1.5 Success (done definition):** A substep is `done` iff (a) manifest status is `done`, (b) `audit.jsonl` contains a `commit_created` event with matching `close_id`, AND (c) that event's `mpi.git_commit_sha` resolves to a commit in `git log` whose tree contains the manifest entry as recorded. The helper's `verify` command runs this three-way join.
+- **doc-as-done.AC1.4 Success (no SHA self-reference):** The manifest entry records `close_id`, `parent_head_sha`, `artifact_shas`, and `expected_action: "git_commit_succeeded"` — NOT the SHA of the same commit it sits inside (which would be computationally impossible). The actual `git_commit_sha` is recorded in the `git_commit_succeeded` audit event with matching `close_id`.
+- **doc-as-done.AC1.5 Success (done definition):** A substep is `done` iff (a) manifest status is `done`, (b) `audit.jsonl` contains a `git_commit_succeeded` event with matching `close_id`, AND (c) that event's `mpi.git_commit_sha` resolves to a commit in `git log` whose tree contains the manifest entry as recorded. The helper's `verify` command runs this three-way join.
 - **doc-as-done.AC1.6 Success (subagent):** `mpi-analyst` writes `analyses/pNsN-<stage>.json` and `.md` itself before invoking the helper.
 - **doc-as-done.AC1.7 Failure (subagent):** A subagent that fails to write artifacts returns `ERROR <transcript> <stage>: <reason>` and never returns analysis content as a substitute.
 
@@ -138,7 +138,7 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC6.1 Success:** `agents/mpi-analyst.md` and `agents/mpi-cross-analyst.md` `tools:` line declares `Read, Write, Bash`.
 - **doc-as-done.AC6.2 Success:** Both agent prompts contain a "Persistence (mandatory before returning)" subsection naming the exact files to Write and the `mpi_step.py close` invocation to make.
 - **doc-as-done.AC6.3 Success:** Every SKILL.md contains a "Closure (mandatory)" subsection naming the responsible actor and the artifacts that close the step.
-- **doc-as-done.AC6.4 Success:** Read-only skills (`mpi-status` only — `mpi-irr` is no longer read-only since v3.11 made it produce artifacts and audit events) explicitly state "no artifact close" and emit a `stage_phase: read` audit event for trace continuity.
+- **doc-as-done.AC6.4 Success:** Read-only skills (`mpi-status` only — `mpi-irr` is NOT read-only; it produces alignment + agreement artifacts with bootstrap CIs) explicitly state "no artifact close" and emit a `stage_phase: read` audit event for trace continuity.
 
 ### doc-as-done.AC7: Old hand-written contracts removed
 - **doc-as-done.AC7.1 Success:** No SKILL.md hand-specifies manifest mutation prose, log line format, or git commit message format — all three are owned by the helper.
@@ -266,6 +266,8 @@ Three granularity and fidelity decisions distinguish this design from the previo
 - **doc-as-done.AC25.2 Success:** Each record includes `metrics.alpha_sensitivity_low_conf_excluded` (α recomputed after dropping alignment mappings with confidence < 0.7) so reviewers can see how much of the headline α depends on shaky alignments.
 - **doc-as-done.AC25.3 Success:** Each `alignment` block includes a `confidence_distribution: {min, p25, median, p75, max}` summarising per-pair LLM-reported alignment confidence.
 
+<!-- AC27 was reserved during a revision but consolidated into AC23 (claim-level evidence audit); skipping the number to preserve downstream AC reference integrity. -->
+
 ### doc-as-done.AC26: HEAD mismatch resolution is audited, never manual
 - **doc-as-done.AC26.1 Success:** `mpi_step.py accept-head --reason "<text>"` is the documented sanctioned path for accepting a new HEAD after rebase/cherry-pick/external commit. It updates the manifest's recorded SHA and emits an `accepted_head` audit event with the reason and actor identity.
 - **doc-as-done.AC26.2 Failure (documentation):** The troubleshooting documentation does NOT instruct users to manually edit `.mpi/project.json`. Manual editing breaks the audit story and is never recommended.
@@ -273,7 +275,7 @@ Three granularity and fidelity decisions distinguish this design from the previo
 ### doc-as-done.AC28: Transcript-span grounding is mandatory, not optional
 - **doc-as-done.AC28.1 Success:** Every generative substep schema (`diachronic.*`, `synchronic.*`, `generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic`, `hypothesis.*`) requires a non-empty `utterance_refs` array on every analytic unit emitted (IDU, ISU, GDU pattern, hypothesis claim).
 - **doc-as-done.AC28.2 Failure:** A close attempt with any analytic unit missing `utterance_refs`, or with an empty array, is rejected with `missing_span_refs` and the offending unit named. Manifest unchanged.
-- **doc-as-done.AC28.3 Failure (span out of range):** A span ref pointing at a `transcript_id` not in the manifest, or at an `utterance_number` outside that transcript's offset registry, or at a `char_start`/`char_end` outside the resolved utterance's byte range, is rejected with `span_out_of_range`. Manifest unchanged.
+- **doc-as-done.AC28.3 Failure (span out of range):** A span ref pointing at a `transcript_id` not in the manifest, or at an `utterance_number` outside that transcript's offset registry, or at a `byte_start`/`byte_end` outside the resolved utterance's byte range, is rejected with `span_out_of_range`. Manifest unchanged.
 - **doc-as-done.AC28.4 Failure (excerpt mismatch):** A span ref whose `raw_excerpt` doesn't match the bytes resolved through the offset registry is rejected with `span_excerpt_mismatch` and both excerpts surfaced for diff. Manifest unchanged.
 - **doc-as-done.AC28.5 Success (cross-stage chain):** Generic and global units inherit span refs from their constituent per-transcript units; helper validates the chain is followable from any hypothesis claim back to a specific transcript utterance via the manifest's per-transcript artifacts.
 
@@ -351,13 +353,13 @@ Every MPI pipeline step — whether executed by a subagent or by the orchestrato
 1. **`close_attempted`** — close invoked. Allocates a `close_id` (UUID4) bound to this attempt.
 2. **`artifacts_validated`** — pre-checks pass: artifact files exist and validate against schema; upstream prerequisites are `done`; the artifact-path reservation (Yolo mode auditability §run lease) was acquired.
 3. **`audit_appended`** — analytic-decision events (one per IDU/ISU coding) appended to `.mpi/audit.jsonl` carrying `close_id`.
-4. **`manifest_replaced`** — manifest atomically swapped via `os.replace`. The manifest entry records `close_id`, `parent_head_sha` (the commit BEFORE this close), `artifact_shas`, and `expected_action: "commit_created"`. The manifest does NOT record the commit SHA of the same commit it sits inside — that's the impossibility the design originally had. Instead the *next* event resolves the actual SHA.
+4. **`manifest_replaced`** — manifest atomically swapped via `os.replace`. The manifest entry records `close_id`, `parent_head_sha` (the commit BEFORE this close), `artifact_shas`, and `expected_action: "git_commit_succeeded"`. The manifest does NOT record the commit SHA of the same commit it sits inside — that's the impossibility the design originally had. Instead the *next* event resolves the actual SHA.
 5. **`git_commit_succeeded`** OR **`git_commit_failed`** — `git add` + `git commit` runs. On success, the audit event carries `mpi.git_commit_sha` (the post-commit SHA, now computable because the tree is fixed) plus the matching `close_id`. On failure (hook rejection, etc.), the next event is `manifest_rolled_back`.
 6. **`manifest_rolled_back`** (failure path only) — manifest restored to its pre-`manifest_replaced` state. The substep remains `pending`.
 
-The substep is `done` iff **(a)** manifest status is `done`, **(b)** an audit event exists with matching `close_id` AND `event.action: "commit_created"`, AND **(c)** that event's `mpi.git_commit_sha` resolves to a commit in `git log` whose tree contains the manifest entry as recorded. The join across manifest + audit + git tree replaces the impossible self-referential SHA. No partial credit; no implicit `done`.
+The substep is `done` iff **(a)** manifest status is `done`, **(b)** an audit event exists with matching `close_id` AND `event.action: "git_commit_succeeded"`, AND **(c)** that event's `mpi.git_commit_sha` resolves to a commit in `git log` whose tree contains the manifest entry as recorded. The join across manifest + audit + git tree replaces the impossible self-referential SHA. No partial credit; no implicit `done`.
 
-Why this shape: the commit SHA is computed from the tree, which includes the manifest. If the manifest tried to record its own commit's SHA, changing the SHA would change the tree, which would change the SHA — infinite regression. The fix is that the manifest carries the close's identity (`close_id`) and the parent state (`parent_head_sha`, `artifact_shas`), not the result; the post-commit audit event carries the actual SHA. Tools that need to know "which commit was this substep closed in?" do a one-line lookup: `jq '.[] | select(.mpi.close_id == "<id>" and .event.action == "commit_created") | .mpi.git_commit_sha' .mpi/audit.jsonl`.
+Why this shape: the commit SHA is computed from the tree, which includes the manifest. If the manifest tried to record its own commit's SHA, changing the SHA would change the tree, which would change the SHA — infinite regression. The fix is that the manifest carries the close's identity (`close_id`) and the parent state (`parent_head_sha`, `artifact_shas`), not the result; the post-commit audit event carries the actual SHA. Tools that need to know "which commit was this substep closed in?" do a one-line lookup: `jq '.[] | select(.mpi.close_id == "<id>" and .event.action == "git_commit_succeeded") | .mpi.git_commit_sha' .mpi/audit.jsonl`.
 
 **Substep granularity (manual-native).** The unit of "step" is the substep named after the operation manual_kev.md actually prescribes. The µ-PATH pipeline (Wordweaver-EH/upath) inspired the *idea* of substep granularity but encodes a different methodology (Valenzuela-Moguillansky & Vásquez-Rosati 2019, with sub-phase identification and DU/refined-DU/SSS/GSS terminology). manual_kev.md is a deliberately simplified variant that **omits** sub-phase identification and uses IDU/ISU/ISU-2nd-level-of-abstraction as the analytic columns. The substep map below follows the manual literally.
 
@@ -496,7 +498,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** None.
 
-**Done when:** `python scripts/mpi_step.py --help` prints usage, all unit tests in `test_mpi_step.py` pass, schema validation rejects malformed payloads with named errors. Verifies `doc-as-done.AC2.1`, `doc-as-done.AC2.2`, `doc-as-done.AC4.1`.
+**Done when:** `python scripts/mpi_step.py --help` prints usage, all unit tests in `test_mpi_step.py` pass, schema validation rejects malformed payloads with named errors, init refuses to nest in a non-empty active dev repo, git operational defaults (hooks disabled, identity-required, local-only) are set on the run repo's local config. Verifies `doc-as-done.AC2.1`, `doc-as-done.AC2.2`, `doc-as-done.AC4.1`, `doc-as-done.AC33.1`, `doc-as-done.AC33.2`, `doc-as-done.AC33.3`, `doc-as-done.AC33.4`, `doc-as-done.AC33.5`, `doc-as-done.AC33.6`, `doc-as-done.AC33.7`.
 <!-- END_PHASE_1 -->
 
 <!-- START_PHASE_2 -->
@@ -546,7 +548,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phase 1.
 
-**Done when:** Every substep has a schema; validator function passes all positive fixtures and rejects every malformed fixture with a named error pointing at the offending field. Verifies `doc-as-done.AC4.1`, `doc-as-done.AC4.2`, `doc-as-done.AC4.3`, `doc-as-done.AC10.3`.
+**Done when:** Every substep has a schema; validator function passes all positive fixtures and rejects every malformed fixture with a named error pointing at the offending field; schemas for generative substeps mandate `utterance_refs`; offset-registry schema accepts a known fixture and rejects malformed ranges. Verifies `doc-as-done.AC4.1`, `doc-as-done.AC4.2`, `doc-as-done.AC4.3`, `doc-as-done.AC10.3`, `doc-as-done.AC28.1`, `doc-as-done.AC28.2`, `doc-as-done.AC28.3`, `doc-as-done.AC28.4`, `doc-as-done.AC29.4`.
 <!-- END_PHASE_4 -->
 
 <!-- START_PHASE_5 -->
@@ -613,7 +615,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phase 2, Phase 4, Phase 5.
 
-**Done when:** Agent declares `Read, Write, Bash`; the Persistence subsection enumerates all 6 mpi-analyst substeps (3 diachronic per transcript + 3 synchronic per IDU within a transcript); fixture-driven test exercises one diachronic substep end-to-end producing all three artifacts plus a clean `close`. The IDU-split-after-synchronic return edge (re-close `diachronic.criteria_revision` after a `synchronic.theme_grouping_within_idu` finding) is exercised in a separate fixture. Verifies `doc-as-done.AC1.4`, `doc-as-done.AC1.5`, `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.4`, `doc-as-done.AC12.1`.
+**Done when:** Agent declares `Read, Write, Bash`; the Persistence subsection enumerates all 6 mpi-analyst substeps (3 diachronic per transcript + 3 synchronic per IDU within a transcript); the agent prompt explicitly requires non-empty `utterance_refs` per analytic unit; fixture-driven test exercises one diachronic substep end-to-end producing all three artifacts plus a clean `close`. The IDU-split-after-synchronic return edge (re-close `diachronic.criteria_revision` after a `synchronic.theme_grouping_within_idu` finding) is exercised in a separate fixture. Verifies `doc-as-done.AC1.6`, `doc-as-done.AC1.7`, `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.4`, `doc-as-done.AC12.1`, `doc-as-done.AC28.1`.
 <!-- END_PHASE_6 -->
 
 <!-- START_PHASE_7 -->
@@ -630,7 +632,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phase 2, Phase 4, Phase 5.
 
-**Done when:** Agent declares `Read, Write, Bash`; Persistence subsection enumerates all cross-analyst substeps; fixture-driven test exercises one generic-diachronic substep end-to-end. Verifies `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.5`.
+**Done when:** Agent declares `Read, Write, Bash`; Persistence subsection enumerates all cross-analyst substeps; agent prompt requires claim-level evidence with `raw_span_refs` per claim; fixture-driven test exercises one generic-diachronic substep + one hypothesis-claim substep end-to-end. Verifies `doc-as-done.AC6.1`, `doc-as-done.AC6.2`, `doc-as-done.AC10.5`, `doc-as-done.AC23.1`, `doc-as-done.AC23.2`, `doc-as-done.AC23.5`, `doc-as-done.AC28.5`.
 <!-- END_PHASE_7 -->
 
 <!-- START_PHASE_8 -->
@@ -648,7 +650,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phase 6.
 
-**Done when:** Each per-transcript SKILL.md contains a Closure subsection enumerating its substeps; no SKILL.md hand-specifies manifest mutation, log format, or git commit message format. Verifies `doc-as-done.AC6.3`, `doc-as-done.AC7.1`, `doc-as-done.AC10.6`.
+**Done when:** Each per-transcript SKILL.md contains a Closure subsection enumerating its substeps; transcript_prep's three substeps (`hash_raw` / `normalize` / `register_offsets`) are documented with raw-immutability semantics; init's branching study-config flow records `study.config_provenance` immutably; no SKILL.md hand-specifies manifest mutation, log format, or git commit message format. Verifies `doc-as-done.AC6.3`, `doc-as-done.AC7.1`, `doc-as-done.AC10.6`, `doc-as-done.AC29.1`, `doc-as-done.AC29.2`, `doc-as-done.AC29.3`, `doc-as-done.AC34.1`, `doc-as-done.AC34.2`, `doc-as-done.AC34.3`, `doc-as-done.AC34.4`.
 <!-- END_PHASE_8 -->
 
 <!-- START_PHASE_9 -->
@@ -698,7 +700,7 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 
 **Dependencies:** Phases 1–10.
 
-**Done when:** Both E2E tests pass. Coverage: every expected scope × substep × (json, md, prompt.json) triple exists and is non-empty; manifest reflects every closure at substep granularity; `audit.jsonl` validates, has unique `event_id`s, constant `trace_id`, and every event has a `mpi.prompt_artifact_path` for LLM-invoking substeps; `git log --oneline` shows one commit per substep with the canonical message; `mpi_step.py render` regenerates a reasoning.log that round-trips. Verifies `doc-as-done.AC7.2`, `doc-as-done.AC7.3`, `doc-as-done.AC8.1`, `doc-as-done.AC8.2`, `doc-as-done.AC8.3`, `doc-as-done.AC11.4`.
+**Done when:** Both E2E tests pass. Coverage: every expected scope × substep × (json, md, prompt.json) triple exists and is non-empty; manifest reflects every closure at substep granularity; `audit.jsonl` validates, has unique `event_id`s, constant `trace_id`, every event has a `mpi.prompt_artifact_path` for LLM-invoking substeps, and contains the full phased close sequence (`close_attempted` → `artifacts_validated` → `audit_appended` → `manifest_replaced` → `git_commit_succeeded`); `git log --oneline` shows one commit per substep with the canonical message; `mpi_step.py render` regenerates a reasoning.log that round-trips; the three-way "done" join (manifest + audit + git tree) verifies for every closed substep; a cascade-reset fixture confirms artifacts move to `analyses/_superseded/<close_id>/` with `tombstone.json`; a fail-fast fixture confirms `missing_span_refs` / `span_excerpt_mismatch` rejection. Verifies `doc-as-done.AC1.1`, `doc-as-done.AC1.2`, `doc-as-done.AC1.3`, `doc-as-done.AC1.5`, `doc-as-done.AC7.2`, `doc-as-done.AC7.3`, `doc-as-done.AC8.1`, `doc-as-done.AC8.2`, `doc-as-done.AC8.3`, `doc-as-done.AC11.4`, `doc-as-done.AC20.6`, `doc-as-done.AC20.7`, `doc-as-done.AC30.1`, `doc-as-done.AC30.2`, `doc-as-done.AC30.3`.
 <!-- END_PHASE_11 -->
 
 <!-- START_PHASE_12 -->
@@ -741,17 +743,17 @@ This design has **13 phases** total. The writing-plans skill limits implementati
 - Cross-participant skills emit `irr_warning` audit event at stage start if the most-recent IRR record's α-CI lower bound is below 0.6 (the `low` outcome condition) or no IRR record exists; proceed unless `--strict-irr`.
 - `skills/mpi-kappa/SKILL.md` renamed to `skills/mpi-irr/SKILL.md`; the user-facing CLI verb is `mpi-irr calibrate`. Pre-release: no backwards-compatibility alias.
 
-**Dependencies:** Phase 6 (mpi-analyst produces per-substep artifacts), Phase 8 (per-participant skill closure sweep — needs the first-participant hook).
+**Dependencies:** Phase 6 (mpi-analyst produces per-substep artifacts), Phase 7 (mpi-cross-analyst can persist `irr_calibration.alignment` artifacts), Phase 8 (per-transcript skill closure sweep — needs the calibration-transcript hook to fire from inside a closing diachronic/synchronic), Phase 9 (the `skills/mpi-irr/` SKILL.md is created in Phase 9's cross-participant SKILL sweep — Phase 13 fills its body).
 
-**Done when:** `mpi-irr calibrate` runs end-to-end on a fixture, produces alternate-agent artifacts for every diachronic (or synchronic) substep, and writes a JSONL line containing all four metrics with bootstrap CIs. Auto-trigger fires after the calibration transcript's relevant substep closes (or, for stratified calibration, after each calibration transcript closes, plus one aggregate summary record per stage). Yolo with no IRR completes; yolo with `--strict-irr` and low/missing IRR errors before any cross-participant artifact. Verifies `doc-as-done.AC13.1`–`doc-as-done.AC13.8`.
+**Done when:** `mpi-irr calibrate` runs end-to-end on a fixture, produces alternate-agent artifacts for every diachronic (or synchronic) substep, and writes a JSONL line containing all four metrics with bootstrap CIs (block bootstrap for αU; naive utterance for α/κ/ARI). Auto-trigger fires after the calibration transcript's relevant substep closes (or, for stratified calibration, after each calibration transcript closes, plus one aggregate summary record per stage). Yolo with no IRR completes; yolo with `--strict-irr` and low/missing IRR errors before any cross-participant artifact. Verifies `doc-as-done.AC13.1`–`doc-as-done.AC13.10`, `doc-as-done.AC24.1`–`doc-as-done.AC24.4`, `doc-as-done.AC25.1`–`doc-as-done.AC25.3`, `doc-as-done.AC31.1`, `doc-as-done.AC31.2`, `doc-as-done.AC32.1`, `doc-as-done.AC32.2`, `doc-as-done.AC32.3`.
 <!-- END_PHASE_13 -->
 
 ## Additional Considerations
 
 **Implementation scoping: 13 phases require two implementation plans.** The writing-plans skill caps implementation plans at 8 phases. Recommended split:
 
-- **Plan 1 (Phases 1–8): Foundation and per-participant pipeline.** Builds the helper CLI (Phases 1–3), pins per-substep schemas and prompt-capture contract (Phases 4–5), updates the mpi-analyst agent and per-participant skills (Phases 6, 8). After this plan, transcript_prep + diachronic + synchronic run end-to-end on the new contract; cross-participant skills still use the old contract.
-- **Plan 2 (Phases 7, 9–13): Cross-participant pipeline, IRR calibration, tests, docs.** Updates the mpi-cross-analyst agent (Phase 7 has no per-participant dependency beyond Phases 2/4/5) and cross-participant skills (Phase 9), sweeps anti-fabrication guards (Phase 10), adds E2E tests (Phase 11), reconciles docs (Phase 12), implements IRR as an automatic alignment-then-α/κ/αU/ARI check with bootstrap CIs (Phase 13).
+- **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8 — seven phases): Foundation and per-transcript pipeline.** Builds the helper CLI (Phases 1–3), pins per-substep schemas and prompt-capture contract (Phases 4–5), updates the mpi-analyst agent (Phase 6), and sweeps per-transcript skill closures (Phase 8). Phase 7 (mpi-cross-analyst contract) is deferred to Plan 2 to keep Plan 1 focused on per-transcript work. After this plan, transcript_prep + diachronic + synchronic run end-to-end on the new contract; cross-participant skills still use the old contract.
+- **Plan 2 (Phases 7, 9, 10, 11, 12, 13 — six phases): Cross-participant pipeline, IRR calibration, tests, docs.** Updates the mpi-cross-analyst agent (Phase 7; depends on Phases 2/4/5 from Plan 1, no per-transcript Phase 6/8 dependency) and cross-participant skills (Phase 9), sweeps anti-fabrication guards (Phase 10), adds E2E tests (Phase 11), reconciles docs (Phase 12), implements IRR (Phase 13).
 
 The split keeps each plan focused and within the 8-phase budget. Plan 1 leaves the pipeline in a working but incomplete state — the cross-participant skills still pass JSON over the wire as today, and there is no IRR check — so users should not run `/mpi all` between the two plans; only `/mpi diachronic` and `/mpi synchronic` are upgraded after Plan 1.
 
