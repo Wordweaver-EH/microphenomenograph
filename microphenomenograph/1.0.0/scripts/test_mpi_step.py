@@ -672,3 +672,109 @@ class TestVerify:
         # Verify should fail
         rc_verify = mpi_step.main(["verify", "--run-dir", str(run_dir)])
         assert rc_verify != 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: render tests
+# ---------------------------------------------------------------------------
+
+SAMPLE_AUDIT_EVENTS = [
+    {
+        "event_id": "evt-1", "@timestamp": "2026-05-18T10:00:00Z",
+        "trace_id": "trace-abc", "span_id": "span-1",
+        "actor": {"kind": "subagent", "name": "mpi-analyst"},
+        "event": {"kind": "event", "action": "close_attempted", "outcome": "success"},
+        "mpi": {
+            "participant_id": "p1s1", "stage": "diachronic",
+            "substep": "criteria_grouping", "scope": "p1s1",
+            "close_id": "close-xyz", "n_units": 3,
+        },
+        "reason": "starting close",
+    },
+    {
+        "event_id": "evt-2", "@timestamp": "2026-05-18T10:00:01Z",
+        "trace_id": "trace-abc", "span_id": "span-2",
+        "actor": {"kind": "subagent", "name": "mpi-analyst"},
+        "event": {"kind": "event", "action": "git_commit_succeeded", "outcome": "success"},
+        "mpi": {
+            "participant_id": "p1s1", "stage": "diachronic",
+            "substep": "criteria_grouping", "scope": "p1s1",
+            "close_id": "close-xyz", "git_commit_sha": "abcdef1234567",
+        },
+        "reason": "commit ok",
+    },
+]
+
+
+class TestRender:
+    def _write_audit(self, tmp_path: Path, events: list) -> Path:
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        mpi_dir = run_dir / ".mpi"
+        mpi_dir.mkdir()
+        audit = mpi_dir / "audit.jsonl"
+        for ev in events:
+            audit_line = json.dumps(ev) + "\n"
+            with open(audit, "a") as f:
+                f.write(audit_line)
+        return run_dir
+
+    def test_render_produces_reasoning_log(self, tmp_path):
+        run_dir = self._write_audit(tmp_path, SAMPLE_AUDIT_EVENTS)
+        rc = mpi_step.main(["render", "--run-dir", str(run_dir)])
+        assert rc == 0
+        log = (run_dir / ".mpi" / "reasoning.log").read_text()
+        assert "close_attempted" in log or "starting close" in log
+        assert "p1s1" in log
+
+    def test_render_includes_commit_sha(self, tmp_path):
+        run_dir = self._write_audit(tmp_path, SAMPLE_AUDIT_EVENTS)
+        mpi_step.main(["render", "--run-dir", str(run_dir)])
+        log = (run_dir / ".mpi" / "reasoning.log").read_text()
+        assert "abcdef1" in log
+
+    def test_render_idempotent(self, tmp_path):
+        run_dir = self._write_audit(tmp_path, SAMPLE_AUDIT_EVENTS)
+        mpi_step.main(["render", "--run-dir", str(run_dir)])
+        content_a = (run_dir / ".mpi" / "reasoning.log").read_bytes()
+        mpi_step.main(["render", "--run-dir", str(run_dir)])
+        content_b = (run_dir / ".mpi" / "reasoning.log").read_bytes()
+        assert content_a == content_b
+
+    def test_render_malformed_line_placeholder(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        mpi_dir = run_dir / ".mpi"
+        mpi_dir.mkdir()
+        audit = mpi_dir / "audit.jsonl"
+        # Good line, bad line, good line
+        audit.write_text(
+            json.dumps(SAMPLE_AUDIT_EVENTS[0]) + "\n"
+            + "THIS IS NOT JSON @@@@\n"
+            + json.dumps(SAMPLE_AUDIT_EVENTS[1]) + "\n"
+        )
+        rc = mpi_step.main(["render", "--run-dir", str(run_dir)])
+        assert rc == 0
+        log = (run_dir / ".mpi" / "reasoning.log").read_text()
+        assert "MALFORMED:2" in log
+        assert "p1s1" in log  # other events still rendered
+
+    def test_render_filter_by_participant(self, tmp_path):
+        extra_event = {
+            "event_id": "evt-3", "@timestamp": "2026-05-18T10:00:02Z",
+            "trace_id": "trace-abc", "span_id": "span-3",
+            "actor": {"kind": "subagent", "name": "mpi-analyst"},
+            "event": {"kind": "event", "action": "close_attempted", "outcome": "success"},
+            "mpi": {
+                "participant_id": "p2s1", "stage": "diachronic",
+                "substep": "criteria_grouping", "scope": "p2s1",
+                "close_id": "close-zzz",
+            },
+            "reason": "other participant",
+        }
+        run_dir = self._write_audit(tmp_path, SAMPLE_AUDIT_EVENTS + [extra_event])
+        out = tmp_path / "filtered.log"
+        mpi_step.main(["render", "--run-dir", str(run_dir), "--participant", "p1s1", "--out", str(out)])
+        log = out.read_text()
+        assert "p1s1" in log
+        assert "p2s1" not in log
