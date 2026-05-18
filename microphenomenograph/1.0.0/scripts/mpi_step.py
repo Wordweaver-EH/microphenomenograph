@@ -154,6 +154,94 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Manifest helpers
+# ---------------------------------------------------------------------------
+
+def _load_manifest(run_dir: Path) -> dict:
+    path = run_dir / ".mpi" / "project.json"
+    if not path.exists():
+        raise FileNotFoundError(f"manifest not found: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_manifest(run_dir: Path, manifest: dict) -> None:
+    path = run_dir / ".mpi" / "project.json"
+    atomic_write(path, json.dumps(manifest, indent=2) + "\n")
+
+
+def _get_substep_status(manifest: dict, participant: str, stage: str, substep: str) -> str:
+    """Return status of a substep; 'pending' if not found."""
+    p = manifest.get("participants", {}).get(participant, {})
+    stages = p.get("stages", {})
+    s = stages.get(stage, {})
+    return s.get("substeps", {}).get(substep, {}).get("status", "pending")
+
+
+def _derive_stage_status(substep_map: dict) -> str:
+    """Derive stage status from substep statuses."""
+    statuses = [v.get("status", "pending") for v in substep_map.values()]
+    if not statuses:
+        return "pending"
+    if any(s == "error" for s in statuses):
+        return "error"
+    if any(s == "flagged" for s in statuses):
+        return "flagged"
+    if all(s == "done" for s in statuses):
+        return "done"
+    return "pending"
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def _git_head_sha(run_dir: Path) -> str | None:
+    r = _git(["rev-parse", "HEAD"], cwd=run_dir, check=False)
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
+def _build_audit_event(
+    *,
+    action: str,
+    run_dir: Path,
+    close_id: str,
+    actor: str,
+    participant: str,
+    stage: str,
+    substep: str,
+    scope: str,
+    reason: str,
+    outcome: str = "success",
+    extra: dict | None = None,
+) -> dict:
+    from datetime import datetime, timezone
+    event = {
+        "event_id": str(uuid.uuid4()),
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_id": load_or_create_run_id(run_dir / ".mpi" / "run_id"),
+        "span_id": str(uuid.uuid4()),
+        "actor": {"kind": "subagent", "name": actor},
+        "event": {"kind": "event", "action": action, "outcome": outcome},
+        "mpi": {
+            "participant_id": participant,
+            "stage": stage,
+            "substep": substep,
+            "scope": scope,
+            "close_id": close_id,
+        },
+        "reason": reason,
+    }
+    if extra:
+        event["mpi"].update(extra)
+    return event
+
+
+# ---------------------------------------------------------------------------
 # close subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
 
