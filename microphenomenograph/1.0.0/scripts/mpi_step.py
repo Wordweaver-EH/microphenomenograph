@@ -246,7 +246,249 @@ def _build_audit_event(
 # ---------------------------------------------------------------------------
 
 def cmd_close(args: argparse.Namespace) -> int:
-    raise NotImplementedError("close implemented in Phase 2")
+    import hashlib
+
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    audit_path = run_dir / ".mpi" / "audit.jsonl"
+
+    # --- Phase 1: close_attempted ---
+    close_id = str(uuid.uuid4())
+    try:
+        manifest = _load_manifest(run_dir)
+    except FileNotFoundError as e:
+        print(f"ERROR manifest_not_found: {e}", file=sys.stderr)
+        return 1
+
+    parent_head_sha = _git_head_sha(run_dir)
+
+    e_attempted = _build_audit_event(
+        action="close_attempted",
+        run_dir=run_dir,
+        close_id=close_id,
+        actor=args.actor,
+        participant=args.participant,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        reason=args.reason,
+        extra={"parent_head_sha": parent_head_sha},
+    )
+    append_jsonl(audit_path, e_attempted)
+
+    def _abort(reason: str) -> int:
+        """Emit a terminal close_aborted event (outcome=failure) then return 1."""
+        e = _build_audit_event(
+            action="close_aborted", outcome="failure",
+            run_dir=run_dir, close_id=close_id, actor=args.actor,
+            participant=args.participant, stage=args.stage, substep=args.substep,
+            scope=args.scope, reason=reason,
+        )
+        append_jsonl(audit_path, e)
+        return 1
+
+    # --- Phase 2: artifacts_validated ---
+    artifacts = args.artifacts or []
+    for art_path in artifacts:
+        p = Path(art_path)
+        if not p.exists() or p.stat().st_size == 0:
+            print(f"ERROR artifact_missing_or_empty: {art_path}", file=sys.stderr)
+            return _abort(f"artifact_missing_or_empty: {art_path}")
+
+    # Load and validate units-json
+    units_json_arg = args.units_json
+    if units_json_arg == "-":
+        units_payload = json.load(sys.stdin)
+    else:
+        units_path = Path(units_json_arg)
+        if not units_path.exists():
+            print(f"ERROR units_json_not_found: {units_json_arg}", file=sys.stderr)
+            return _abort(f"units_json_not_found: {units_json_arg}")
+        units_payload = json.loads(units_path.read_text(encoding="utf-8"))
+
+    schema_errors = validate_units(args.stage, args.substep, units_payload)
+    if schema_errors:
+        for err in schema_errors:
+            print(f"ERROR schema_validation_failed: {err}", file=sys.stderr)
+        return _abort(f"schema_validation_failed: {schema_errors[0]}")
+
+    # Check LLM substep requires --prompt-artifact
+    if (args.stage, args.substep) in LLM_SUBSTEPS:
+        if not getattr(args, "prompt_artifact", None):
+            msg = (f"prompt_artifact_required: substep ({args.stage}, {args.substep}) "
+                   "is LLM-invoking and requires --prompt-artifact")
+            print(f"ERROR {msg}", file=sys.stderr)
+            return _abort(msg)
+        pa = Path(args.prompt_artifact)
+        if not pa.exists():
+            msg = f"prompt_artifact_not_found: {args.prompt_artifact}"
+            print(f"ERROR {msg}", file=sys.stderr)
+            return _abort(msg)
+
+    # Check substep DAG prerequisites
+    prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
+    for prereq_stage, prereq_substep in prereqs:
+        status = _get_substep_status(manifest, args.participant, prereq_stage, prereq_substep)
+        if status != "done":
+            msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
+                   f"must be 'done' before closing ({args.stage}, {args.substep}); "
+                   f"current status: {status}")
+            print(f"ERROR {msg}", file=sys.stderr)
+            return _abort(msg)
+
+    # Compute artifact SHAs
+    artifact_shas = {}
+    for art_path in artifacts:
+        artifact_shas[art_path] = _sha256_file(Path(art_path))
+    if getattr(args, "prompt_artifact", None):
+        pa_path = str(args.prompt_artifact)
+        artifact_shas[pa_path] = _sha256_file(Path(pa_path))
+
+    e_validated = _build_audit_event(
+        action="artifacts_validated",
+        run_dir=run_dir,
+        close_id=close_id,
+        actor=args.actor,
+        participant=args.participant,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        reason=args.reason,
+        extra={"artifact_sha256": artifact_shas},
+    )
+    append_jsonl(audit_path, e_validated)
+
+    # --- Phase 3: audit_appended ---
+    # Write per-unit events
+    # Extract flat list of analytic units from any substep payload shape.
+    # Diachronic: payload["idus"]; synchronic top-level: payload["isus"];
+    # synchronic nested (per-IDU): flatten payload["isus"] across IDU entries.
+    _raw = units_payload if isinstance(units_payload, list) else units_payload.get("idus", units_payload.get("isus", []))
+    if isinstance(_raw, list) and _raw and isinstance(_raw[0], dict) and "isus" in _raw[0]:
+        # per-IDU shape: list of {idu_name, isus: [...]}
+        units: list = [isu for idu_entry in _raw for isu in idu_entry.get("isus", [])]
+    else:
+        units = _raw if isinstance(_raw, list) else []
+    e_audit = _build_audit_event(
+        action="audit_appended",
+        run_dir=run_dir,
+        close_id=close_id,
+        actor=args.actor,
+        participant=args.participant,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        reason=args.reason,
+        extra={
+            "artifact_paths": artifacts,
+            "prompt_artifact_path": getattr(args, "prompt_artifact", None),
+            "n_units": len(units) if isinstance(units, list) else 0,
+            "n_flagged": sum(1 for u in (units if isinstance(units, list) else []) if isinstance(u, dict) and u.get("flag_for_review")),
+        },
+    )
+    append_jsonl(audit_path, e_audit)
+
+    # --- Phase 4: manifest_replaced ---
+    # Build new manifest — preserve existing structure, update substep entry
+    manifest.setdefault("participants", {})
+    manifest["participants"].setdefault(args.participant, {"stages": {}})
+    manifest["participants"][args.participant].setdefault("stages", {})
+    manifest["participants"][args.participant]["stages"].setdefault(args.stage, {"substeps": {}})
+    stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
+    stage_entry.setdefault("substeps", {})
+
+    stage_entry["substeps"][args.substep] = {
+        "status": args.status,
+        "output_paths": artifacts,
+        "close_id": close_id,
+        "parent_head_sha": parent_head_sha,
+        "artifact_shas": artifact_shas,
+        "expected_action": "git_commit_succeeded",
+    }
+    stage_entry["status"] = _derive_stage_status(stage_entry["substeps"])
+
+    # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
+    manifest_path = run_dir / ".mpi" / "project.json"
+    manifest_backup = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "{}"
+
+    _save_manifest(run_dir, manifest)
+
+    e_manifest = _build_audit_event(
+        action="manifest_replaced",
+        run_dir=run_dir,
+        close_id=close_id,
+        actor=args.actor,
+        participant=args.participant,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        reason=args.reason,
+    )
+    append_jsonl(audit_path, e_manifest)
+
+    # --- Phase 5: git_commit_succeeded / git_commit_failed ---
+    add_paths = list(artifacts) + [str(manifest_path), str(audit_path)]
+    if getattr(args, "prompt_artifact", None):
+        add_paths.append(str(args.prompt_artifact))
+
+    n_units = len(units) if isinstance(units, list) else 0
+    n_flagged = sum(1 for u in (units if isinstance(units, list) else []) if u.get("flag_for_review"))
+    commit_msg = f"mpi: {args.actor} {args.stage}.{args.substep} {args.scope} ({n_units}units {n_flagged}flagged)"
+
+    r_add = _git(["add"] + add_paths, cwd=run_dir, check=False)
+    if r_add.returncode != 0:
+        print(f"ERROR git_add_failed: {r_add.stderr}", file=sys.stderr)
+        # rollback manifest
+        atomic_write(manifest_path, manifest_backup)
+        e_rolled = _build_audit_event(
+            action="manifest_rolled_back",
+            outcome="failure",
+            run_dir=run_dir, close_id=close_id, actor=args.actor,
+            participant=args.participant, stage=args.stage, substep=args.substep,
+            scope=args.scope, reason="git add failed",
+        )
+        append_jsonl(audit_path, e_rolled)
+        return 1
+
+    r_commit = _git(["commit", "-m", commit_msg], cwd=run_dir, check=False)
+    if r_commit.returncode != 0:
+        print(f"ERROR git_commit_failed: {r_commit.stderr}", file=sys.stderr)
+        # rollback manifest
+        atomic_write(manifest_path, manifest_backup)
+        e_failed = _build_audit_event(
+            action="git_commit_failed",
+            outcome="failure",
+            run_dir=run_dir, close_id=close_id, actor=args.actor,
+            participant=args.participant, stage=args.stage, substep=args.substep,
+            scope=args.scope, reason=r_commit.stderr.strip(),
+        )
+        append_jsonl(audit_path, e_failed)
+        e_rolled = _build_audit_event(
+            action="manifest_rolled_back",
+            outcome="failure",
+            run_dir=run_dir, close_id=close_id, actor=args.actor,
+            participant=args.participant, stage=args.stage, substep=args.substep,
+            scope=args.scope, reason="git commit failed",
+        )
+        append_jsonl(audit_path, e_rolled)
+        return 1
+
+    commit_sha = _git_head_sha(run_dir)
+    e_success = _build_audit_event(
+        action="git_commit_succeeded",
+        run_dir=run_dir,
+        close_id=close_id,
+        actor=args.actor,
+        participant=args.participant,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        reason=args.reason,
+        extra={"git_commit_sha": commit_sha, "artifact_sha256": artifact_shas},
+    )
+    append_jsonl(audit_path, e_success)
+
+    print(f"OK {args.scope} {args.stage}.{args.substep} commit={commit_sha[:7] if commit_sha else 'none'}")
+    return 0
 
 
 # ---------------------------------------------------------------------------
