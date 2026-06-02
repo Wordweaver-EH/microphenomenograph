@@ -1121,3 +1121,186 @@ class TestClosePromptArtifactEnforcement:
         assert any(
             e.get("mpi", {}).get("prompt_artifact_path") for e in events
         ), "No prompt_artifact_path in any audit event"
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: --status read mode tests (AC6.4)
+# ---------------------------------------------------------------------------
+
+class TestStatusReadMode:
+    def test_status_read_in_valid_run_succeeds(self, tmp_path):
+        """--status read in initialized run exits 0, appends one audit event, no artifacts/commits."""
+        run_dir = _init_run_dir(tmp_path)
+        audit_before = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        audit_count_before = len([l for l in audit_before if l.strip()])
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--stage", "status",
+            "--substep", "status_read",
+            "--scope", "global",
+            "--status", "read",
+            "--reason", "status read",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        # Verify exactly one new audit event was appended
+        audit_after = (run_dir / ".mpi" / "audit.jsonl").read_text().splitlines()
+        audit_count_after = len([l for l in audit_after if l.strip()])
+        assert audit_count_after == audit_count_before + 1
+
+        # Verify the new event has action="stage_read" and stage_phase="read"
+        events = [json.loads(l) for l in audit_after if l.strip()]
+        read_events = [e for e in events if e.get("event", {}).get("action") == "stage_read"]
+        assert len(read_events) >= 1
+        latest_read_event = read_events[-1]
+        assert latest_read_event["mpi"]["stage_phase"] == "read"
+
+    def test_status_read_no_artifacts_created(self, tmp_path):
+        """--status read does NOT create any artifact files."""
+        run_dir = _init_run_dir(tmp_path)
+        analyses_before = set((run_dir / "analyses").glob("*")) if (run_dir / "analyses").exists() else set()
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--stage", "status",
+            "--substep", "status_read",
+            "--scope", "global",
+            "--status", "read",
+            "--reason", "status read",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        analyses_after = set((run_dir / "analyses").glob("*")) if (run_dir / "analyses").exists() else set()
+        assert analyses_after == analyses_before, "Artifacts should not be created by --status read"
+
+    def test_status_read_no_manifest_mutation(self, tmp_path):
+        """--status read does NOT mutate manifest."""
+        run_dir = _init_run_dir(tmp_path)
+        manifest_before = (run_dir / ".mpi" / "project.json").read_text()
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--stage", "status",
+            "--substep", "status_read",
+            "--scope", "global",
+            "--status", "read",
+            "--reason", "status read",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        manifest_after = (run_dir / ".mpi" / "project.json").read_text()
+        assert manifest_before == manifest_after, "Manifest should not be mutated by --status read"
+
+    def test_status_read_no_git_commit(self, tmp_path):
+        """--status read does NOT create a git commit."""
+        run_dir = _init_run_dir(tmp_path)
+        result_before = subprocess.run(["git", "log", "--oneline"], cwd=run_dir, capture_output=True, text=True)
+        commits_before = len([l for l in result_before.stdout.strip().split("\n") if l.strip()])
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--stage", "status",
+            "--substep", "status_read",
+            "--scope", "global",
+            "--status", "read",
+            "--reason", "status read",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        result_after = subprocess.run(["git", "log", "--oneline"], cwd=run_dir, capture_output=True, text=True)
+        commits_after = len([l for l in result_after.stdout.strip().split("\n") if l.strip()])
+        assert commits_after == commits_before, "No git commit should be created by --status read"
+
+    def test_status_read_without_audit_jsonl_fails(self, tmp_path):
+        """--status read when audit.jsonl missing fails (not initialized)."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        # Don't initialize — no .mpi directory
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--stage", "status",
+            "--substep", "status_read",
+            "--scope", "global",
+            "--status", "read",
+            "--reason", "status read",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_non_read_close_requires_participant(self, tmp_path):
+        """Non-read close missing --participant exits non-zero."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            # NO --participant
+            "--stage", "diachronic",
+            "--substep", "criteria_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_non_read_close_requires_artifact(self, tmp_path):
+        """Non-read close missing --artifact exits non-zero."""
+        run_dir = _init_run_dir(tmp_path)
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units = _write_units_json(run_dir, "units.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1",
+            "--stage", "diachronic",
+            "--substep", "criteria_grouping",
+            "--scope", "p1s1",
+            # NO --artifact
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
+
+    def test_non_read_close_requires_units_json(self, tmp_path):
+        """Non-read close missing --units-json exits non-zero."""
+        run_dir = _init_run_dir(tmp_path)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1",
+            "--stage", "diachronic",
+            "--substep", "criteria_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            # NO --units-json
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0
