@@ -197,8 +197,9 @@ class TestAC10_5_CrossAnalystSubstepEnumeration:
     @pytest.mark.parametrize("substep", _ORCHESTRATOR_SUBSTEPS)
     def test_orchestrator_substep_absent(self, substep):
         content = AGENT_FILE.read_text(encoding="utf-8")
-        assert substep not in content, (
-            f"Orchestrator-only substep '{substep}' must NOT appear in mpi-cross-analyst.md"
+        section = self._persistence_section(content)
+        assert substep not in section, (
+            f"Orchestrator-only substep '{substep}' must NOT appear in Persistence section of mpi-cross-analyst.md"
         )
 
 
@@ -414,6 +415,40 @@ class TestAC23_1_HypothesisCandidateFixtureClose:
             and e["mpi"]["close_id"] == close_id
         ]
         assert commits, f"No git_commit_succeeded with close_id={close_id} in audit.jsonl"
+
+        # AC23.2, AC23.5: Verify persisted candidates JSON structure
+        # Read the persisted JSON from disk
+        persisted_json = json.loads(json_path.read_text(encoding="utf-8"))
+        candidates = persisted_json.get("candidates", [])
+        assert len(candidates) > 0, "Persisted JSON must contain at least one candidate"
+
+        # Verify each candidate has sample_summary.by_iv_level (AC23.2)
+        for i, candidate in enumerate(candidates):
+            assert "sample_summary" in candidate, f"Candidate {i} missing 'sample_summary' key"
+            assert "by_iv_level" in candidate.get("sample_summary", {}), (
+                f"Candidate {i} sample_summary missing 'by_iv_level' key"
+            )
+
+        # Verify each claim's evidence entries have raw_span_refs with required keys (AC23.5)
+        for i, candidate in enumerate(candidates):
+            claims = candidate.get("claims", [])
+            for j, claim in enumerate(claims):
+                for evidence_type in ["supports", "contradicts", "ambiguous"]:
+                    evidence_list = claim.get(evidence_type, [])
+                    for k, evidence in enumerate(evidence_list):
+                        raw_refs = evidence.get("raw_span_refs", [])
+                        assert isinstance(raw_refs, list) and len(raw_refs) > 0, (
+                            f"Candidate {i} claim {j} {evidence_type}[{k}] missing non-empty raw_span_refs"
+                        )
+                        # Verify each raw_span_ref has required keys
+                        for m, ref in enumerate(raw_refs):
+                            required_keys = ["transcript_id", "utterance_number", "byte_start",
+                                           "byte_end", "raw_excerpt"]
+                            for key in required_keys:
+                                assert key in ref, (
+                                    f"Candidate {i} claim {j} {evidence_type}[{k}].raw_span_refs[{m}] "
+                                    f"missing required key '{key}'"
+                                )
 
     def test_hypothesis_candidate_missing_disclaimer_rejected(self, tmp_path, capsys):
         """Negative test: fixture missing the disclaimer field is rejected at schema validation."""

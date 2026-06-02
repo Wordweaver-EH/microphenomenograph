@@ -308,6 +308,14 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                 continue
             c_prefix = f"payload.candidates[{i}]"
             errors.extend(_require_keys(cand, ["hypothesis", "claims", "sample_summary"], c_prefix))
+
+            # Validate sample_summary structure
+            sample_summary = cand.get("sample_summary", {})
+            if isinstance(sample_summary, dict):
+                if "by_iv_level" not in sample_summary:
+                    errors.append(SchemaError(f"{c_prefix}.sample_summary",
+                                            "must contain 'by_iv_level' key"))
+
             claims = cand.get("claims", [])
             if isinstance(claims, list):
                 for j, claim in enumerate(claims):
@@ -316,6 +324,27 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
                                                          "negative_cases"], cl_prefix))
+
+                    # Validate raw_span_refs in supports/contradicts/ambiguous
+                    for evidence_type in ["supports", "contradicts", "ambiguous"]:
+                        evidence_list = claim.get(evidence_type, [])
+                        if isinstance(evidence_list, list):
+                            for k, evidence in enumerate(evidence_list):
+                                if isinstance(evidence, dict):
+                                    ev_prefix = f"{cl_prefix}.{evidence_type}[{k}]"
+                                    raw_refs = evidence.get("raw_span_refs", [])
+                                    if not isinstance(raw_refs, list) or len(raw_refs) == 0:
+                                        errors.append(SchemaError(ev_prefix,
+                                                                f"must have non-empty 'raw_span_refs' list"))
+                                    else:
+                                        # Validate each raw_span_ref has required keys
+                                        for m, ref in enumerate(raw_refs):
+                                            if isinstance(ref, dict):
+                                                ref_prefix = f"{ev_prefix}.raw_span_refs[{m}]"
+                                                errors.extend(_require_keys(ref,
+                                                    ["transcript_id", "utterance_number", "byte_start",
+                                                     "byte_end", "raw_excerpt"],
+                                                    ref_prefix))
     return errors
 
 
