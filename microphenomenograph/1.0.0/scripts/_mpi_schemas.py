@@ -323,6 +323,9 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
             if isinstance(claims, list):
                 for j, claim in enumerate(claims):
                     cl_prefix = f"{c_prefix}.claims[{j}]"
+                    if not isinstance(claim, dict):
+                        errors.append(SchemaError(cl_prefix, "must be an object"))
+                        continue
                     errors.extend(_require_keys(claim, ["claim_text", "supports", "contradicts",
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
