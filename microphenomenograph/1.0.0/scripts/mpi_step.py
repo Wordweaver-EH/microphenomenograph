@@ -3,21 +3,26 @@
 mpi_step.py — Documentation-as-Done contract helper for the MPI pipeline.
 
 Verbs:
-  init     Initialise a dedicated MPI run repo (or validate an existing one).
-  close    Transactional substep close: validate → audit → manifest → commit.
-  render   Regenerate .mpi/reasoning.log from .mpi/audit.jsonl.
-  verify   Three-way join: manifest + audit + git tree.
-  unlock   Release a stale .mpi/close.lock with an audit event.
-  accept-head  Accept a new HEAD after rebase/cherry-pick.
+  init          Initialise a dedicated MPI run repo (or validate an existing one).
+  close         Transactional substep close: validate → audit → manifest → commit.
+  render        Regenerate .mpi/reasoning.log from .mpi/audit.jsonl.
+  verify        Three-way join: manifest + audit + git tree.
+  unlock        Release a stale .mpi/close.lock with an audit event.
+  accept-head   Accept a new HEAD after rebase/cherry-pick.
+  acquire-lease Acquire a run-level exclusive lease (.mpi/run.lease).
+  release-lease Release the run-level lease.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import signal
+import socket
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
@@ -264,11 +269,596 @@ def _extract_units(payload: dict | list) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Task 3: Cascade reset (AC16.1, AC16.2, AC30.1–AC30.3)
+# ---------------------------------------------------------------------------
+
+# Substeps affected by a criteria_revision re-close for a given scope (pNsN)
+_CASCADE_DIACHRONIC_SUBSTEPS = ["idu_naming_ordering"]
+_CASCADE_SYNCHRONIC_SUBSTEPS = [
+    "theme_grouping_within_idu",
+    "isu_naming",
+    "isu_second_level_grouping",
+]
+# Cross-participant stages and substeps reset when any transcript's criteria_revision is re-closed
+_CASCADE_CROSS_PARTICIPANT_STAGES = {
+    "generic_diachronic": [
+        "participant_row_assembly",
+        "idu_similarity_grouping",
+        "pattern_identification",
+        "cross_iv_contrast",
+    ],
+    "generic_synchronic": [
+        "select_generic_idus_of_interest",
+        "worksheet_assembly",
+        "isu_second_level_grouping",
+    ],
+    "global_synchronic": ["global_synchronic"],
+    "hypothesis": ["evidence_extraction", "candidate_drafting", "weak_evidence_review"],
+}
+
+
+def _cascade_reset(
+    run_dir: Path,
+    scope: str,
+    revision_close_id: str,
+    manifest: dict,
+    audit_path: Path,
+    actor: str,
+    actor_kind: str,
+) -> dict:
+    """
+    Cascade reset for pNsN after a criteria_revision re-close:
+    1. Move affected artifact files to analyses/_superseded/<revision_close_id>/
+    2. Write tombstone.json in _superseded/<revision_close_id>/
+    3. Reset affected substep statuses to 'pending' in manifest (single write)
+    4. Emit one cascade_reset audit event per reset substep
+    Returns updated manifest dict.
+    """
+    analyses_dir = run_dir / "analyses"
+    superseded_dir = analyses_dir / "_superseded" / revision_close_id
+    superseded_dir.mkdir(parents=True, exist_ok=True)
+
+    reset_substep_labels: list[str] = []
+    participants = manifest.get("participants", {})
+
+    def _move_artifact_files(art_scope: str, art_stage: str, art_substep: str) -> None:
+        """Move the three artifact files (json, md, prompt.json) if they exist."""
+        for ext in ("json", "md", "prompt.json"):
+            src = analyses_dir / f"{art_scope}-{art_stage}.{art_substep}.{ext}"
+            if src.exists():
+                dst = superseded_dir / f"{art_scope}-{art_stage}.{art_substep}.{ext}"
+                try:
+                    os.rename(str(src), str(dst))
+                except OSError:
+                    pass  # Non-fatal: continue cascade
+
+    def _reset_substep(p_key: str, stage: str, substep: str, art_scope: str) -> bool:
+        """
+        Reset a substep in the manifest if it's 'done'. Returns True if reset occurred.
+        p_key is the manifest participant key; art_scope is used for file naming.
+        """
+        p_data = participants.get(p_key, {})
+        stage_data = p_data.get("stages", {}).get(stage, {})
+        substep_data = stage_data.get("substeps", {}).get(substep, {})
+        if substep_data.get("status") == "done":
+            _move_artifact_files(art_scope, stage, substep)
+            return True
+        return False
+
+    # --- Reset diachronic downstream substeps for scope (pNsN) ---
+    for substep in _CASCADE_DIACHRONIC_SUBSTEPS:
+        if _reset_substep(scope, "diachronic", substep, scope):
+            reset_substep_labels.append(f"{scope} diachronic.{substep}")
+
+    # --- Reset all synchronic substeps for all iduN scopes under this transcript ---
+    # Find all synchronic scopes that start with scope + "-idu"
+    idu_prefix = f"{scope}-idu"
+    for p_key in list(participants.keys()):
+        if p_key.startswith(idu_prefix):
+            for substep in _CASCADE_SYNCHRONIC_SUBSTEPS:
+                if _reset_substep(p_key, "synchronic", substep, p_key):
+                    reset_substep_labels.append(f"{p_key} synchronic.{substep}")
+
+    # --- Reset cross-participant stages ---
+    # Cross-participant stages use non-pNsN keys; we look for any participant key
+    # matching the stage (generic/global/hypothesis) regardless of scope
+    for cross_stage, cross_substeps in _CASCADE_CROSS_PARTICIPANT_STAGES.items():
+        for p_key in list(participants.keys()):
+            for substep in cross_substeps:
+                if _reset_substep(p_key, cross_stage, substep, p_key):
+                    reset_substep_labels.append(f"{p_key} {cross_stage}.{substep}")
+
+    if not reset_substep_labels:
+        # Nothing downstream was done — no cascade needed
+        return manifest
+
+    # --- Write tombstone ---
+    tombstone = {
+        "cascade_source": revision_close_id,
+        "reset_at": datetime.now(timezone.utc).isoformat(),
+        "reset_substeps": reset_substep_labels,
+        "reason": "diachronic.criteria_revision re-close triggered cascade",
+    }
+    tombstone_path = superseded_dir / "tombstone.json"
+    atomic_write(tombstone_path, json.dumps(tombstone, indent=2) + "\n")
+
+    # --- Emit audit events BEFORE manifest write ---
+    run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+    for label in reset_substep_labels:
+        parts = label.split(" ", 1)
+        label_scope = parts[0] if parts else ""
+        stage_substep = parts[1] if len(parts) > 1 else ""
+        stage_part, _, substep_part = stage_substep.partition(".")
+        cascade_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": actor_kind, "name": actor},
+            "event": {"kind": "event", "action": "cascade_reset", "outcome": "success"},
+            "mpi": {
+                "participant_id": label_scope,
+                "stage": stage_part,
+                "substep": substep_part,
+                "scope": label_scope,
+                "close_id": str(uuid.uuid4()),
+                "cascade_source": revision_close_id,
+            },
+            "reason": f"cascade reset triggered by criteria_revision re-close {revision_close_id}",
+        }
+        append_jsonl(audit_path, cascade_event)
+
+    # --- Update manifest: reset all affected substeps to pending ---
+    # Apply resets based on our label list
+    for label in reset_substep_labels:
+        parts = label.split(" ", 1)
+        label_scope = parts[0] if parts else ""
+        stage_substep = parts[1] if len(parts) > 1 else ""
+        stage_part, _, substep_part = stage_substep.partition(".")
+        p_data = participants.get(label_scope, {})
+        stage_data = p_data.get("stages", {}).get(stage_part, {})
+        substep_data = stage_data.get("substeps", {}).get(substep_part)
+        if substep_data is not None:
+            substep_data["status"] = "pending"
+            substep_data["output_paths"] = []
+            # Derive new stage status
+            substeps_map = stage_data.get("substeps", {})
+            stage_data["status"] = _derive_stage_status(substeps_map)
+
+    return manifest
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Run-lease and substep-reservation (AC20.6, AC20.7)
+# ---------------------------------------------------------------------------
+
+def _acquire_run_lease(run_dir: Path, run_id: str, audit_path: Path) -> int:
+    """
+    Write .mpi/run.lease = {pid, hostname, run_id, started_at, command}.
+    If lease file exists and holder PID is alive on same host: exit with run_lease_held.
+    If lease file exists and holder PID is dead: auto-reclaim (emit stale_lease_reclaimed event).
+    Cross-host: refuse with cross_host_lease_unresolvable.
+    Returns 0 on success, 1 on failure.
+    """
+    lease_path = run_dir / ".mpi" / "run.lease"
+    current_hostname = socket.gethostname()
+    current_pid = os.getpid()
+
+    if lease_path.exists():
+        try:
+            existing = json.loads(lease_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+        holder_hostname = existing.get("hostname", "")
+        holder_pid = existing.get("pid")
+
+        if holder_hostname and holder_hostname != current_hostname:
+            # Cross-host: cannot resolve
+            print(
+                f"ERROR cross_host_lease_unresolvable: lease held by {holder_hostname} "
+                f"(PID {holder_pid}); current host is {current_hostname}. "
+                "Manually remove .mpi/run.lease to proceed.",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Same host: check if PID is alive
+        pid_alive = False
+        if holder_pid is not None:
+            try:
+                os.kill(int(holder_pid), 0)  # Signal 0 = check existence
+                pid_alive = True
+            except (ProcessLookupError, PermissionError, ValueError):
+                pid_alive = False
+
+        if pid_alive:
+            print(
+                f"ERROR run_lease_held: lease held by PID {holder_pid} on {holder_hostname} "
+                f"(started {existing.get('started_at', '?')}). "
+                "Wait for the run to complete or kill that process.",
+                file=sys.stderr,
+            )
+            return 1
+
+        # PID is dead — reclaim
+        trace_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        reclaim_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": trace_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "orchestrator", "name": "mpi_step"},
+            "event": {"kind": "event", "action": "stale_lease_reclaimed", "outcome": "success"},
+            "mpi": {
+                "stale_pid": holder_pid,
+                "stale_hostname": holder_hostname,
+                "stale_started_at": existing.get("started_at"),
+            },
+            "reason": f"stale lease from dead PID {holder_pid} reclaimed",
+        }
+        if audit_path.exists():
+            append_jsonl(audit_path, reclaim_event)
+
+    # Write the new lease
+    lease_data = {
+        "pid": current_pid,
+        "hostname": current_hostname,
+        "run_id": run_id,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "command": " ".join(sys.argv),
+    }
+    atomic_write(lease_path, json.dumps(lease_data, indent=2) + "\n")
+    return 0
+
+
+def _release_run_lease(run_dir: Path) -> None:
+    """Remove .mpi/run.lease. Called on normal exit and by signal handlers (SIGINT, SIGTERM)."""
+    lease_path = run_dir / ".mpi" / "run.lease"
+    try:
+        if lease_path.exists():
+            lease_path.unlink()
+    except OSError:
+        pass
+
+
+def _acquire_substep_reservation(
+    run_dir: Path,
+    stage: str,
+    substep: str,
+    scope: str,
+    close_id: str,
+    artifacts: list[str],
+) -> int:
+    """
+    Write analyses/<scope>-<stage>.<substep>.reservation.json = {close_id, pid, started_at,
+    intended_artifact_paths}.
+    If reservation file exists for same (stage, substep, scope): exit with substep_reservation_held.
+    Returns 0 on success, 1 if reservation is held.
+    """
+    analyses_dir = run_dir / "analyses"
+    analyses_dir.mkdir(exist_ok=True)
+    reservation_path = analyses_dir / f"{scope}-{stage}.{substep}.reservation.json"
+
+    if reservation_path.exists():
+        try:
+            existing = json.loads(reservation_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+        print(
+            f"ERROR substep_reservation_held: reservation exists for "
+            f"({stage}, {substep}, {scope}) with close_id={existing.get('close_id', '?')} "
+            f"PID={existing.get('pid', '?')}. "
+            "Wait for the in-progress close to complete.",
+            file=sys.stderr,
+        )
+        return 1
+
+    reservation_data = {
+        "close_id": close_id,
+        "pid": os.getpid(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "intended_artifact_paths": artifacts,
+    }
+    # Use direct write (not atomic_write) for the reservation lock file;
+    # it is a coordination token, not a safety-critical data file.
+    try:
+        reservation_path.write_text(
+            json.dumps(reservation_data, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as exc:
+        # Best-effort: if we can't write the reservation, skip it (non-fatal)
+        pass
+    return 0
+
+
+def _release_substep_reservation(
+    run_dir: Path,
+    stage: str,
+    substep: str,
+    scope: str,
+) -> None:
+    """Remove the reservation file. Called on git_commit_succeeded or manifest_rolled_back."""
+    reservation_path = run_dir / "analyses" / f"{scope}-{stage}.{substep}.reservation.json"
+    try:
+        if reservation_path.exists():
+            reservation_path.unlink()
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Acquire/release-lease subcommands
+# ---------------------------------------------------------------------------
+
+def cmd_acquire_lease(args: argparse.Namespace) -> int:
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    mpi_dir = run_dir / ".mpi"
+    if not mpi_dir.exists():
+        print(f"ERROR mpi_not_initialised: {mpi_dir} does not exist", file=sys.stderr)
+        return 1
+    run_id = load_or_create_run_id(mpi_dir / "run_id")
+    audit_path = mpi_dir / "audit.jsonl"
+    rc = _acquire_run_lease(run_dir, run_id, audit_path)
+    if rc == 0:
+        print(f"OK lease acquired run_id={run_id} pid={os.getpid()}")
+
+        # Register signal handlers to release the lease on interrupt/termination
+        def _on_signal(signum, frame):
+            _release_run_lease(run_dir)
+            sys.exit(1)
+
+        try:
+            signal.signal(signal.SIGINT, _on_signal)
+            signal.signal(signal.SIGTERM, _on_signal)
+        except (OSError, ValueError):
+            pass  # Signal registration is best-effort
+
+    return rc
+
+
+def cmd_release_lease(args: argparse.Namespace) -> int:
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    _release_run_lease(run_dir)
+    print(f"OK lease released run_dir={run_dir}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Span offset resolution (AC28.3, AC28.4)
+# ---------------------------------------------------------------------------
+
+def _validate_utterance_refs(
+    run_dir: Path,
+    units_payload: dict,
+    stage: str,
+    substep: str,
+    manifest: dict,
+) -> list[str]:
+    """
+    Validate all utterance_refs in the units payload against the offset registry.
+
+    Handles TWO payload shapes:
+
+    SHAPE A — per-transcript analytic units (diachronic, synchronic,
+    generic_diachronic, generic_synchronic, global_synchronic):
+      Each unit is a dict with a top-level 'utterance_refs' list.
+      Check each unit: if utterance_refs is empty/missing → 'missing_span_refs'.
+      Validate each ref (see steps 1-4 below).
+
+    SHAPE B — hypothesis candidates (hypothesis.candidate_drafting,
+    hypothesis.evidence_extraction):
+      Spans are nested: units_payload['candidates'][i]['claims'][j]
+        ['{supports|contradicts|ambiguous}'][k]['raw_span_refs']
+      Each raw_span_refs entry is a {transcript_id, utterance_number,
+      byte_start, byte_end, raw_excerpt} object.
+
+    For each ref object:
+    1. Load transcripts/offsets/<transcript_id>.json
+       → 'offset_registry_missing' if file absent
+    2. Look up utterance_number → raw byte range
+       → 'span_out_of_range' if utterance_number not in registry
+    3. Read raw bytes from transcripts/raw/<transcript_id>.txt[byte_start:byte_end]
+       → 'span_out_of_range' if byte range outside file
+    4. Decode as UTF-8, compare to ref['raw_excerpt']
+       → 'span_excerpt_mismatch' if mismatch (include both excerpts in message)
+
+    Returns list of error strings (empty = all valid).
+    """
+    errors: list[str] = []
+    # Cache loaded registries to avoid repeated disk reads
+    registry_cache: dict[str, dict] = {}
+    raw_file_cache: dict[str, bytes] = {}
+
+    # Early-exit: if the entire transcripts/offsets/ directory doesn't exist,
+    # skip span validation (pipeline hasn't run transcript_prep yet).
+    offsets_dir = run_dir / "transcripts" / "offsets"
+    if not offsets_dir.is_dir():
+        return errors  # Not yet initialized; skip validation
+
+    def _validate_ref(ref: dict, ref_label: str) -> list[str]:
+        """Validate a single utterance/span ref object."""
+        ref_errors: list[str] = []
+        if not isinstance(ref, dict):
+            return [f"{ref_label}: must be an object"]
+
+        transcript_id = ref.get("transcript_id", "")
+        utterance_number = ref.get("utterance_number")
+        byte_start = ref.get("byte_start")
+        byte_end = ref.get("byte_end")
+        raw_excerpt = ref.get("raw_excerpt", "")
+
+        # Step 1: Load offset registry
+        if transcript_id not in registry_cache:
+            registry_file = offsets_dir / f"{transcript_id}.json"
+            if not registry_file.exists():
+                return [
+                    f"offset_registry_missing: transcripts/offsets/{transcript_id}.json "
+                    f"not found — run transcript_prep.register_offsets before any LLM substep"
+                ]
+            try:
+                registry_cache[transcript_id] = json.loads(
+                    registry_file.read_text(encoding="utf-8")
+                )
+            except (json.JSONDecodeError, OSError) as exc:
+                return [f"offset_registry_missing: failed to load {transcript_id}.json: {exc}"]
+
+        registry = registry_cache[transcript_id]
+
+        # Step 2: Look up utterance_number
+        unum_key = str(utterance_number) if utterance_number is not None else None
+        unum_int_key = utterance_number  # Some registries may use int keys
+
+        unum_entry = registry.get(unum_key) or registry.get(unum_int_key)
+        if unum_entry is None:
+            ref_errors.append(
+                f"span_out_of_range: {ref_label}: utterance_number={utterance_number} "
+                f"not in offset registry for {transcript_id}"
+            )
+            return ref_errors
+
+        # Step 3: Load raw transcript bytes
+        if transcript_id not in raw_file_cache:
+            raw_file = run_dir / "transcripts" / "raw" / f"{transcript_id}.txt"
+            if not raw_file.exists():
+                # Try without extension
+                raw_file_noext = run_dir / "transcripts" / "raw" / transcript_id
+                if raw_file_noext.exists():
+                    raw_file = raw_file_noext
+                else:
+                    ref_errors.append(
+                        f"offset_registry_missing: transcripts/raw/{transcript_id}.txt "
+                        "not found"
+                    )
+                    return ref_errors
+            try:
+                raw_file_cache[transcript_id] = raw_file.read_bytes()
+            except OSError as exc:
+                ref_errors.append(
+                    f"offset_registry_missing: failed to read {transcript_id}.txt: {exc}"
+                )
+                return ref_errors
+
+        raw_bytes = raw_file_cache[transcript_id]
+        file_size = len(raw_bytes)
+
+        # Validate byte range
+        if byte_start is None or byte_end is None:
+            return ref_errors  # Schema already validates required fields
+
+        if not (0 <= byte_start <= byte_end <= file_size):
+            ref_errors.append(
+                f"span_out_of_range: {ref_label}: "
+                f"byte range [{byte_start}:{byte_end}] outside file size {file_size} "
+                f"for {transcript_id}.txt"
+            )
+            return ref_errors
+
+        # Step 4: Compare raw_excerpt
+        try:
+            actual_text = raw_bytes[byte_start:byte_end].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            ref_errors.append(
+                f"span_out_of_range: {ref_label}: "
+                f"byte range [{byte_start}:{byte_end}] is not valid UTF-8: {exc}"
+            )
+            return ref_errors
+
+        if actual_text != raw_excerpt:
+            ref_errors.append(
+                f"span_excerpt_mismatch: {ref_label}: "
+                f"expected={raw_excerpt!r} actual={actual_text!r} "
+                f"(transcript={transcript_id}, utterance={utterance_number}, "
+                f"bytes=[{byte_start}:{byte_end}])"
+            )
+
+        return ref_errors
+
+    # --- Determine payload shape ---
+    is_hypothesis = stage == "hypothesis" and substep in (
+        "candidate_drafting", "evidence_extraction"
+    )
+
+    if is_hypothesis:
+        # SHAPE B: hypothesis candidates with nested raw_span_refs
+        candidates = units_payload.get("candidates", [])
+        if not isinstance(candidates, list):
+            return errors
+        for i, cand in enumerate(candidates):
+            if not isinstance(cand, dict):
+                continue
+            claims = cand.get("claims", [])
+            if not isinstance(claims, list):
+                continue
+            for j, claim in enumerate(claims):
+                if not isinstance(claim, dict):
+                    continue
+                # Check if claim has any span-bearing evidence
+                supports = claim.get("supports", [])
+                contradicts = claim.get("contradicts", [])
+                ambiguous = claim.get("ambiguous", [])
+                has_not_applicable = "not_applicable" in claim
+
+                all_evidence_lists = [supports, contradicts, ambiguous]
+                all_empty = all(
+                    not isinstance(ev_list, list) or len(ev_list) == 0
+                    for ev_list in all_evidence_lists
+                )
+                if all_empty and not has_not_applicable:
+                    errors.append(
+                        f"missing_span_refs: candidates[{i}].claims[{j}]: "
+                        "must have at least one non-empty supports/contradicts/ambiguous "
+                        "or an explicit not_applicable field"
+                    )
+                    continue
+
+                for ev_type in ("supports", "contradicts", "ambiguous"):
+                    ev_list = claim.get(ev_type, [])
+                    if not isinstance(ev_list, list):
+                        continue
+                    for k, evidence in enumerate(ev_list):
+                        if not isinstance(evidence, dict):
+                            continue
+                        raw_span_refs = evidence.get("raw_span_refs", [])
+                        if not isinstance(raw_span_refs, list) or len(raw_span_refs) == 0:
+                            continue
+                        for m, ref in enumerate(raw_span_refs):
+                            label = (
+                                f"candidates[{i}].claims[{j}].{ev_type}[{k}]"
+                                f".raw_span_refs[{m}]"
+                            )
+                            errors.extend(_validate_ref(ref, label))
+    else:
+        # SHAPE A: per-transcript analytic units with utterance_refs
+        # Extract units using the same logic as _extract_units
+        units = _extract_units(units_payload)
+        for idx, unit in enumerate(units):
+            if not isinstance(unit, dict):
+                continue
+            refs = unit.get("utterance_refs")
+            if refs is None or (isinstance(refs, list) and len(refs) == 0):
+                errors.append(
+                    f"missing_span_refs: unit[{idx}]: "
+                    "utterance_refs is missing or empty"
+                )
+                continue
+            if not isinstance(refs, list):
+                errors.append(
+                    f"missing_span_refs: unit[{idx}]: utterance_refs must be a list"
+                )
+                continue
+            for i, ref in enumerate(refs):
+                label = f"unit[{idx}].utterance_refs[{i}]"
+                errors.extend(_validate_ref(ref, label))
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
 # close subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
 
 def cmd_close(args: argparse.Namespace) -> int:
-    from datetime import datetime, timezone
 
     run_dir = Path(getattr(args, "run_dir", ".")).resolve()
     audit_path = run_dir / ".mpi" / "audit.jsonl"
@@ -402,6 +992,33 @@ def cmd_close(args: argparse.Namespace) -> int:
         print(f"ERROR {msg}", file=sys.stderr)
         return _abort(msg)
 
+    # --- Task 5: Span offset resolution (AC28.3, AC28.4) ---
+    # Only apply to LLM substeps (orchestrator-only substeps skip span validation)
+    if (args.stage, args.substep) in LLM_SUBSTEPS:
+        span_errors = _validate_utterance_refs(
+            run_dir, units_payload, args.stage, args.substep, manifest
+        )
+        if span_errors:
+            for span_err in span_errors:
+                print(f"ERROR span_validation_failed: {span_err}", file=sys.stderr)
+            # Emit span_validation_failed audit event before aborting
+            e_span_fail = _build_audit_event(
+                action="span_validation_failed",
+                outcome="failure",
+                run_dir=run_dir,
+                close_id=close_id,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+                participant=args.participant,
+                stage=args.stage,
+                substep=args.substep,
+                scope=args.scope,
+                reason=f"span_validation_failed: {span_errors[0]}",
+                extra={"errors": span_errors},
+            )
+            append_jsonl(audit_path, e_span_fail)
+            return _abort(f"span_validation_failed: {span_errors[0]}")
+
     # Check substep DAG prerequisites
     prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
     for prereq_stage, prereq_substep in prereqs:
@@ -412,6 +1029,19 @@ def cmd_close(args: argparse.Namespace) -> int:
                    f"current status: {status}")
             print(f"ERROR {msg}", file=sys.stderr)
             return _abort(msg)
+
+    # --- Task 4: Acquire substep reservation (AC20.7) ---
+    reservation_rc = _acquire_substep_reservation(
+        run_dir, args.stage, args.substep, args.scope, close_id,
+        list(artifacts),
+    )
+    if reservation_rc != 0:
+        return _abort("substep_reservation_held")
+
+    def _abort_with_release(reason: str) -> int:
+        """Abort and release the substep reservation."""
+        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+        return _abort(reason)
 
     # Compute artifact SHAs
     artifact_shas = {}
@@ -525,6 +1155,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             scope=args.scope, reason="git add failed",
         )
         append_jsonl(audit_path, e_rolled)
+        # Task 4: Release substep reservation on rollback
+        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
         return 1
 
     r_commit = _git(["commit", "-m", commit_msg], cwd=run_dir, check=False)
@@ -550,6 +1182,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             scope=args.scope, reason="git commit failed",
         )
         append_jsonl(audit_path, e_rolled)
+        # Task 4: Release substep reservation on rollback
+        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
         return 1
 
     commit_sha = _git_head_sha(run_dir)
@@ -567,6 +1201,42 @@ def cmd_close(args: argparse.Namespace) -> int:
         extra={"git_commit_sha": commit_sha, "artifact_sha256": artifact_shas},
     )
     append_jsonl(audit_path, e_success)
+
+    # Task 4: Release substep reservation on success
+    _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+
+    # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
+    if args.stage == "diachronic" and args.substep == "criteria_revision":
+        # Check if any downstream substeps are 'done' — if so, cascade reset them
+        reload_manifest = _load_manifest(run_dir)
+        # We need to check if ANY downstream substep is done before deciding to cascade
+        # The cascade function handles the check internally
+        updated_manifest = _cascade_reset(
+            run_dir=run_dir,
+            scope=args.scope,
+            revision_close_id=close_id,
+            manifest=reload_manifest,
+            audit_path=audit_path,
+            actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
+        )
+        # Save the updated manifest if cascade made changes
+        if updated_manifest is not reload_manifest or True:
+            # Always save (cascade_reset may have modified the manifest in-place)
+            _save_manifest(run_dir, updated_manifest)
+            # Commit the updated manifest if cascade produced changes
+            r_cascade_add = _git(
+                ["add", str(run_dir / ".mpi" / "project.json"), str(audit_path)],
+                cwd=run_dir, check=False,
+            )
+            if r_cascade_add.returncode == 0:
+                r_cascade_commit = _git(
+                    ["commit", "-m",
+                     f"mpi: cascade reset after criteria_revision re-close {close_id[:7]}"],
+                    cwd=run_dir, check=False,
+                )
+                # Non-fatal: if nothing to commit, that's fine
+                _ = r_cascade_commit
 
     print(f"OK {args.scope} {args.stage}.{args.substep} commit={commit_sha[:7] if commit_sha else 'none'}")
     return 0
@@ -639,6 +1309,18 @@ def cmd_render(args: argparse.Namespace) -> int:
         parts.append(detail)
 
         rendered.append(" ".join(parts))
+
+    # --- Task 3 (AC30.3): Append superseded-count summary line ---
+    superseded_dir = run_dir / "analyses" / "_superseded"
+    if superseded_dir.is_dir():
+        superseded_subdirs = [
+            d for d in superseded_dir.iterdir() if d.is_dir()
+        ]
+        n_superseded = len(superseded_subdirs)
+        if n_superseded > 0:
+            rendered.append(
+                f"_superseded/ contains {n_superseded} close_id(s) worth of artifacts"
+            )
 
     output = "\n".join(rendered) + ("\n" if rendered else "")
     atomic_write(out_path, output)
@@ -787,6 +1469,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_ah.add_argument("--reason", required=True)
     p_ah.add_argument("--run-dir", default=".", metavar="DIR")
 
+    # acquire-lease (Task 4: AC20.6)
+    p_al = sub.add_parser("acquire-lease", help="Acquire a run-level exclusive lease (.mpi/run.lease).")
+    p_al.add_argument("--run-dir", default=".", metavar="DIR")
+
+    # release-lease (Task 4: AC20.6)
+    p_rl = sub.add_parser("release-lease", help="Release the run-level lease.")
+    p_rl.add_argument("--run-dir", default=".", metavar="DIR")
+
     return parser
 
 
@@ -800,6 +1490,8 @@ def main(argv: list[str] | None = None) -> int:
         "verify": cmd_verify,
         "unlock": cmd_unlock,
         "accept-head": cmd_accept_head,
+        "acquire-lease": cmd_acquire_lease,
+        "release-lease": cmd_release_lease,
     }
     return dispatch[args.verb](args)
 
