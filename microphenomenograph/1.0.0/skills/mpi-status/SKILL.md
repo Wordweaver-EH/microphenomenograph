@@ -40,3 +40,22 @@ Cross-participant stages:
 Print: `N/M stages complete across all participants. Review queue: K items.`
 
 Count items in `.mpi/review-queue.md` if it exists (count `##` headers as items).
+
+## Closure (mandatory)
+
+`mpi-status` is a **read-only skill**. It produces no artifact and performs no close.
+
+However, it MUST emit a read-only audit event for trace continuity:
+```bash
+python scripts/mpi_step.py close \
+  --actor orchestrator \
+  --stage status \
+  --substep status_read \
+  --scope global \
+  --status read \
+  --reason "status read" \
+  --run-dir .
+```
+The `--status read` flag causes `mpi_step.py` to emit a `stage_phase: read` audit event
+without writing any artifact, mutating the manifest, or creating a git commit. This keeps
+the audit trail complete even for read-only operations.
