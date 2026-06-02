@@ -223,8 +223,8 @@ Criteria requiring LLM execution or interactive CLI are listed here as manual st
 | AC3.2 | Transcript prep normalises utterances | `test_transcript_prep.py` |
 | AC3.3 | Low-confidence → review queue | Manual: Test 2.3 |
 | AC3.4 | Single-IDU transcript graceful | Manual: Test 2.4 |
-| AC3.5 | Phase2 excluded from few-shot | `test_plugin_structure.py::TestAC3_6` |
-| AC3.6 | Phase2 exclusion language in skills | `test_plugin_structure.py::TestAC3_6` |
+| AC3.5 | Phase2 excluded from few-shot | `test_plugin_structure.py::TestAC3_6_ZeroShotPurity` |
+| AC3.6 | Phase2 exclusion language in skills | `test_plugin_structure.py::TestAC3_6_ZeroShotPurity` |
 | AC4.1 | Synchronic ISU groups produced | `test_mpi_synchronic_logic.py` |
 | AC4.2 | ISU flattening across IDU groups | Manual: Test 3.1 qualitative check |
 | AC5.1 | Generic diachronic groups by score category | `test_cross_participant_analysis.py` |
