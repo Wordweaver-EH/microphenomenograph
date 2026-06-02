@@ -191,3 +191,22 @@ Report a table to terminal:
 | p1s2 | 3 | moderate | all pending |
 ...
 ```
+
+## Closure (mandatory)
+
+Each init substep closes its own four-part transaction via `mpi_step.py close`.
+The orchestrator owns all three substeps (no LLM calls, no prompt artifact required
+for `scan_transcripts` and `confirm_study_config`; `propose_study_config` is LLM-driven
+when `study.config_provenance == "llm_proposed_user_confirmed"`).
+
+| Substep | Actor | Artifacts | Notes |
+|---------|-------|-----------|-------|
+| `init.scan_transcripts` | orchestrator | `<manifest>.json` (initial write) | No prompt artifact. Records `study.transcripts[transcript_id].raw_sha256` for each transcript. |
+| `init.propose_study_config` | orchestrator (LLM optional) | `init.propose_study_config.{json,md}` + `.prompt.json` when LLM path | Skipped entirely when `study.config_provenance` is `preregistered` or `user_specified`. |
+| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` (records final IV/DV) | Records `study.config_provenance` immutably; also records `study.calibration_transcript`. |
+
+**Commit message format:** `mpi: orchestrator init.<substep> (<N>transcripts scanned)` or similar.
+
+**Raw-immutability contract:** `hash_raw` is the first substep of `transcript_prep`, not of `init`. After `scan_transcripts` closes, the raw files under `transcripts/raw/` become the reference — any SHA mismatch at a subsequent close emits `raw_transcript_mutated` and exits non-zero.
+
+**Study config provenance:** `study.config_provenance` is set at `init.confirm_study_config` and is immutable thereafter. Its value (`preregistered`, `user_specified`, `llm_proposed_user_confirmed`) is surfaced in every hypothesis output disclaimer.

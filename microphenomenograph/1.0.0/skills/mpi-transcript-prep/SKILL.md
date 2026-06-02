@@ -69,3 +69,28 @@ Report per-transcript: `✓ pNsN: transcript cleaned (N warnings)`
    f. Update manifest stage to `done` (or leave `pending` on ERROR)
 3. Write updated manifest
 4. Print summary report
+
+## Closure (mandatory)
+
+Each transcript-prep substep closes its own four-part transaction via `mpi_step.py close`.
+The orchestrator owns all three substeps (no LLM calls, no prompt artifact for any).
+
+| Substep | Actor | Artifacts | Notes |
+|---------|-------|-----------|-------|
+| `transcript_prep.hash_raw` | orchestrator | SHA256 entry in manifest | Marks raw file read-only. SHA recorded as `study.transcripts[transcript_id].raw_sha256`. |
+| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. |
+| `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Maps normalized line numbers to raw byte ranges. SHA recorded in manifest. |
+
+**Commit message format:** `mpi: orchestrator transcript_prep.<substep> <transcript_id>`
+
+**Raw-immutability contract:** The raw file at `transcripts/raw/<transcript_id>.txt` is
+never overwritten. `hash_raw` makes it read-only (`chmod 0444` on POSIX; read-only attribute
+on Windows). Any subsequent close that detects SHA mismatch on the raw file exits with
+`raw_transcript_mutated`. The normalised file is a derived artifact; only the raw is the
+ground truth for `utterance_refs`.
+
+**Note (divergence from pre-Plan-1 behaviour):** The pre-existing SKILL.md above specifies
+"Write cleaned transcript back to the same path (overwrite)." This is superseded by the
+new contract: the normalised output goes to `transcripts/normalized/<transcript_id>.txt`;
+the raw is never overwritten. Executors should follow the Closure section, not the old
+"Output" section above it.
