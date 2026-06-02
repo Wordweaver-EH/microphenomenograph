@@ -268,8 +268,46 @@ def _extract_units(payload: dict | list) -> list:
 # ---------------------------------------------------------------------------
 
 def cmd_close(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
     run_dir = Path(getattr(args, "run_dir", ".")).resolve()
     audit_path = run_dir / ".mpi" / "audit.jsonl"
+
+    # --- Read-only mode: emit stage_read audit event, no artifacts/manifest/commit ---
+    if args.status == "read":
+        if not audit_path.exists():
+            print(f"ERROR audit_not_found: {audit_path}", file=sys.stderr)
+            return 1
+        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "orchestrator", "name": args.actor},
+            "event": {"kind": "event", "action": "stage_read", "outcome": "success"},
+            "mpi": {
+                "stage": args.stage,
+                "substep": args.substep,
+                "scope": args.scope,
+                "stage_phase": "read",
+            },
+            "reason": args.reason,
+        }
+        append_jsonl(audit_path, event)
+        print(f"OK {args.scope} {args.stage}.{args.substep} stage_phase=read")
+        return 0
+
+    # --- Non-read path: enforce required arguments ---
+    if args.participant is None:
+        print("ERROR missing_argument: --participant is required for non-read close", file=sys.stderr)
+        return 1
+    if args.units_json is None:
+        print("ERROR missing_argument: --units-json is required for non-read close", file=sys.stderr)
+        return 1
+    if not args.artifacts:
+        print("ERROR missing_argument: --artifact is required for non-read close", file=sys.stderr)
+        return 1
 
     # --- Phase 1: close_attempted ---
     close_id = str(uuid.uuid4())
@@ -710,16 +748,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--actor", required=True)
     p_close.add_argument("--actor-kind", default="subagent", choices=["subagent", "orchestrator"],
                          help="Actor kind: 'subagent' (default) or 'orchestrator'.")
-    p_close.add_argument("--participant", required=True)
+    p_close.add_argument("--participant", default=None)
     p_close.add_argument("--stage", required=True)
     p_close.add_argument("--substep", required=True)
     p_close.add_argument("--scope", required=True)
-    p_close.add_argument("--artifact", required=True, action="append", dest="artifacts",
+    p_close.add_argument("--artifact", action="append", dest="artifacts",
                          metavar="PATH", help="Artifact path (repeat for json, md, prompt.json).")
-    p_close.add_argument("--units-json", required=True, metavar="PATH_OR_STDIN",
+    p_close.add_argument("--units-json", default=None, metavar="PATH_OR_STDIN",
                          help="Path to units JSON file, or '-' to read from stdin.")
     p_close.add_argument("--reason", required=True)
-    p_close.add_argument("--status", default="done", choices=["done", "flagged"])
+    p_close.add_argument("--status", default="done", choices=["done", "flagged", "read"])
     p_close.add_argument("--prompt-artifact", metavar="PATH",
                          help="Required for LLM-invoking substeps.")
     p_close.add_argument("--run-dir", default=".", metavar="DIR",
