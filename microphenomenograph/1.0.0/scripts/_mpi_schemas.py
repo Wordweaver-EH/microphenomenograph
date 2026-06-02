@@ -311,8 +311,11 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
 
             # Validate sample_summary structure
             sample_summary = cand.get("sample_summary", {})
-            if isinstance(sample_summary, dict):
-                if "by_iv_level" not in sample_summary:
+            if "sample_summary" in cand:
+                if not isinstance(sample_summary, dict):
+                    errors.append(SchemaError(f"{c_prefix}.sample_summary",
+                                            "must be a dict"))
+                elif "by_iv_level" not in sample_summary:
                     errors.append(SchemaError(f"{c_prefix}.sample_summary",
                                             "must contain 'by_iv_level' key"))
 
@@ -324,6 +327,18 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
                                                          "negative_cases"], cl_prefix))
+
+                    # Validate that claim has at least one of: non-empty supports, non-empty contradicts, or not_applicable field
+                    supports = claim.get("supports", [])
+                    contradicts = claim.get("contradicts", [])
+                    has_not_applicable = "not_applicable" in claim
+                    supports_is_nonempty = isinstance(supports, list) and len(supports) > 0
+                    contradicts_is_nonempty = isinstance(contradicts, list) and len(contradicts) > 0
+
+                    if not (supports_is_nonempty or contradicts_is_nonempty or has_not_applicable):
+                        errors.append(SchemaError(cl_prefix,
+                            "must have at least one of: non-empty 'supports', non-empty 'contradicts', "
+                            "or an explicit 'not_applicable' field"))
 
                     # Validate raw_span_refs in supports/contradicts/ambiguous
                     for evidence_type in ["supports", "contradicts", "ambiguous"]:

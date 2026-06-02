@@ -508,3 +508,129 @@ class TestAC23_1_HypothesisCandidateFixtureClose:
             "Expected 'disclaimer' in stderr for missing-disclaimer rejection; "
             f"got: {captured.err!r}"
         )
+
+    def test_hypothesis_candidate_missing_raw_span_refs_rejected(self, tmp_path, capsys):
+        """Negative test: dropping raw_span_refs from a supports entry is rejected at schema validation."""
+        scope = "dv-automaticity"
+        stage = "hypothesis"
+        substep = "candidate_drafting"
+        transcript_id = "p1s1"
+
+        run_dir = _setup_cross_run_dir(
+            tmp_path,
+            seed_prereqs={
+                scope: {
+                    stage: {
+                        "evidence_extraction": {"status": "done"},
+                    }
+                }
+            },
+        )
+        _setup_transcript_files(run_dir, transcript_id, _FIXTURE_RAW_TEXT)
+
+        hypotheses = run_dir / "hypotheses"
+        hypotheses.mkdir()
+
+        # Load the valid fixture and drop raw_span_refs from first support entry
+        valid_fixture = json.loads(
+            (FIXTURES_DIR / "dv-automaticity.candidates.json").read_bytes()
+        )
+        invalid_payload = json.loads(json.dumps(valid_fixture))  # Deep copy
+        # Remove raw_span_refs from the first support in the first claim
+        if (invalid_payload.get("candidates") and
+            invalid_payload["candidates"][0].get("claims") and
+            invalid_payload["candidates"][0]["claims"][0].get("supports")):
+            invalid_payload["candidates"][0]["claims"][0]["supports"][0].pop("raw_span_refs", None)
+
+        base = "dv-automaticity.candidates"
+        json_path = hypotheses / f"{base}.json"
+        md_path = hypotheses / f"{base}.md"
+        prompt_path = hypotheses / f"{base}.prompt.json"
+
+        json_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+        md_path.write_bytes((FIXTURES_DIR / f"{base}.md").read_bytes())
+        prompt_path.write_bytes((FIXTURES_DIR / f"{base}.prompt.json").read_bytes())
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", scope,
+            "--stage", stage,
+            "--substep", substep,
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "negative test — missing raw_span_refs",
+            "--run-dir", str(run_dir),
+        ])
+
+        assert rc != 0, "close should have failed for missing raw_span_refs"
+        captured = capsys.readouterr()
+        assert "raw_span_refs" in captured.err, (
+            "Expected 'raw_span_refs' in stderr for missing-raw_span_refs rejection; "
+            f"got: {captured.err!r}"
+        )
+
+    def test_hypothesis_candidate_missing_by_iv_level_rejected(self, tmp_path, capsys):
+        """Negative test: dropping by_iv_level from sample_summary is rejected at schema validation."""
+        scope = "dv-automaticity"
+        stage = "hypothesis"
+        substep = "candidate_drafting"
+        transcript_id = "p1s1"
+
+        run_dir = _setup_cross_run_dir(
+            tmp_path,
+            seed_prereqs={
+                scope: {
+                    stage: {
+                        "evidence_extraction": {"status": "done"},
+                    }
+                }
+            },
+        )
+        _setup_transcript_files(run_dir, transcript_id, _FIXTURE_RAW_TEXT)
+
+        hypotheses = run_dir / "hypotheses"
+        hypotheses.mkdir()
+
+        # Load the valid fixture and drop by_iv_level from sample_summary
+        valid_fixture = json.loads(
+            (FIXTURES_DIR / "dv-automaticity.candidates.json").read_bytes()
+        )
+        invalid_payload = json.loads(json.dumps(valid_fixture))  # Deep copy
+        # Remove by_iv_level from sample_summary in the first candidate
+        if invalid_payload.get("candidates") and invalid_payload["candidates"][0].get("sample_summary"):
+            invalid_payload["candidates"][0]["sample_summary"].pop("by_iv_level", None)
+
+        base = "dv-automaticity.candidates"
+        json_path = hypotheses / f"{base}.json"
+        md_path = hypotheses / f"{base}.md"
+        prompt_path = hypotheses / f"{base}.prompt.json"
+
+        json_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+        md_path.write_bytes((FIXTURES_DIR / f"{base}.md").read_bytes())
+        prompt_path.write_bytes((FIXTURES_DIR / f"{base}.prompt.json").read_bytes())
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", scope,
+            "--stage", stage,
+            "--substep", substep,
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "negative test — missing by_iv_level",
+            "--run-dir", str(run_dir),
+        ])
+
+        assert rc != 0, "close should have failed for missing by_iv_level"
+        captured = capsys.readouterr()
+        assert "by_iv_level" in captured.err, (
+            "Expected 'by_iv_level' in stderr for missing-by_iv_level rejection; "
+            f"got: {captured.err!r}"
+        )
