@@ -1,12 +1,11 @@
 ---
 name: mpi-transcript-prep
-description: Use when running /mpi transcript-prep — validates and normalises transcript files; strips BOM, fixes spacing, confirms utterance numbering; updates manifest stage status to done
+description: Use when running /mpi transcript-prep — validates and normalises transcript files; strips BOM, fixes spacing, confirms utterance numbering
 user-invocable: false
 ---
 # mpi-transcript-prep
 
-Validate and normalise one or more transcript files. Updates `.mpi/project.json` stage
-`transcript_prep` to `done` for each successfully processed transcript.
+Validate and normalise one or more transcript files.
 
 ## Input
 
@@ -46,7 +45,7 @@ Instead it:
 - File not found: `ERROR [pNsN]: transcript file not found at <path>`
 - Unrecognisable speaker label (warn, not error): `WARN [pNsN]: line N: unrecognised speaker label pattern`
 
-On ERROR, do NOT update manifest — leave stage as `pending`. On WARN, proceed and update manifest.
+On ERROR, the close will fail; leave stage as `pending`. On WARN, proceed.
 
 ## Output
 
@@ -63,9 +62,7 @@ Report per-transcript: `✓ pNsN: transcript cleaned (N warnings)`
    c. Validate header (line 1)
    d. Normalise whitespace and speaker labels
    e. Write cleaned content back
-   f. Update manifest stage to `done` (or leave `pending` on ERROR)
-3. Write updated manifest
-4. Print summary report
+3. Print summary report
 
 ## Closure (mandatory)
 
