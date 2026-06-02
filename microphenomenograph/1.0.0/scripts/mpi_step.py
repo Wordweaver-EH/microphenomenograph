@@ -1207,10 +1207,13 @@ def cmd_close(args: argparse.Namespace) -> int:
 
     # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
     if args.stage == "diachronic" and args.substep == "criteria_revision":
-        # Check if any downstream substeps are 'done' — if so, cascade reset them
+        # Check if any downstream substeps are 'done' — if so, cascade reset them.
+        # Re-load the just-committed manifest (contains the criteria_revision status=done).
         reload_manifest = _load_manifest(run_dir)
-        # We need to check if ANY downstream substep is done before deciding to cascade
-        # The cascade function handles the check internally
+        superseded_before = len(list(
+            (run_dir / "analyses" / "_superseded").iterdir()
+        )) if (run_dir / "analyses" / "_superseded").exists() else 0
+
         updated_manifest = _cascade_reset(
             run_dir=run_dir,
             scope=args.scope,
@@ -1220,23 +1223,26 @@ def cmd_close(args: argparse.Namespace) -> int:
             actor=args.actor,
             actor_kind=getattr(args, "actor_kind", "subagent"),
         )
-        # Save the updated manifest if cascade made changes
-        if updated_manifest is not reload_manifest or True:
-            # Always save (cascade_reset may have modified the manifest in-place)
+
+        # Check if cascade actually reset anything (new _superseded dir created)
+        superseded_after = len(list(
+            (run_dir / "analyses" / "_superseded").iterdir()
+        )) if (run_dir / "analyses" / "_superseded").exists() else 0
+
+        if superseded_after > superseded_before:
+            # Cascade produced changes — save manifest and commit
             _save_manifest(run_dir, updated_manifest)
-            # Commit the updated manifest if cascade produced changes
             r_cascade_add = _git(
-                ["add", str(run_dir / ".mpi" / "project.json"), str(audit_path)],
+                ["add", "--all"],
                 cwd=run_dir, check=False,
             )
             if r_cascade_add.returncode == 0:
-                r_cascade_commit = _git(
+                _git(
                     ["commit", "-m",
                      f"mpi: cascade reset after criteria_revision re-close {close_id[:7]}"],
                     cwd=run_dir, check=False,
                 )
-                # Non-fatal: if nothing to commit, that's fine
-                _ = r_cascade_commit
+                # Non-fatal: if nothing to commit (--allow-empty not needed), continue
 
     print(f"OK {args.scope} {args.stage}.{args.substep} commit={commit_sha[:7] if commit_sha else 'none'}")
     return 0
