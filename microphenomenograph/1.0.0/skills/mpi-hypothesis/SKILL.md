@@ -101,10 +101,23 @@ Generated from global synchronic analysis of N participants.
 
 If no patterns: write the "no hypotheses" output above.
 
-## Manifest update
+## Closure (mandatory)
 
-```json
-"hypothesis": { "status": "done", "output_path": "analyses/hypotheses.md" }
+Each hypothesis substep closes its own four-part transaction via `mpi_step.py close`.
+All three are LLM substeps; `mpi-cross-analyst` owns persistence for all.
+
+| Substep | Actor | Artifacts | Scope | Notes |
+|---------|-------|-----------|-------|-------|
+| `hypothesis.evidence_extraction` | mpi-cross-analyst (LLM) | `hypotheses/dv-<focus>.evidence.{json,md,prompt.json}` | `dv-<focus>` | One per DV focus; gathers pattern variations from all upstream sources |
+| `hypothesis.candidate_drafting` | mpi-cross-analyst (LLM) | `hypotheses/dv-<focus>.candidates.{json,md,prompt.json}` | `dv-<focus>` | Drafts candidate mechanism hypotheses with claim-level evidence + `raw_span_refs`; mandatory `disclaimer` field |
+| `hypothesis.weak_evidence_review` | mpi-cross-analyst (LLM) | `hypotheses/review_summary.{json,md,prompt.json}` | `global` | Flags thin-support hypotheses and unsupported causal language |
+
+**Prerequisite gate:** `hypothesis.evidence_extraction` is blocked until `generic_diachronic.*`, `generic_synchronic.*`, AND `global_synchronic.*` are all `done`.
+
+**Disclaimer mandate:** Every `hypothesis.candidate_drafting` artifact MUST carry this verbatim field:
 ```
+"disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."
+```
+The schema validator enforces this field's presence.
 
-Commit if yolo: `git commit -m "mpi: hypothesis generation"`
+**Commit message format:** `mpi: mpi-cross-analyst hypothesis.<substep> <scope> (<N>units <K>flagged)`
