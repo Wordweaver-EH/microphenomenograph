@@ -184,7 +184,7 @@ class TestAC6_3_ClosureSubsections:
             content = skill_md.read_text(encoding="utf-8")
             assert (
                 "## Closure (mandatory)" in content
-            ), f"mpi-{skill_name} SKILL.md is missing '## Closure (mandatory)' heading"
+            ), f"{skill_name} SKILL.md is missing '## Closure (mandatory)' heading"
 
 
 class TestAC6_4_ReadOnlySkillDeclaration:
@@ -281,6 +281,28 @@ class TestAC7_1_OldHandwrittenContractsRemoved:
             assert (
                 'git commit -m "mpi:' not in pre_closure
             ), f"{skill_name}/SKILL.md contains hand-crafted git commit outside Closure section"
+
+    def test_no_update_manifest_prose_outside_closure(self):
+        """Assert no SKILL.md contains 'Update manifest' prose outside Closure section."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            pre_closure = self._pre_closure_content(content)
+            assert (
+                "Update manifest" not in pre_closure
+            ), f"{skill_name}/SKILL.md contains 'Update manifest' prose outside Closure section"
+
+    def test_no_commit_if_yolo_prose_outside_closure(self):
+        """Assert no SKILL.md contains 'commit if yolo' prose outside Closure section."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            pre_closure = self._pre_closure_content(content)
+            assert (
+                "commit if yolo" not in pre_closure
+            ), f"{skill_name}/SKILL.md contains 'commit if yolo' prose outside Closure section"
 
 
 class TestAC7_3_KappaWarningThreshold:

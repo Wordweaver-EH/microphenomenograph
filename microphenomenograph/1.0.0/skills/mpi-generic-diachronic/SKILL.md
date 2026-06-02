@@ -39,11 +39,6 @@ Pass to `mpi-cross-analyst`:
 
 Write `analyses/generic-diachronic.md`.
 
-Update manifest:
-```json
-"generic_diachronic": { "status": "done", "output_path": "analyses/generic-diachronic.md" }
-```
-
 **Verifies:** microphenomenograph.AC5.1
 
 ## Closure (mandatory)

@@ -50,10 +50,7 @@ On ERROR, do NOT update manifest — leave stage as `pending`. On WARN, proceed 
 
 ## Output
 
-Write cleaned transcript back to the same path (overwrite). Then update manifest:
-```json
-"transcript_prep": { "status": "done", "output_path": "<same transcript path>" }
-```
+Write cleaned transcript back to the same path (overwrite).
 
 Report per-transcript: `✓ pNsN: transcript cleaned (N warnings)`
 

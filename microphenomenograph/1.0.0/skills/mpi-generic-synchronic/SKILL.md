@@ -11,7 +11,7 @@ Run cross-participant generic synchronic aggregation. Requires ALL participants 
 Invoke `mpi-cross-analyst` with task type `generic_synchronic`, passing all
 `analyses/pNsN-synchronic.md` files with their score category info.
 
-Write `analyses/generic-synchronic.md`. Update manifest and commit if yolo.
+Write `analyses/generic-synchronic.md`.
 
 ## Closure (mandatory)
 

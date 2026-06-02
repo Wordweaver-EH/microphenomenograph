@@ -59,3 +59,5 @@ python scripts/mpi_step.py close \
 The `--status read` flag causes `mpi_step.py` to emit a `stage_phase: read` audit event
 without writing any artifact, mutating the manifest, or creating a git commit. This keeps
 the audit trail complete even for read-only operations.
+
+**Precondition:** `.mpi/audit.jsonl` must exist (run is initialized). On a fresh directory without prior initialization, `mpi_step.py close --status read` exits 1 with `audit_not_found`.
