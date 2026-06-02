@@ -44,6 +44,20 @@ Update manifest:
 "generic_diachronic": { "status": "done", "output_path": "analyses/generic-diachronic.md" }
 ```
 
-Commit if yolo mode: `git commit -m "mpi: generic-diachronic analysis"`
-
 **Verifies:** microphenomenograph.AC5.1
+
+## Closure (mandatory)
+
+Each generic-diachronic substep closes its own four-part transaction via `mpi_step.py close`.
+The orchestrator closes `participant_row_assembly`; `mpi-cross-analyst` closes the three LLM substeps.
+
+| Substep | Actor | Artifacts | Scope | Notes |
+|---------|-------|-----------|-------|-------|
+| `generic_diachronic.participant_row_assembly` | orchestrator | `event<E>-cat-<C>-generic_diachronic.participant_row_assembly.{json,md}` | `event<E>-cat-<C>` | Mechanical reshape; no LLM, no prompt artifact |
+| `generic_diachronic.idu_similarity_grouping` | mpi-cross-analyst (LLM) | `event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.{json,md,prompt.json}` | `event<E>-cat-<C>` | LLM analytic judgment; colour/group label per IDU cell with rationale |
+| `generic_diachronic.pattern_identification` | mpi-cross-analyst (LLM) | `event<E>-cat-<C>-generic_diachronic.pattern_identification.{json,md,prompt.json}` | `event<E>-cat-<C>` | Extracts common ordered patterns across IV-grouped rows |
+| `generic_diachronic.cross_iv_contrast` | mpi-cross-analyst (LLM) | `event<E>-cat-<C>-generic_diachronic.cross_iv_contrast.{json,md,prompt.json}` | `event<E>-cat-<C>` | Explicit comparison of how patterns differ by IV level |
+
+**Prerequisite gate:** `generic_diachronic.*` is blocked until all transcripts for the event have `diachronic.*` and `synchronic.*` all `done` with no pending `temporal_order_within_idu` or `concurrent_with_adjacent_idu` flags. The helper enforces this via `prereq_unsatisfied`.
+
+**Commit message format:** `mpi: <actor> generic_diachronic.<substep> event<E>-cat-<C> (<N>units <K>flagged)`
