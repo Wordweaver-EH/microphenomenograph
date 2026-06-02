@@ -360,6 +360,12 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                                                     ["transcript_id", "utterance_number", "byte_start",
                                                      "byte_end", "raw_excerpt"],
                                                     ref_prefix))
+                                            else:
+                                                ref_prefix = f"{ev_prefix}.raw_span_refs[{m}]"
+                                                errors.append(SchemaError(ref_prefix, "must be an object"))
+                                else:
+                                    ev_prefix = f"{cl_prefix}.{evidence_type}[{k}]"
+                                    errors.append(SchemaError(ev_prefix, "must be an object"))
     return errors
 
 
