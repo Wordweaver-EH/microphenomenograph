@@ -103,22 +103,13 @@ If ALL IDUs for this participant were routed to the review queue (every IDU had
 
 This enables `/mpi status` to surface participants that need full human review before proceeding.
 
-## Append to reasoning log
-
-Append to `.mpi/reasoning.log`:
-
-```
-[<ISO timestamp>] pNsN diachronic: <reasoning_summary>. N IDUs identified. K flagged for review.
-```
-
 ## Mode handling
 
 - **Assisted:** After completing one participant, show the output table to the user and
   ask for confirmation before proceeding to the next. If user rejects, re-run ONLY that
   participant's analysis (do not re-run others).
 - **Yolo:** Process all pending participants in parallel (multiple mpi-analyst subagent
-  calls in a single turn). Commit each result as it completes:
-  `git add analyses/pNsN-diachronic.md && git commit -m "mpi: pNsN diachronic analysis"`
+  calls in a single turn). Each participant's close is handled via `mpi_step.py close`.
 
 **Verifies:** microphenomenograph.AC3.1, microphenomenograph.AC3.2, microphenomenograph.AC3.3, microphenomenograph.AC3.4, microphenomenograph.AC3.5
 

@@ -63,11 +63,6 @@ Note: **Utterance Numbers appear only on the first ISU row** for each IDU group;
 
 If ALL ISUs for this participant were routed to review queue, set status to `"flagged"` (same logic as diachronic).
 
-Append to `.mpi/reasoning.log`:
-```
-[<timestamp>] pNsN synchronic: <reasoning_summary>. N ISU groups identified. K flagged.
-```
-
 ## Mode handling
 
 Same as mpi-diachronic (assisted/yolo).

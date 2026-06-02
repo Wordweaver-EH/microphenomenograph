@@ -159,6 +159,130 @@ class TestAC3_6_Phase2Exclusion:
         ), "mpi-synchronic SKILL.md should mention phase2"
 
 
+class TestAC6_3_ClosureSubsections:
+    """AC6.3: Every SKILL.md has a Closure (mandatory) subsection."""
+
+    SKILLS_WITH_CLOSURE = [
+        "mpi-init",
+        "mpi-transcript-prep",
+        "mpi-diachronic",
+        "mpi-synchronic",
+        "mpi-generic-diachronic",
+        "mpi-generic-synchronic",
+        "mpi-global-synchronic",
+        "mpi-hypothesis",
+        "mpi-irr",
+        "mpi-status",
+    ]
+
+    def test_all_closure_subsections_present(self):
+        """Assert each SKILL.md contains ## Closure (mandatory) heading."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_WITH_CLOSURE:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            assert skill_md.exists(), f"SKILL.md not found for {skill_name}"
+            content = skill_md.read_text(encoding="utf-8")
+            assert (
+                "## Closure (mandatory)" in content
+            ), f"mpi-{skill_name} SKILL.md is missing '## Closure (mandatory)' heading"
+
+
+class TestAC6_4_ReadOnlySkillDeclaration:
+    """AC6.4: Read-only skills explicitly declare no artifact close and stage_phase: read."""
+
+    def test_mpi_status_declares_read_only(self):
+        """Assert mpi-status/SKILL.md contains 'read-only' declaration."""
+        skill_md = PLUGIN_ROOT / "skills" / "mpi-status" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+        assert (
+            "read-only" in content.lower()
+        ), "mpi-status/SKILL.md should declare itself a read-only skill"
+
+    def test_mpi_status_declares_stage_phase_read(self):
+        """Assert mpi-status/SKILL.md contains 'stage_phase: read'."""
+        skill_md = PLUGIN_ROOT / "skills" / "mpi-status" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+        assert (
+            "stage_phase: read" in content
+        ), "mpi-status/SKILL.md should declare 'stage_phase: read' for trace continuity"
+
+    def test_mpi_irr_is_not_read_only(self):
+        """Assert mpi-irr/SKILL.md explicitly states it is NOT read-only."""
+        skill_md = PLUGIN_ROOT / "skills" / "mpi-irr" / "SKILL.md"
+        content = skill_md.read_text(encoding="utf-8")
+        assert (
+            "NOT a read-only skill" in content
+        ), "mpi-irr/SKILL.md should clarify it is NOT a read-only skill"
+
+
+class TestAC7_1_OldHandwrittenContractsRemoved:
+    """AC7.1: No SKILL.md hand-specifies manifest mutation prose, log line format, or git commit format."""
+
+    SKILLS_TO_CHECK = [
+        "mpi-init",
+        "mpi-transcript-prep",
+        "mpi-diachronic",
+        "mpi-synchronic",
+        "mpi-generic-diachronic",
+        "mpi-generic-synchronic",
+        "mpi-global-synchronic",
+        "mpi-hypothesis",
+        "mpi-irr",
+        "mpi-status",
+    ]
+
+    def _pre_closure_content(self, content: str) -> str:
+        """Return the content before the ## Closure (mandatory) section."""
+        marker = "## Closure (mandatory)"
+        idx = content.find(marker)
+        if idx == -1:
+            return content
+        return content[:idx]
+
+    def test_no_os_replace(self):
+        """Assert no SKILL.md contains 'os.replace' (legacy atomic-write pattern)."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            assert (
+                "os.replace" not in content
+            ), f"{skill_name}/SKILL.md contains 'os.replace' (legacy atomic-write prose)"
+
+    def test_no_project_json_tmp(self):
+        """Assert no SKILL.md contains 'project.json.tmp' (legacy atomic-write pattern)."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            assert (
+                "project.json.tmp" not in content
+            ), f"{skill_name}/SKILL.md contains 'project.json.tmp' (legacy manifest mutation prose)"
+
+    def test_no_log_line_format_prose(self):
+        """Assert no SKILL.md contains log-line format prose outside a Closure section."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        # The old pattern was: [<ISO timestamp>] or [<timestamp>] in a code block describing log format
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            pre_closure = self._pre_closure_content(content)
+            assert (
+                "Append to `.mpi/reasoning.log`" not in pre_closure
+            ), f"{skill_name}/SKILL.md contains reasoning.log format prose outside Closure section"
+
+    def test_no_hand_crafted_git_commit_outside_closure(self):
+        """Assert no SKILL.md contains hand-crafted 'git commit -m \"mpi:' lines outside Closure."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.SKILLS_TO_CHECK:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            content = skill_md.read_text(encoding="utf-8")
+            pre_closure = self._pre_closure_content(content)
+            assert (
+                'git commit -m "mpi:' not in pre_closure
+            ), f"{skill_name}/SKILL.md contains hand-crafted git commit outside Closure section"
+
+
 class TestAC7_3_KappaWarningThreshold:
     """AC7.3: Kappa < 0.61 triggers warning and exit code 2."""
 

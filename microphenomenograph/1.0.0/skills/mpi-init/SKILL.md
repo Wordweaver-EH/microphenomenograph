@@ -175,8 +175,7 @@ This means running init twice never resets completed work.
 6. For each file, read line 1 and parse the header regex.
    - On parse failure: print error and skip this file (do not abort entire run).
 7. Build the participant entry (new or merge with existing per idempotency rules).
-8. Atomically write manifest: `RUN_DIR/.mpi/project.json.tmp` → rename to
-   `RUN_DIR/.mpi/project.json`.
+8. Write manifest via `mpi_step.py close` (atomic write handled by the helper).
 9. Report: "Initialised N participants in `<RUN_DIR>`. M already had completed stages
    (preserved). Run subsequent /mpi commands from `<RUN_DIR>`."
 
