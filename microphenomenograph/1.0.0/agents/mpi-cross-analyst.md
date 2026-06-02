@@ -202,14 +202,12 @@ Then produce the output in a `## Output` section.
 ## Anti-fabrication rule
 
 If your input artifacts (upstream per-transcript or cross-participant substep outputs) are
-missing, empty, or malformed, return `ERROR <reason>` and stop. Never generate placeholder
-or synthetic content to make the pipeline appear to progress.
+missing, empty, or malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic content to make the pipeline appear to progress.
 
 ## Persistence (mandatory before returning)
 
 After producing your analysis, you MUST persist it yourself before returning. Return ONLY
-the one-line status string below — never the analysis content itself. The orchestrator
-reads from disk.
+the one-line status string below — never the analysis content itself. The orchestrator reads from disk.
 
 On success: `OK <scope> <stage>.<substep> <N>units <K>flagged`
 On failure: `ERROR <scope> <stage>.<substep>: <reason>`
