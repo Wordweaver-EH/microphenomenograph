@@ -1,0 +1,41 @@
+{
+  "dv_focus": "automaticity",
+  "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such.",
+  "candidates": [
+    {
+      "hypothesis": "Higher hypnotic suggestibility is associated with greater automaticity in ideomotor responses.",
+      "claims": [
+        {
+          "claim_text": "Participants in the high-suggestibility condition reported less deliberate effort during movement.",
+          "supports": [
+            {
+              "source_artifact": "analyses/event1-cat-high-generic_diachronic.idu_similarity_grouping.json",
+              "raw_span_refs": [
+                {
+                  "transcript_id": "p1s1",
+                  "utterance_number": 1,
+                  "byte_start": 0,
+                  "byte_end": 20,
+                  "raw_excerpt": "I noticed something."
+                }
+              ]
+            }
+          ],
+          "contradicts": [],
+          "ambiguous": [],
+          "n_transcripts": 1,
+          "n_iv_levels_covered": 1,
+          "uncertainty_language": "associated with",
+          "negative_cases": []
+        }
+      ],
+      "sample_summary": {
+        "by_iv_level": {
+          "low": 0,
+          "moderate": 0,
+          "high": 1
+        }
+      }
+    }
+  ]
+}

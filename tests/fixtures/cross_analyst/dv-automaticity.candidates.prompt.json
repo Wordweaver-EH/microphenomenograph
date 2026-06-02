@@ -1,0 +1,45 @@
+{
+  "schema_version": "2",
+  "actor": {
+    "kind": "subagent",
+    "name": "mpi-cross-analyst",
+    "agent_file_sha256": "fakefakefakefake",
+    "agent_file_path": "agents/mpi-cross-analyst.md"
+  },
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "provider": "anthropic"
+  },
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": null,
+    "max_tokens": 8192,
+    "seed": null,
+    "stop_sequences": []
+  },
+  "stage": "hypothesis",
+  "substep": "candidate_drafting",
+  "scope": "dv-automaticity",
+  "prompt": {
+    "system": "You are mpi-cross-analyst.",
+    "messages": [],
+    "tools_available": []
+  },
+  "response": {
+    "raw_text": "Candidate drafting complete.",
+    "tool_calls": [],
+    "parsed_units_path": "hypotheses/dv-automaticity.candidates.json"
+  },
+  "metadata": {
+    "finish_reason": "end_turn",
+    "usage": {
+      "input_tokens": 300,
+      "output_tokens": 120,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "duration_ms": 1800,
+    "timestamp": "2026-06-02T11:00:00Z"
+  }
+}

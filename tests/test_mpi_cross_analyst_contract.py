@@ -332,3 +332,144 @@ class TestAC6_2_GenericDiachronicFixtureClose:
         )
         assert substep_entry.get("expected_action") == "git_commit_succeeded"
 
+
+# ---------------------------------------------------------------------------
+# Task 4: E2E fixture close test — hypothesis.candidate_drafting
+# Verifies: AC23.1, AC23.2, AC23.5, AC28.5
+# ---------------------------------------------------------------------------
+
+class TestAC23_1_HypothesisCandidateFixtureClose:
+    """
+    AC23.1, AC23.2, AC23.5, AC28.5: End-to-end fixture close for
+    hypothesis.candidate_drafting via mpi-cross-analyst.
+
+    Includes a negative test: a fixture missing the `disclaimer` field is rejected.
+
+    # TODO Phase 11 Task 6: add span_excerpt_mismatch test
+    """
+
+    def test_hypothesis_candidate_fixture_close(self, tmp_path):
+        scope = "dv-automaticity"
+        stage = "hypothesis"
+        substep = "candidate_drafting"
+        transcript_id = "p1s1"
+
+        # Seed the prerequisite (evidence_extraction must be done)
+        run_dir = _setup_cross_run_dir(
+            tmp_path,
+            seed_prereqs={
+                scope: {
+                    stage: {
+                        "evidence_extraction": {"status": "done"},
+                    }
+                }
+            },
+        )
+
+        # Set up transcript raw file and offset registry (same raw text as Task 3)
+        _setup_transcript_files(run_dir, transcript_id, _FIXTURE_RAW_TEXT)
+
+        # Copy fixture files into hypotheses/
+        hypotheses = run_dir / "hypotheses"
+        hypotheses.mkdir()
+
+        base = f"{scope}.candidates"
+        json_path = hypotheses / f"{base}.json"
+        md_path = hypotheses / f"{base}.md"
+        prompt_path = hypotheses / f"{base}.prompt.json"
+
+        json_path.write_bytes((FIXTURES_DIR / f"{base}.json").read_bytes())
+        md_path.write_bytes((FIXTURES_DIR / f"{base}.md").read_bytes())
+        prompt_path.write_bytes((FIXTURES_DIR / f"{base}.prompt.json").read_bytes())
+
+        # Call mpi_step.py close
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", scope,
+            "--stage", stage,
+            "--substep", substep,
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "fixture close hypothesis candidates",
+            "--run-dir", str(run_dir),
+        ])
+
+        assert rc == 0, f"mpi_step.py close returned {rc}"
+
+        # Verify audit.jsonl has git_commit_succeeded with matching close_id
+        audit_lines = (run_dir / ".mpi" / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+        events = [json.loads(ln) for ln in audit_lines if ln.strip()]
+
+        attempted = [e for e in events if e.get("event", {}).get("action") == "close_attempted"]
+        assert attempted, "No close_attempted event found in audit.jsonl"
+        close_id = attempted[-1]["mpi"]["close_id"]
+
+        commits = [
+            e for e in events
+            if e.get("event", {}).get("action") == "git_commit_succeeded"
+            and e["mpi"]["close_id"] == close_id
+        ]
+        assert commits, f"No git_commit_succeeded with close_id={close_id} in audit.jsonl"
+
+    def test_hypothesis_candidate_missing_disclaimer_rejected(self, tmp_path, capsys):
+        """Negative test: fixture missing the disclaimer field is rejected at schema validation."""
+        scope = "dv-automaticity"
+        stage = "hypothesis"
+        substep = "candidate_drafting"
+        transcript_id = "p1s1"
+
+        run_dir = _setup_cross_run_dir(
+            tmp_path,
+            seed_prereqs={
+                scope: {
+                    stage: {
+                        "evidence_extraction": {"status": "done"},
+                    }
+                }
+            },
+        )
+        _setup_transcript_files(run_dir, transcript_id, _FIXTURE_RAW_TEXT)
+
+        hypotheses = run_dir / "hypotheses"
+        hypotheses.mkdir()
+
+        # Load the valid fixture and pop the disclaimer to create an invalid payload
+        valid_fixture = json.loads(
+            (FIXTURES_DIR / "dv-automaticity.candidates.json").read_bytes()
+        )
+        invalid_payload = {k: v for k, v in valid_fixture.items() if k != "disclaimer"}
+
+        base = "dv-automaticity.candidates"
+        json_path = hypotheses / f"{base}.json"
+        md_path = hypotheses / f"{base}.md"
+        prompt_path = hypotheses / f"{base}.prompt.json"
+
+        json_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+        md_path.write_bytes((FIXTURES_DIR / f"{base}.md").read_bytes())
+        prompt_path.write_bytes((FIXTURES_DIR / f"{base}.prompt.json").read_bytes())
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", scope,
+            "--stage", stage,
+            "--substep", substep,
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "negative test — missing disclaimer",
+            "--run-dir", str(run_dir),
+        ])
+
+        assert rc != 0, "close should have failed for missing disclaimer"
+        captured = capsys.readouterr()
+        assert "disclaimer" in captured.err, (
+            "Expected 'disclaimer' in stderr for missing-disclaimer rejection; "
+            f"got: {captured.err!r}"
+        )
