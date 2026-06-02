@@ -1,7 +1,7 @@
 ---
 name: mpi-cross-analyst
 description: Cross-participant MPI aggregation subagent. Reads all per-participant markdown outputs for a stage, identifies common patterns across score categories, and produces grouped analyses.
-tools: Read
+tools: Read, Write, Bash
 model: sonnet
 ---
 # mpi-cross-analyst
@@ -146,6 +146,50 @@ Suggested next step: Review the global synchronic analysis for qualitative theme
 did not meet the cross-participant threshold.
 ```
 
+#### Claim-level evidence schema (mandatory for `hypothesis.candidate_drafting`)
+
+Each candidate hypothesis in your JSON output MUST follow this shape:
+```json
+{
+  "hypothesis": "<one-sentence hypothesis statement>",
+  "claims": [
+    {
+      "claim_text": "<specific claim being made>",
+      "supports": [
+        {
+          "source_artifact": "<path to upstream artifact>",
+          "raw_span_refs": [
+            {
+              "transcript_id": "p1s1",
+              "utterance_number": 12,
+              "byte_start": 0,
+              "byte_end": 80,
+              "raw_excerpt": "<verbatim excerpt from raw transcript>"
+            }
+          ]
+        }
+      ],
+      "contradicts": [],
+      "ambiguous": [],
+      "n_transcripts": "<int>",
+      "n_iv_levels_covered": "<int>",
+      "uncertainty_language": "associated with|tends to|may|...",
+      "negative_cases": [{"transcript_id": "...", "note": "..."}]
+    }
+  ],
+  "sample_summary": {
+    "by_iv_level": {"low": "<n>", "moderate": "<n>", "high": "<n>"}
+  }
+}
+```
+A claim may not close without at least one of `supports` or `contradicts` being non-empty,
+OR an explicit `not_applicable` field with rationale at the claim level.
+
+Every hypothesis output MUST carry this verbatim disclaimer as a top-level field:
+```json
+"disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."
+```
+
 ## Reasoning
 
 Before your output, write a `## Reasoning` section explaining:
@@ -154,3 +198,157 @@ Before your output, write a `## Reasoning` section explaining:
 - Participants with unusual patterns worth noting
 
 Then produce the output in a `## Output` section.
+
+## Anti-fabrication rule
+
+If your input artifacts (upstream per-transcript or cross-participant substep outputs) are
+missing, empty, or malformed, return `ERROR <reason>` and stop. Never generate placeholder
+or synthetic content to make the pipeline appear to progress.
+
+## Persistence (mandatory before returning)
+
+After producing your analysis, you MUST persist it yourself before returning. Return ONLY
+the one-line status string below — never the analysis content itself. The orchestrator
+reads from disk.
+
+On success: `OK <scope> <stage>.<substep> <N>units <K>flagged`
+On failure: `ERROR <scope> <stage>.<substep>: <reason>`
+
+### Generic diachronic substeps (per event, scope = `event<E>-cat-<C>`)
+
+Orchestrator-only assembly substeps do NOT produce a prompt artifact and are closed by
+the orchestrator, not this agent.
+
+**`generic_diachronic.idu_similarity_grouping`**
+```bash
+Write analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.json
+Write analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.md
+Write analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.prompt.json
+
+python scripts/mpi_step.py close \
+  --actor mpi-cross-analyst \
+  --stage generic_diachronic \
+  --substep idu_similarity_grouping \
+  --scope event<E>-cat-<C> \
+  --artifact analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.json \
+  --artifact analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.md \
+  --prompt-artifact analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.prompt.json \
+  --units-json analyses/event<E>-cat-<C>-generic_diachronic.idu_similarity_grouping.json \
+  --reason "IDU similarity grouping complete for event<E> cat<C>" \
+  --run-dir .
+```
+
+**`generic_diachronic.pattern_identification`** — same pattern; artifact names end in `.pattern_identification.*`.
+
+**`generic_diachronic.cross_iv_contrast`** — same pattern; artifact names end in `.cross_iv_contrast.*`.
+
+### Generic synchronic substeps
+
+**`generic_synchronic.select_generic_idus_of_interest`** (per event, scope = `event<E>`)
+```bash
+Write analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.json
+Write analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.md
+Write analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.prompt.json
+
+python scripts/mpi_step.py close \
+  --actor mpi-cross-analyst \
+  --stage generic_synchronic \
+  --substep select_generic_idus_of_interest \
+  --scope event<E> \
+  --artifact analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.json \
+  --artifact analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.md \
+  --prompt-artifact analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.prompt.json \
+  --units-json analyses/event<E>-generic_synchronic.select_generic_idus_of_interest.json \
+  --reason "Generic IDU selection complete for event<E>" \
+  --run-dir .
+```
+
+**`generic_synchronic.isu_second_level_grouping`** (per worksheet, scope = `event<E>-cat-<C>-gidu<G>`)
+Same pattern; artifact names end in `.isu_second_level_grouping.*` with scope `event<E>-cat-<C>-gidu<G>`.
+
+### Global synchronic substep
+
+**`global_synchronic`** (per generic-IDU × IV category, scope = `gidu<G>-cat-<C>`)
+```bash
+Write analyses/gidu<G>-cat-<C>-global_synchronic.json
+Write analyses/gidu<G>-cat-<C>-global_synchronic.md
+Write analyses/gidu<G>-cat-<C>-global_synchronic.prompt.json
+
+python scripts/mpi_step.py close \
+  --actor mpi-cross-analyst \
+  --stage global_synchronic \
+  --substep global_synchronic \
+  --scope gidu<G>-cat-<C> \
+  --artifact analyses/gidu<G>-cat-<C>-global_synchronic.json \
+  --artifact analyses/gidu<G>-cat-<C>-global_synchronic.md \
+  --prompt-artifact analyses/gidu<G>-cat-<C>-global_synchronic.prompt.json \
+  --units-json analyses/gidu<G>-cat-<C>-global_synchronic.json \
+  --reason "Global synchronic complete for gidu<G> cat<C>" \
+  --run-dir .
+```
+
+### Hypothesis substeps
+
+**`hypothesis.evidence_extraction`** (per DV focus, scope = `dv-<focus>`)
+```bash
+Write hypotheses/dv-<focus>.evidence.json
+Write hypotheses/dv-<focus>.evidence.md
+Write hypotheses/dv-<focus>.evidence.prompt.json
+
+python scripts/mpi_step.py close \
+  --actor mpi-cross-analyst \
+  --stage hypothesis \
+  --substep evidence_extraction \
+  --scope dv-<focus> \
+  --artifact hypotheses/dv-<focus>.evidence.json \
+  --artifact hypotheses/dv-<focus>.evidence.md \
+  --prompt-artifact hypotheses/dv-<focus>.evidence.prompt.json \
+  --units-json hypotheses/dv-<focus>.evidence.json \
+  --reason "Evidence extraction complete for DV focus <focus>" \
+  --run-dir .
+```
+
+**`hypothesis.candidate_drafting`** — same pattern; artifact names `dv-<focus>.candidates.*`.
+Scope: `dv-<focus>`. JSON must include `claims` array per candidate (see AC23.1).
+
+**`hypothesis.weak_evidence_review`** — scope: `global`; artifact names `review_summary.*`.
+```bash
+python scripts/mpi_step.py close \
+  --actor mpi-cross-analyst \
+  --stage hypothesis \
+  --substep weak_evidence_review \
+  --scope global \
+  --artifact hypotheses/review_summary.json \
+  --artifact hypotheses/review_summary.md \
+  --prompt-artifact hypotheses/review_summary.prompt.json \
+  --units-json hypotheses/review_summary.json \
+  --reason "Weak evidence review complete" \
+  --run-dir .
+```
+
+### IRR calibration substeps (LLM-driven only)
+
+**`irr_calibration.independent_analyst`** — scope mirrors the primary substep being shadowed
+(e.g., `p1s1` for diachronic; `p1s1-idu1` for synchronic). Artifacts written to
+`analyses/independent/<scope>-<stage>.<substep>.{json,md,prompt.json}`.
+
+**`irr_calibration.alignment`** — scope: `global`; artifact `analyses/irr_calibration.alignment.*`.
+
+### Span grounding requirement
+
+Every cross-participant analytic unit (GDU pattern, generic ISU, global ISU, hypothesis claim)
+MUST carry a non-empty `utterance_refs` array tracing back through the upstream per-transcript
+artifacts. For hypothesis claims, every entry in `supports`/`contradicts`/`ambiguous` MUST
+carry `raw_span_refs`:
+```json
+"raw_span_refs": [
+  {
+    "transcript_id": "p1s1",
+    "utterance_number": 3,
+    "byte_start": 142,
+    "byte_end": 198,
+    "raw_excerpt": "I noticed a heaviness in my hands"
+  }
+]
+```
+The helper rejects closes with missing or empty `utterance_refs`. There is no "uncited claim" path.
