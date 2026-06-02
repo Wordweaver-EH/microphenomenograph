@@ -1,0 +1,18 @@
+{
+  "event": "event1",
+  "idu_labels": [
+    {
+      "label": "Heightened awareness",
+      "participant_ids": ["p1s1"],
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 1,
+          "byte_start": 0,
+          "byte_end": 20,
+          "raw_excerpt": "I noticed something."
+        }
+      ]
+    }
+  ]
+}
