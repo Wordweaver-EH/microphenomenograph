@@ -305,6 +305,71 @@ class TestAC7_1_OldHandwrittenContractsRemoved:
             ), f"{skill_name}/SKILL.md contains 'commit if yolo' prose outside Closure section"
 
 
+class TestAC5_3_AntiFabrication:
+    """AC5.3: Anti-fabrication rule present in all generative files."""
+
+    GENERATIVE_SKILLS = [
+        "mpi-diachronic",
+        "mpi-synchronic",
+        "mpi-generic-diachronic",
+        "mpi-generic-synchronic",
+        "mpi-global-synchronic",
+        "mpi-hypothesis",
+    ]
+
+    NON_GENERATIVE_SKILLS = [
+        "mpi-init",
+        "mpi-transcript-prep",
+        "mpi-status",
+    ]
+
+    ANTI_FAB_STRING = "Never generate placeholder or synthetic"
+
+    def test_generative_skills_have_anti_fabrication_rule(self):
+        """Assert each generative SKILL.md contains the anti-fabrication rule."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.GENERATIVE_SKILLS:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            assert skill_md.exists(), f"SKILL.md not found for {skill_name}"
+            content = skill_md.read_text(encoding="utf-8")
+            assert self.ANTI_FAB_STRING in content, (
+                f"{skill_name}/SKILL.md is missing anti-fabrication rule "
+                f"(expected '{self.ANTI_FAB_STRING}')"
+            )
+
+    def test_mpi_analyst_has_anti_fabrication_rule(self):
+        """Assert mpi-analyst.md contains the anti-fabrication rule."""
+        agent_md = PLUGIN_ROOT / "agents" / "mpi-analyst.md"
+        assert agent_md.exists(), f"mpi-analyst.md not found at {agent_md}"
+        content = agent_md.read_text(encoding="utf-8")
+        assert self.ANTI_FAB_STRING in content, (
+            f"mpi-analyst.md is missing anti-fabrication rule "
+            f"(expected '{self.ANTI_FAB_STRING}')"
+        )
+
+    def test_mpi_cross_analyst_has_anti_fabrication_rule(self):
+        """Assert mpi-cross-analyst.md contains the anti-fabrication rule."""
+        agent_md = PLUGIN_ROOT / "agents" / "mpi-cross-analyst.md"
+        assert agent_md.exists(), f"mpi-cross-analyst.md not found at {agent_md}"
+        content = agent_md.read_text(encoding="utf-8")
+        assert self.ANTI_FAB_STRING in content, (
+            f"mpi-cross-analyst.md is missing anti-fabrication rule "
+            f"(expected '{self.ANTI_FAB_STRING}')"
+        )
+
+    def test_non_generative_skills_do_not_have_anti_fabrication_rule(self):
+        """Assert orchestrator-run skills do NOT contain the anti-fabrication rule."""
+        skills_dir = PLUGIN_ROOT / "skills"
+        for skill_name in self.NON_GENERATIVE_SKILLS:
+            skill_md = skills_dir / skill_name / "SKILL.md"
+            assert skill_md.exists(), f"SKILL.md not found for {skill_name}"
+            content = skill_md.read_text(encoding="utf-8")
+            assert self.ANTI_FAB_STRING not in content, (
+                f"{skill_name}/SKILL.md unexpectedly contains the anti-fabrication rule "
+                f"(it is an orchestrator-run skill, not a generative LLM skill)"
+            )
+
+
 class TestAC7_3_KappaWarningThreshold:
     """AC7.3: Kappa < 0.61 triggers warning and exit code 2."""
 
