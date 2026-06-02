@@ -1,0 +1,47 @@
+{
+  "schema_version": "2",
+  "actor": {
+    "kind": "subagent",
+    "name": "mpi-analyst",
+    "agent_file_sha256": "17ea8f7600bed2e6929871d7c79886f770c82e58d8197d460082895add90423a",
+    "agent_file_path": "microphenomenograph/1.0.0/agents/mpi-analyst.md"
+  },
+  "model": {
+    "id": "claude-sonnet-4-6",
+    "provider": "anthropic"
+  },
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "max_tokens": 8192
+  },
+  "prompt": {
+    "system": "You are an MPI analyst.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Analyse this transcript."
+      }
+    ],
+    "tools_available": []
+  },
+  "response": {
+    "raw_text": "## Reasoning\nAnalysis complete.\n## Output\n{}",
+    "tool_calls": [],
+    "parsed_units_path": null
+  },
+  "metadata": {
+    "finish_reason": "end_turn",
+    "usage": {
+      "input_tokens": 1234,
+      "output_tokens": 567,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0
+    },
+    "duration_ms": 2500,
+    "timestamp": "2026-06-02T10:00:00+00:00"
+  },
+  "stage": "diachronic",
+  "substep": "criteria_grouping",
+  "scope": "p1s1"
+}

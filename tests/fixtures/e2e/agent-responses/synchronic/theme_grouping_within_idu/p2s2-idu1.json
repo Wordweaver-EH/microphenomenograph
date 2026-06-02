@@ -1,0 +1,38 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p2s2",
+  "idu_name": "Minimal Response Awareness",
+  "reasoning_summary": "ISUs identified for p2s2-idu1.",
+  "isus": [
+    {
+      "isu_name": "Absent Embodied Response",
+      "criteria": "The utterances talk about nothing clear happening in response to the suggestion.",
+      "confidence": 1,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s2",
+          "utterance_number": 1,
+          "byte_start": 41,
+          "byte_end": 83,
+          "raw_excerpt": "P2: Nothing much happened if I am honest.\n"
+        }
+      ]
+    },
+    {
+      "isu_name": "Suggestion Awareness",
+      "criteria": "The utterances talk about being aware of the suggestion without any pull.",
+      "confidence": 1,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s2",
+          "utterance_number": 4,
+          "byte_start": 181,
+          "byte_end": 233,
+          "raw_excerpt": "P2: I was aware of the suggestion but felt no pull.\n"
+        }
+      ]
+    }
+  ]
+}

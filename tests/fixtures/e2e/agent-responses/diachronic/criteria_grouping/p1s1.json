@@ -1,0 +1,71 @@
+{
+  "analysis_type": "diachronic",
+  "participant": "p1s1",
+  "reasoning_summary": "Two IDUs identified for p1s1: initial response and subsequent development.",
+  "idus": [
+    {
+      "idu_number": 1,
+      "idu_name": "Initial Heaviness in Hands",
+      "moment": 1,
+      "criteria": "The utterances talk about noticing and describing heaviness in the hands.",
+      "confidence": 4,
+      "flag_for_review": false,
+      "utterance_numbers": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "hinge_to_next": "The sensation shifted from passive noticing to active involuntary movement.",
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 1,
+          "byte_start": 41,
+          "byte_end": 86,
+          "raw_excerpt": "P1: I first noticed a heaviness in my hands.\n"
+        },
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 3,
+          "byte_start": 132,
+          "byte_end": 186,
+          "raw_excerpt": "P1: It came on gradually, starting at the fingertips.\n"
+        }
+      ]
+    },
+    {
+      "idu_number": 2,
+      "idu_name": "Involuntary Hand Movement",
+      "moment": 2,
+      "criteria": "The utterances talk about the hands moving involuntarily and the surprised response.",
+      "confidence": 4,
+      "flag_for_review": false,
+      "utterance_numbers": [
+        "6",
+        "7",
+        "8",
+        "9",
+        "10"
+      ],
+      "hinge_to_next": null,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 6,
+          "byte_start": 272,
+          "byte_end": 313,
+          "raw_excerpt": "P1: My hands began to move on their own.\n"
+        },
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 9,
+          "byte_start": 386,
+          "byte_end": 426,
+          "raw_excerpt": "P1: Like watching someone else's hands.\n"
+        }
+      ]
+    }
+  ]
+}

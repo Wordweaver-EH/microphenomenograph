@@ -1,0 +1,40 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p1s1",
+  "idu_name": "Involuntary Hand Movement",
+  "reasoning_summary": "ISUs identified for p1s1-idu2.",
+  "isus": [
+    {
+      "isu_name": "Involuntary Motion",
+      "criteria": "The utterances talk about the hands moving without intentional effort.",
+      "confidence": 4,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 6,
+          "byte_start": 272,
+          "byte_end": 313,
+          "raw_excerpt": "P1: My hands began to move on their own.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Autonomic Quality"
+    },
+    {
+      "isu_name": "Detached Observation",
+      "criteria": "The utterances talk about observing the movement as if watching someone else.",
+      "confidence": 4,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 9,
+          "byte_start": 386,
+          "byte_end": 426,
+          "raw_excerpt": "P1: Like watching someone else's hands.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Autonomic Quality"
+    }
+  ]
+}

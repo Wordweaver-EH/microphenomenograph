@@ -1,0 +1,40 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p1s2",
+  "idu_name": "Passive Waiting Without Change",
+  "reasoning_summary": "ISUs identified for p1s2-idu2.",
+  "isus": [
+    {
+      "isu_name": "Stable Constancy",
+      "criteria": "The utterances talk about the sensation staying constant with no change.",
+      "confidence": 2,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s2",
+          "utterance_number": 6,
+          "byte_start": 260,
+          "byte_end": 309,
+          "raw_excerpt": "P1: It stayed fairly constant, nothing dramatic.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Temporal Quality"
+    },
+    {
+      "isu_name": "Expectant Orientation",
+      "criteria": "The utterances talk about waiting expectantly for something more to happen.",
+      "confidence": 2,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s2",
+          "utterance_number": 7,
+          "byte_start": 309,
+          "byte_end": 356,
+          "raw_excerpt": "P1: I kept expecting something more to happen.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Temporal Quality"
+    }
+  ]
+}

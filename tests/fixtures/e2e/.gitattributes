@@ -1,0 +1,3 @@
+# Force LF for transcript fixtures — byte offsets in agent-response JSONs
+# depend on LF-only line endings in these files.
+transcripts/*.txt text eol=lf

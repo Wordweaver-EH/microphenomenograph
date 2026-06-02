@@ -1,0 +1,38 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p1s2",
+  "idu_name": "Faint Tingling Onset",
+  "reasoning_summary": "ISUs identified for p1s2-idu1.",
+  "isus": [
+    {
+      "isu_name": "Mild Buzzing Quality",
+      "criteria": "The utterances talk about a faint buzzing or tingling in the fingers.",
+      "confidence": 2,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s2",
+          "utterance_number": 1,
+          "byte_start": 41,
+          "byte_end": 92,
+          "raw_excerpt": "P1: There was a faint tingling sensation at first.\n"
+        }
+      ]
+    },
+    {
+      "isu_name": "Uncertain Attribution",
+      "criteria": "The utterances talk about uncertainty whether the sensation is real or imagined.",
+      "confidence": 2,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s2",
+          "utterance_number": 4,
+          "byte_start": 176,
+          "byte_end": 218,
+          "raw_excerpt": "P1: I was not sure if I was imagining it.\n"
+        }
+      ]
+    }
+  ]
+}

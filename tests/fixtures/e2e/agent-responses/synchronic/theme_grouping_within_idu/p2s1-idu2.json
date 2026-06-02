@@ -1,0 +1,38 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p2s1",
+  "idu_name": "Peak and Guided Descent",
+  "reasoning_summary": "ISUs identified for p2s1-idu2.",
+  "isus": [
+    {
+      "isu_name": "Detachment from Limb",
+      "criteria": "The utterances talk about feeling detached from the arm.",
+      "confidence": 5,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s1",
+          "utterance_number": 7,
+          "byte_start": 319,
+          "byte_end": 365,
+          "raw_excerpt": "P2: I felt completely detached from the limb.\n"
+        }
+      ]
+    },
+    {
+      "isu_name": "Guided Return",
+      "criteria": "The utterances talk about the arm descending as if gently guided.",
+      "confidence": 5,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s1",
+          "utterance_number": 10,
+          "byte_start": 444,
+          "byte_end": 487,
+          "raw_excerpt": "P2: Then it descended as if guided gently.\n"
+        }
+      ]
+    }
+  ]
+}

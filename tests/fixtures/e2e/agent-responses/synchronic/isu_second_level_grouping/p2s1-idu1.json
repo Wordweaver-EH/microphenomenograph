@@ -1,0 +1,40 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p2s1",
+  "idu_name": "Arm Lifting Involuntarily",
+  "reasoning_summary": "ISUs identified for p2s1-idu1.",
+  "isus": [
+    {
+      "isu_name": "Effortless Lifting",
+      "criteria": "The utterances talk about the arm lifting with no sense of effort.",
+      "confidence": 5,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s1",
+          "utterance_number": 1,
+          "byte_start": 41,
+          "byte_end": 88,
+          "raw_excerpt": "P2: My arm just lifted, completely on its own.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Autonomic Quality"
+    },
+    {
+      "isu_name": "Spreading Warmth",
+      "criteria": "The utterances talk about a warm wave spreading from shoulder downward.",
+      "confidence": 5,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p2s1",
+          "utterance_number": 4,
+          "byte_start": 185,
+          "byte_end": 237,
+          "raw_excerpt": "P2: There was a warmth spreading from the shoulder.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Bodily Sensation"
+    }
+  ]
+}

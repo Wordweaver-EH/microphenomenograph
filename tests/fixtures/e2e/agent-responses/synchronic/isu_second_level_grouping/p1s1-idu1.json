@@ -1,0 +1,40 @@
+{
+  "analysis_type": "synchronic",
+  "participant": "p1s1",
+  "idu_name": "Initial Heaviness in Hands",
+  "reasoning_summary": "ISUs identified for p1s1-idu1.",
+  "isus": [
+    {
+      "isu_name": "Sense of Heaviness",
+      "criteria": "The utterances talk about a heaviness felt in the hands.",
+      "confidence": 4,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 1,
+          "byte_start": 41,
+          "byte_end": 86,
+          "raw_excerpt": "P1: I first noticed a heaviness in my hands.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Bodily Sensation"
+    },
+    {
+      "isu_name": "Gradual Onset Awareness",
+      "criteria": "The utterances talk about the gradual onset starting at the fingertips.",
+      "confidence": 3,
+      "flag_for_review": false,
+      "utterance_refs": [
+        {
+          "transcript_id": "p1s1",
+          "utterance_number": 3,
+          "byte_start": 132,
+          "byte_end": 186,
+          "raw_excerpt": "P1: It came on gradually, starting at the fingertips.\n"
+        }
+      ],
+      "isu_second_level_of_abstraction": "Bodily Sensation"
+    }
+  ]
+}
