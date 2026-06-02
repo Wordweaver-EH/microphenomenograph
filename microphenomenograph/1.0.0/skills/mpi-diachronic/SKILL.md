@@ -113,6 +113,12 @@ This enables `/mpi status` to surface participants that need full human review b
 
 **Verifies:** microphenomenograph.AC3.1, microphenomenograph.AC3.2, microphenomenograph.AC3.3, microphenomenograph.AC3.4, microphenomenograph.AC3.5
 
+## Anti-fabrication rule
+
+If your input artifacts (transcripts, upstream substep outputs) are missing, empty, or
+malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic
+content to make the pipeline appear to progress.
+
 ## Closure (mandatory)
 
 Each diachronic substep closes its own four-part transaction via `mpi_step.py close`.
@@ -127,5 +133,3 @@ The `mpi-analyst` subagent owns persistence for all three LLM substeps.
 **Commit message format:** `mpi: mpi-analyst diachronic.<substep> pNsN (<N>units <K>flagged)`
 
 **Manual-native constraint:** Diachronic does NOT include sub-phase identification (`diachronic.phases`, `diachronic.du`, `diachronic.refined_du`). Substep names follow manual_kev.md (Sheldrake & Dienes 2025) verbatim.
-
-**Anti-fabrication rule:** If transcript is missing, empty, or malformed, `mpi-analyst` returns `ERROR <reason>` and stops. Never synthesize placeholder content.

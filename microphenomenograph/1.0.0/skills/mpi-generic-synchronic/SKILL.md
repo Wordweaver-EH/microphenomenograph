@@ -13,6 +13,12 @@ Invoke `mpi-cross-analyst` with task type `generic_synchronic`, passing all
 
 Write `analyses/generic-synchronic.md`.
 
+## Anti-fabrication rule
+
+If your input artifacts (transcripts, upstream substep outputs) are missing, empty, or
+malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic
+content to make the pipeline appear to progress.
+
 ## Closure (mandatory)
 
 Each generic-synchronic substep closes its own four-part transaction via `mpi_step.py close`.

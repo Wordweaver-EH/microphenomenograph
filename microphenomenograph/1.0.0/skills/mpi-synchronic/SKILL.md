@@ -69,6 +69,12 @@ Same as mpi-diachronic (assisted/yolo).
 
 **Verifies:** microphenomenograph.AC4.1, microphenomenograph.AC4.2, microphenomenograph.AC4.3
 
+## Anti-fabrication rule
+
+If your input artifacts (transcripts, upstream substep outputs) are missing, empty, or
+malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic
+content to make the pipeline appear to progress.
+
 ## Closure (mandatory)
 
 Synchronic substeps iterate **per IDU within a transcript**, not per stage-level invocation.
@@ -83,5 +89,3 @@ Scope for each substep is `pNsN-iduN` (e.g., `p1s1-idu1`, `p1s1-idu2`).
 **Output columns (all three substeps):** `criteria` (string) | `isu_name` (string) | `isu_second_level_of_abstraction` (string or empty). These three columns are preserved as distinct fields through all downstream aggregation.
 
 **IDU-split-after-synchronic return edge:** If `theme_grouping_within_idu` flags `temporal_order_within_idu: true`, the orchestrator re-closes `diachronic.criteria_revision` for that transcript with the split context in the prompt. Manifest records `idu_split_after_synchronic` audit event linking both span_ids.
-
-**Anti-fabrication rule:** If diachronic output is missing, empty, or malformed, `mpi-analyst` returns `ERROR <reason>` and stops.

@@ -17,6 +17,12 @@ Every row in the output MUST reference source participant and suggestion.
 
 Write `analyses/global-synchronic.md`.
 
+## Anti-fabrication rule
+
+If your input artifacts (transcripts, upstream substep outputs) are missing, empty, or
+malformed, return `ERROR <reason>` and stop. Never generate placeholder or synthetic
+content to make the pipeline appear to progress.
+
 ## Closure (mandatory)
 
 The single global-synchronic substep closes its own four-part transaction via `mpi_step.py close`.
