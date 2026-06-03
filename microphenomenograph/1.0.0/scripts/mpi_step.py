@@ -174,6 +174,21 @@ def _save_manifest(run_dir: Path, manifest: dict) -> None:
     atomic_write(path, json.dumps(manifest, indent=2) + "\n")
 
 
+def _prereq_participant_key(participant: str, prereq_stage: str) -> str:
+    """
+    Derive the participant key to use when checking a prerequisite.
+
+    Synchronic closes use idu-scoped keys (e.g. 'p1s1-idu1'), but their
+    diachronic prerequisites are recorded under the transcript-level key
+    ('p1s1'). Strip the '-iduN' suffix when looking up diachronic prereqs.
+    """
+    if prereq_stage == "diachronic" and "-idu" in participant:
+        idx = participant.rfind("-idu")
+        if idx > 0:
+            return participant[:idx]
+    return participant
+
+
 def _get_substep_status(manifest: dict, participant: str, stage: str, substep: str) -> str:
     """Return status of a substep; 'pending' if not found."""
     p = manifest.get("participants", {}).get(participant, {})
@@ -1040,7 +1055,8 @@ def cmd_close(args: argparse.Namespace) -> int:
     # Check substep DAG prerequisites
     prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
     for prereq_stage, prereq_substep in prereqs:
-        status = _get_substep_status(manifest, args.participant, prereq_stage, prereq_substep)
+        prereq_participant = _prereq_participant_key(args.participant, prereq_stage)
+        status = _get_substep_status(manifest, prereq_participant, prereq_stage, prereq_substep)
         if status != "done":
             msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
                    f"must be 'done' before closing ({args.stage}, {args.substep}); "

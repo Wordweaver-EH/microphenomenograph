@@ -929,3 +929,69 @@ class TestDAGPrerequisite:
         assert _manifest_snapshot(run_dir) == before, (
             "Manifest was modified when DAG prerequisite was not met"
         )
+
+    def test_synchronic_with_real_prereq_success(self, tmp_path):
+        """
+        Synchronic close SUCCEEDS after a real diachronic.idu_naming_ordering close,
+        without manual manifest editing. This proves the _prereq_participant_key()
+        helper correctly derives the transcript-level key from the idu-scoped key.
+        """
+        run_dir = _setup_minimal_run(tmp_path)
+        analyses = run_dir / "analyses"
+
+        # Helper to copy fixture artifacts
+        def _copy_fixture(stage: str, substep: str, scope: str) -> tuple[Path, Path, Path]:
+            ar_src = _FIXTURES_DIR / "agent-responses" / stage / substep / f"{scope}.json"
+            prompt_src = _FIXTURES_DIR / "prompts" / stage / substep / f"{scope}.prompt.json"
+            json_dst = analyses / f"{scope}-{stage}.{substep}.json"
+            md_dst = analyses / f"{scope}-{stage}.{substep}.md"
+            prompt_dst = analyses / f"{scope}-{stage}.{substep}.prompt.json"
+            shutil.copy2(str(ar_src), str(json_dst))
+            md_dst.write_text(f"# {scope} {stage}.{substep}\n", encoding="utf-8")
+            shutil.copy2(str(prompt_src), str(prompt_dst))
+            return json_dst, md_dst, prompt_dst
+
+        # Close the prerequisite chain: criteria_grouping → criteria_revision → idu_naming_ordering
+        for substep in ["criteria_grouping", "criteria_revision", "idu_naming_ordering"]:
+            json_dst, md_dst, prompt_dst = _copy_fixture("diachronic", substep, _TID)
+            rc = _run_close(
+                run_dir,
+                json.loads(json_dst.read_text(encoding="utf-8")),
+                json.loads(prompt_dst.read_text(encoding="utf-8")),
+                stage="diachronic",
+                substep=substep,
+                scope=_TID,
+            )
+            assert rc == 0, f"diachronic.{substep} close failed rc={rc}"
+
+        # Now close a synchronic substep using idu-scoped participant key.
+        # The _prereq_participant_key() helper should strip '-idu1' and find
+        # the diachronic.idu_naming_ordering entry under _TID (p1s1).
+        scope = f"{_TID}-idu1"
+        json_dst, md_dst, prompt_dst = _copy_fixture(
+            "synchronic", "theme_grouping_within_idu", scope
+        )
+        # We need to call mpi_step.main directly to override --participant
+        analyses = run_dir / "analyses"
+        json_path = json_dst
+        md_path = md_dst
+        prompt_path = prompt_dst
+        args = [
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", scope,  # idu-scoped participant key
+            "--stage", "synchronic",
+            "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(json_path),
+            "--artifact", str(md_path),
+            "--prompt-artifact", str(prompt_path),
+            "--units-json", str(json_path),
+            "--reason", "DAG prerequisite positive test",
+            "--run-dir", str(run_dir),
+        ]
+        rc = mpi_step.main(args)
+        assert rc == 0, (
+            "synchronic.theme_grouping_within_idu close should succeed after "
+            "real diachronic.idu_naming_ordering close (rc={})".format(rc)
+        )

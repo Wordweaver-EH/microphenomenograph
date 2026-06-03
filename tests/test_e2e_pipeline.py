@@ -209,36 +209,13 @@ def e2e_run(tmp_path_factory):
     # Synchronic substeps per IDU.
     # --participant uses the idu-scoped key (p1s1-idu1) so the manifest stores
     # per-IDU entries separately (required by cascade_reset logic).
-    # The prerequisite (diachronic.idu_naming_ordering) is verified via the
-    # participant key; since prereqs use args.participant for lookup, we need
-    # to pre-seed each idu-scoped participant entry with the diachronic prereq.
-    # We do this by copying the done entry from the transcript-level participant.
+    # The prerequisite (diachronic.idu_naming_ordering) is satisfied by the
+    # preceding diachronic close and the helper _prereq_participant_key() in
+    # mpi_step.py, which strips the '-iduN' suffix to look up the transcript-level key.
     for tid in _TIDS:
         for idu_num in _IDU_NUMS:
             scope = f"{tid}-idu{idu_num}"
             participant_key = scope  # per-IDU manifest key
-
-            # Seed the idu-scoped participant entry with diachronic.idu_naming_ordering done.
-            # This satisfies the DAG prerequisite check without re-running the diachronic close.
-            manifest_path = run_dir / ".mpi" / "project.json"
-            current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
-            # Copy idu_naming_ordering done entry from transcript-level participant
-            tid_stages = current_manifest["participants"].get(tid, {}).get("stages", {})
-            idu_naming_done = tid_stages.get("diachronic", {}).get("substeps", {}).get(
-                "idu_naming_ordering", {}
-            )
-            current_manifest["participants"].setdefault(participant_key, {"stages": {}})
-            idu_stages = current_manifest["participants"][participant_key].setdefault(
-                "stages", {}
-            )
-            idu_stages.setdefault("diachronic", {"substeps": {}})["substeps"][
-                "idu_naming_ordering"
-            ] = dict(idu_naming_done)  # copy so it's done
-
-            manifest_path.write_text(
-                json.dumps(current_manifest, indent=2) + "\n", encoding="utf-8"
-            )
 
             for substep in _SYNCHRONIC_SUBSTEPS:
                 json_dst, md_dst, prompt_dst = _copy_synchronic(tid, idu_num, substep)
@@ -332,22 +309,20 @@ class TestAC8_2_ManifestStatus:
           synchronic: 3 substeps × 2 IDUs × 4 transcripts = 24
           Total = 36
 
-        Cascade reset only commits when downstream substeps are actually reset
-        (i.e. when artifacts are moved to _superseded/). Since the E2E fixture
-        closes in DAG order (criteria_revision before idu_naming_ordering),
-        cascade resets do occur and produce additional commits (one per transcript
-        where idu_naming_ordering or synchronic were already done).
-        Exact count depends on fixture DAG order; we verify at least 36 commits.
+        36 substep commits with no cascade commits because the fixture closes
+        in strict DAG order (all diachronic substeps for all transcripts before
+        any synchronic substeps). Since criteria_revision closes before idu_naming_ordering,
+        no downstream substeps are yet done when cascade fires, so no artifacts
+        are moved to _superseded/ and no cascade commits are produced.
         """
         r = subprocess.run(
             ["git", "log", "--oneline"],
             cwd=e2e_run, capture_output=True, text=True, check=True,
         )
         commits = [l for l in r.stdout.strip().splitlines() if l.strip()]
-        # At minimum: 36 LLM-substep commits
-        assert len(commits) >= 36, (
-            f"Expected at least 36 commits (LLM substeps), got {len(commits)}. "
-            f"Log:\n{r.stdout}"
+        assert len(commits) == 36, (
+            f"Expected exactly 36 commits (12 diachronic + 24 synchronic), "
+            f"got {len(commits)}. Log:\n{r.stdout}"
         )
 
 
@@ -853,24 +828,6 @@ class TestAC30_CascadeReset:
         for idu_num in _IDU_NUMS:
             scope = f"{tid}-idu{idu_num}"
             participant_key = scope
-
-            # Seed idu-scoped diachronic prereq
-            manifest_path = run_dir / ".mpi" / "project.json"
-            current_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            tid_stages = current_manifest["participants"].get(tid, {}).get("stages", {})
-            idu_naming_done = tid_stages.get("diachronic", {}).get("substeps", {}).get(
-                "idu_naming_ordering", {}
-            )
-            current_manifest["participants"].setdefault(participant_key, {"stages": {}})
-            idu_stages = current_manifest["participants"][participant_key].setdefault(
-                "stages", {}
-            )
-            idu_stages.setdefault("diachronic", {"substeps": {}})["substeps"][
-                "idu_naming_ordering"
-            ] = dict(idu_naming_done)
-            manifest_path.write_text(
-                json.dumps(current_manifest, indent=2) + "\n", encoding="utf-8"
-            )
 
             for substep in _SYNCHRONIC_SUBSTEPS:
                 rc = _do_close(participant_key, "synchronic", substep, scope)
