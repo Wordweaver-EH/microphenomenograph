@@ -76,21 +76,24 @@ class OrchestrationSpec:
 
     @staticmethod
     def validate_reasoning_log_entry(entry: str) -> bool:
-        """Validate reasoning log entry format: [ISO timestamp] actor participant stage.substep: ...
+        """Validate reasoning log entry format: [ISO timestamp] actor participant stage[.substep]: ...
 
-        Production format (from mpi_step.py render verb):
+        Production format (from mpi_step.py render verb, lines 1348-1357):
           [{ts}] {actor_name} {participant} {stage}.{substep}: {reason}[. {N} units[, {K} flagged]][ commit=<sha7>]
 
-        Example:
+        When substep is empty (e.g. orchestration/lease events), the stage token is dotless:
+          [{ts}] {actor_name} {participant} {stage}: {reason}
+
+        Example (analytic substep close):
           [2026-06-03T12:34:56.123456+00:00] mpi-analyst p1s1 diachronic.criteria_grouping: Grouped IDUs. 3 units commit=abc1234
         """
-        # Format: [timestamp] actor participant stage.substep: detail
+        # Format: [timestamp] actor participant stage[.substep]: detail
         # - timestamp: ISO 8601 with any timezone representation
         # - actor: non-whitespace token (e.g. mpi-analyst)
         # - participant: non-whitespace token (e.g. p1s1, p1s1-idu1)
-        # - stage.substep: word.word
+        # - stage[.substep]: word or word.word (substep is optional for orchestration events)
         # - detail: non-empty
-        pattern = r'^\[[\dT:+.\-Z]+\]\s+\S+\s+\S+\s+[a-z_]+\.[a-z_]+:\s+.+'
+        pattern = r'^\[[\dT:+.\-Z]+\]\s+\S+\s+\S+\s+[a-z_]+(?:\.[a-z_]+)?:\s+.+'
         return bool(re.match(pattern, entry))
 
 
@@ -418,11 +421,12 @@ class ManifestOrchestratorTester:
         print("\n[Test E] Reasoning Log Entry Format")
         print("-" * 80)
 
-        # Valid log entries (format: [timestamp] actor participant stage.substep: detail)
+        # Valid log entries: analytic substep closes with stage.substep form.
+        # Note: orchestration/lease events (dotless stage) are out of scope for this validator.
         valid_entries = [
             "[2026-06-03T14:23:45.123456+00:00] mpi-analyst p1s1 diachronic.criteria_grouping: Grouped IDUs. 5 units commit=abc1234",
             "[2026-06-03T14:23:46.000000+00:00] mpi-analyst p1s2 synchronic.theme_grouping_within_idu: Grouped themes. 8 units commit=def5678",
-            "[2026-06-03T14:24:00.999999+00:00] mpi-cross-analyst generic_diachronic idu_similarity_grouping.idu_similarity_grouping: Grouped. 12 units commit=ghi9012",
+            "[2026-06-03T14:24:00.999999+00:00] mpi-cross-analyst event1 generic_diachronic.idu_similarity_grouping: Grouped. 12 units commit=ghi9012",
         ]
 
         for entry in valid_entries:
@@ -434,10 +438,10 @@ class ManifestOrchestratorTester:
 
         # Invalid entries
         invalid_entries = [
-            "mpi-analyst p1s1 diachronic.criteria_grouping: Missing timestamp",  # No timestamp
+            "mpi-analyst p1s1 diachronic.criteria_grouping: Missing timestamp",  # No timestamp bracket
             "[2026-05-17 14:23:45Z] mpi-analyst p1s1 diachronic.criteria_grouping: Bad timestamp",  # Space in timestamp
-            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1: Missing stage.substep",  # No stage.substep
-            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1 diachronic_only: Missing dot separator",  # No dot
+            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1: Missing stage token",  # No stage after participant
+            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1 Diachronic.criteria_grouping: Uppercase stage",  # Uppercase
         ]
 
         for entry in invalid_entries:
