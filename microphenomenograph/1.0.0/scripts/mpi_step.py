@@ -144,6 +144,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "study": {
                 "run_repo_mode": run_repo_mode,
                 "git_remote_configured": manifest_remote,
+                "calibration_transcript_ids": [],
             },
             "participants": {},
         }
@@ -894,28 +895,18 @@ def _validate_utterance_refs(
 def _get_calibration_transcript_ids(manifest: dict) -> set:
     """
     Get the set of calibration transcript IDs from the manifest.
-    Handles both single transcript and stratified modes.
-    Returns a set of transcript IDs.
+    Reads calibration_transcript_ids field (list of transcript IDs).
+    If not present or empty, returns an empty set.
+
+    Args:
+        manifest: project.json parsed dict
+
+    Returns: set of transcript IDs (e.g., {"p1s1", "p2s3"})
     """
     study = manifest.get("study", {})
-    cal_transcript = study.get("calibration_transcript")
-    if isinstance(cal_transcript, list):
-        # Stratified: list of transcript IDs
-        return set(cal_transcript)
-    elif isinstance(cal_transcript, str):
-        # Single transcript or "first"
-        if cal_transcript == "first":
-            # Return first transcript with any done substep
-            for pid, pdata in manifest.get("participants", {}).items():
-                for stage, sdata in pdata.get("stages", {}).items():
-                    for substep, substep_data in sdata.get("substeps", {}).items():
-                        if substep_data.get("status") == "done":
-                            # Extract transcript_id from participant key (e.g., "p1s1" from "p1s1")
-                            transcript_id = pid.split("-idu")[0]
-                            return {transcript_id}
-            return set()
-        else:
-            return {cal_transcript}
+    cal_ids = study.get("calibration_transcript_ids", [])
+    if isinstance(cal_ids, list):
+        return set(cal_ids)
     return set()
 
 

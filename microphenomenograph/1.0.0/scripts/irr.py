@@ -401,79 +401,65 @@ def adjusted_rand_index(labels_a: list, labels_b: list) -> float:
 
     Returns float in [-1, 1].
 
-    Reference: Hubert & Arabie (1985).
+    Formula (Hubert & Arabie 1985):
+      ARI = (sum_ij C(n_ij,2) − [sum_i C(a_i,2) · sum_j C(b_j,2)] / C(n,2))
+            / (½[sum_i C(a_i,2) + sum_j C(b_j,2)] − [sum_i C(a_i,2)·sum_j C(b_j,2)] / C(n,2))
+
+    where C(k,2) = k(k-1)/2, n_ij is the contingency cell count, a_i is row sum, b_j is column sum.
+
+    Reference: Hubert & Arabie (1985), Comparing Partitions. J. Classification.
     """
+    from math import comb
+
     if len(labels_a) != len(labels_b):
         raise ValueError("labels_a and labels_b must have same length")
 
     n = len(labels_a)
     if n <= 1:
-        return 1.0
+        return 1.0 if labels_a == labels_b else 0.0
 
-    # Build contingency table: count pairs (i, j) in same cluster in both, etc.
-    # a = pairs in same cluster in both
-    # b = pairs in different clusters in both
-    # c = pairs in same cluster in A, different in B
-    # d = pairs in different clusters in A, same in B
+    # Build contingency table: count occurrences of each (label_a, label_b) pair
+    contingency = {}
+    for a, b in zip(labels_a, labels_b):
+        key = (a, b)
+        contingency[key] = contingency.get(key, 0) + 1
 
-    all_pairs = set()
-    for i in range(n):
-        for j in range(i + 1, n):
-            all_pairs.add((i, j))
+    # Row sums (a_i) and column sums (b_j)
+    row_sums = {}
+    col_sums = {}
+    for (a, b), count in contingency.items():
+        row_sums[a] = row_sums.get(a, 0) + count
+        col_sums[b] = col_sums.get(b, 0) + count
 
-    same_a = set()
-    for i in range(n):
-        for j in range(i + 1, n):
-            if labels_a[i] == labels_a[j]:
-                same_a.add((i, j))
+    # Compute the three terms of the ARI formula
+    # Term 1: sum over contingency cells of C(n_ij, 2)
+    sum_cij = sum(comb(count, 2) for count in contingency.values())
 
-    same_b = set()
-    for i in range(n):
-        for j in range(i + 1, n):
-            if labels_b[i] == labels_b[j]:
-                same_b.add((i, j))
+    # Term 2: sum of C(a_i, 2) for each row
+    sum_ai = sum(comb(count, 2) for count in row_sums.values())
 
-    a = len(same_a & same_b)  # Both same
-    b = len((all_pairs - same_a - same_b))  # Both different
+    # Term 3: sum of C(b_j, 2) for each column
+    sum_bj = sum(comb(count, 2) for count in col_sums.values())
 
-    total_pairs = n * (n - 1) // 2
+    # Total binomial coefficient
+    cn2 = comb(n, 2)
 
-    # Expected value under random labeling
-    # E(index) = sum over contingency table entries of expected cell values
-    # For ARI: E(RI) = 2 * sum_k (n_k choose 2) * sum_l (m_l choose 2) / (n choose 2)^2
-    # where n_k, m_l are cluster sizes
+    if cn2 == 0:
+        return 1.0 if labels_a == labels_b else 0.0
 
-    # Count cluster sizes in A and B
-    cluster_sizes_a = {}
-    for label in labels_a:
-        cluster_sizes_a[label] = cluster_sizes_a.get(label, 0) + 1
+    # Expected value under hypergeometric model
+    expected = (sum_ai * sum_bj) / cn2
 
-    cluster_sizes_b = {}
-    for label in labels_b:
-        cluster_sizes_b[label] = cluster_sizes_b.get(label, 0) + 1
+    # Numerator
+    numerator = sum_cij - expected
 
-    # Compute expected RI
-    expected_ri = 0.0
-    for size_a in cluster_sizes_a.values():
-        for size_b in cluster_sizes_b.values():
-            if size_a > 1 and size_b > 1:
-                expected_ri += size_a * (size_a - 1) * size_b * (size_b - 1)
+    # Denominator
+    denominator = 0.5 * (sum_ai + sum_bj) - expected
 
-    expected_ri = expected_ri / (2.0 * total_pairs * (total_pairs - 1.0)) if total_pairs > 1 else 0.0
-
-    # Observed RI
-    observed_ri = (a + b) / total_pairs if total_pairs > 0 else 0.0
-
-    # ARI = (RI - E(RI)) / (max_RI - E(RI))
-    # For normalized index: max_RI = 1 when perfect agreement
-    max_ri = 1.0
-
-    denominator = max_ri - expected_ri
     if denominator == 0.0:
-        return 1.0 if observed_ri == max_ri else 0.0
+        return 1.0 if numerator == 0.0 else 0.0
 
-    ari = (observed_ri - expected_ri) / denominator
-    return max(-1.0, min(1.0, ari))  # Clamp to [-1, 1]
+    return numerator / denominator
 
 
 def bootstrap_ci(
@@ -481,7 +467,7 @@ def bootstrap_ci(
     utterances_a: list,
     utterances_b: list,
     n_bootstrap: int = 5000,
-    alpha: float = 0.05,
+    ci_alpha: float = 0.05,
     seed: int = 42,
     block_length: int = None,
 ) -> dict:
@@ -493,7 +479,7 @@ def bootstrap_ci(
         metric_fn: callable(labels_a, labels_b) -> float
         utterances_a, utterances_b: per-utterance labels (lists)
         n_bootstrap: number of resamples
-        alpha: significance level (default 0.05 for 95% CI)
+        ci_alpha: significance level (default 0.05 for 95% CI)
         seed: random seed for reproducibility
         block_length: if set, use block bootstrap; if None, use naive resampling
 
@@ -548,8 +534,8 @@ def bootstrap_ci(
 
     # Compute percentile-based CI
     bootstrap_values.sort()
-    lo_idx = int(n_bootstrap * (alpha / 2.0))
-    hi_idx = int(n_bootstrap * (1.0 - alpha / 2.0))
+    lo_idx = int(n_bootstrap * (ci_alpha / 2.0))
+    hi_idx = int(n_bootstrap * (1.0 - ci_alpha / 2.0))
     lo_idx = max(0, min(lo_idx, n_bootstrap - 1))
     hi_idx = max(0, min(hi_idx, n_bootstrap - 1))
 
@@ -563,6 +549,57 @@ def bootstrap_ci(
         "n_bootstrap": n_bootstrap,
         "method": method,
     }
+
+
+def _derive_boundaries(assignments: dict, n_utterances: int) -> list:
+    """
+    Derive segment boundaries from category assignments.
+
+    Given {utterance_id: category_label}, sorted by utterance_id (1-indexed),
+    return list of (start_utt, end_utt) for each contiguous same-category run.
+    Utterances not in assignments are treated as their own singleton segments.
+
+    Args:
+        assignments: {utterance_id: category_str}
+        n_utterances: total number of utterances
+
+    Returns: list of (start_utt, end_utt) tuples (1-indexed, inclusive ends)
+    """
+    boundaries = []
+    if not assignments:
+        return boundaries
+
+    # Sort assignment keys by utterance number (extract numeric portion)
+    def utt_number(utt_id):
+        # Handle both "1" and "p1s1.1" formats
+        parts = str(utt_id).split('.')
+        try:
+            return int(parts[-1])
+        except ValueError:
+            return int(parts[0]) if parts[0].isdigit() else 0
+
+    sorted_utts = sorted(assignments.keys(), key=utt_number)
+    if not sorted_utts:
+        return boundaries
+
+    current_cat = assignments[sorted_utts[0]]
+    start_utt = utt_number(sorted_utts[0])
+
+    for i in range(1, len(sorted_utts)):
+        uid = sorted_utts[i]
+        cat = assignments[uid]
+        utt_num = utt_number(uid)
+
+        if cat != current_cat:
+            # Category change: close the previous boundary
+            boundaries.append((start_utt, utt_number(sorted_utts[i - 1])))
+            start_utt = utt_num
+            current_cat = cat
+
+    # Close the last boundary
+    boundaries.append((start_utt, utt_number(sorted_utts[-1])))
+
+    return boundaries
 
 
 def compute_irr(
@@ -637,10 +674,8 @@ def compute_irr(
     def metric_ari(a, b):
         return adjusted_rand_index(a, b)
 
-    # Bootstrap CIs (naive for α, κ, ARI)
-    shared_rng = random.Random(bootstrap_seed)
-
-    # Manually compute bootstrap for α with shared seed
+    # Bootstrap CIs (naive for α, κ, ARI; block bootstrap for αU)
+    # Compute bootstrap for α with shared seed
     alpha_ci = bootstrap_ci(
         metric_alpha_aligned,
         labels_primary,
@@ -670,12 +705,29 @@ def compute_irr(
         block_length=None
     )
 
-    # αU with block bootstrap (separate seed)
+    # αU with block bootstrap: derive boundaries from assignments, compute point estimate,
+    # then use block bootstrap to get CIs
+    boundaries_primary = _derive_boundaries(primary, n_utterances)
+    boundaries_alternate = _derive_boundaries(alternate, n_utterances)
+
+    # Point estimate for αU
+    au_point = alpha_unitizing(boundaries_primary, boundaries_alternate, n_utterances)
+
+    # Define metric function for αU bootstrap that operates on label sequences
+    # and internally derives boundaries
+    def metric_alpha_u(labels_a, labels_b):
+        # Reconstruct assignments from labels
+        assignments_a = {str(i): labels_a[i] for i in range(len(labels_a))}
+        assignments_b = {str(i): labels_b[i] for i in range(len(labels_b))}
+        # Derive boundaries and compute αU
+        bounds_a = _derive_boundaries(assignments_a, len(labels_a))
+        bounds_b = _derive_boundaries(assignments_b, len(labels_b))
+        return alpha_unitizing(bounds_a, bounds_b, len(labels_a))
+
+    # Block bootstrap for αU (block_length = sqrt(n_utterances))
     block_length = max(1, round(n_utterances ** 0.5))
-    # For αU, we need boundaries, not labels. For now, use a simple per-utterance label bootstrap
-    # with block length as a proxy for boundary structure.
     au_ci = bootstrap_ci(
-        metric_alpha_aligned,
+        metric_alpha_u,
         labels_primary,
         labels_alternate_aligned,
         n_bootstrap=n_bootstrap,

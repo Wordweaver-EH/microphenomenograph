@@ -1304,3 +1304,267 @@ class TestStatusReadMode:
             "--run-dir", str(run_dir),
         ])
         assert rc != 0
+
+
+class TestStrictIRRGate:
+    """Tests for --strict-irr gate on cross-participant substep closes (AC13.8, AC13.9)."""
+
+    def _setup_minimal_run_with_calibration(self, tmp_path: Path, transcript_id: str = "p1s1") -> Path:
+        """
+        Create minimal run dir with .mpi/ structure and manifest set for IRR gate tests.
+        Initializes a run with calibration_transcript_ids configured and all prerequisite
+        diachronic/synchronic substeps marked as done for the calibration transcript.
+        """
+        run_dir = _init_run_dir(tmp_path)
+
+        # Update manifest to set calibration_transcript_ids and mark prerequisites as done
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["study"]["calibration_transcript_ids"] = [transcript_id]
+
+        # Add participant scopes for the transcript with diachronic/synchronic done
+        # Generic_diachronic prerequisites: all transcripts must have diachronic + synchronic done
+        manifest["participants"][transcript_id] = {
+            "stages": {
+                "diachronic": {
+                    "status": "done",
+                    "substeps": {
+                        "criteria_grouping": {
+                            "status": "done",
+                            "close_id": "fake-close-id-1",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "criteria_revision": {
+                            "status": "done",
+                            "close_id": "fake-close-id-2",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "idu_naming_ordering": {
+                            "status": "done",
+                            "close_id": "fake-close-id-3",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        }
+                    }
+                },
+                "synchronic": {
+                    "status": "done",
+                    "substeps": {
+                        "theme_grouping_within_idu": {
+                            "status": "done",
+                            "close_id": "fake-close-id-4",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "isu_naming": {
+                            "status": "done",
+                            "close_id": "fake-close-id-5",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "isu_second_level_grouping": {
+                            "status": "done",
+                            "close_id": "fake-close-id-6",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        }
+                    }
+                }
+            }
+        }
+        # Add an IDU scope for the transcript
+        manifest["participants"][f"{transcript_id}-idu1"] = {
+            "stages": {
+                "synchronic": {
+                    "status": "done",
+                    "substeps": {
+                        "theme_grouping_within_idu": {
+                            "status": "done",
+                            "close_id": "fake-close-id-7",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "isu_naming": {
+                            "status": "done",
+                            "close_id": "fake-close-id-8",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "isu_second_level_grouping": {
+                            "status": "done",
+                            "close_id": "fake-close-id-9",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        }
+                    }
+                }
+            }
+        }
+
+        # Mark participant_row_assembly as done for generic_diachronic
+        manifest["participants"][transcript_id]["stages"]["generic_diachronic"] = {
+            "status": "done",
+            "substeps": {
+                "participant_row_assembly": {
+                    "status": "done",
+                    "close_id": "fake-close-id-10",
+                    "output_path": "analyses/fake.json",
+                    "artifact_shas": {},
+                }
+            }
+        }
+
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        return run_dir
+
+    def test_strict_irr_missing_record_blocks_close(self, tmp_path):
+        """With --strict-irr and no irr_calibration.jsonl: generic_diachronic close exits non-zero."""
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Try to close a generic_diachronic substep with --strict-irr but no IRR record
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+
+        # Valid generic_diachronic payload
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with strict-irr",
+            "--run-dir", str(run_dir),
+            "--strict-irr",  # KEY: strict-irr gate enabled
+        ])
+
+        # Should fail because IRR record missing
+        assert rc != 0, f"Expected non-zero rc with --strict-irr and no IRR record, got {rc}"
+        # Check audit log contains irr_warning
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        if audit_path.exists():
+            audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+            has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
+            assert has_irr_warning, "Audit should contain irr_warning event"
+
+    def test_strict_irr_passed_outcome_allows_close(self, tmp_path):
+        """With --strict-irr and outcome='passed': generic_diachronic close succeeds."""
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write a successful IRR calibration record
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(json.dumps({
+            "stage": "diachronic",
+            "transcript_id": "p1s1",
+            "outcome": "passed",
+            "n_utterances": 70,
+        }) + "\n")
+
+        # Try to close a generic_diachronic substep with --strict-irr and passing IRR record
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with passed IRR",
+            "--run-dir", str(run_dir),
+            "--strict-irr",
+        ])
+
+        # Should succeed because IRR outcome is "passed"
+        assert rc == 0, f"Expected rc=0 with --strict-irr and outcome='passed', got {rc}"
+
+    def test_no_strict_irr_low_outcome_emits_warning(self, tmp_path):
+        """Without --strict-irr and outcome='low': close succeeds but audit has irr_warning."""
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write an IRR record with low outcome
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(json.dumps({
+            "stage": "diachronic",
+            "transcript_id": "p1s1",
+            "outcome": "low",
+            "n_utterances": 70,
+        }) + "\n")
+
+        # Try to close generic_diachronic WITHOUT --strict-irr but with low outcome
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close without strict-irr",
+            "--run-dir", str(run_dir),
+            # NO --strict-irr
+        ])
+
+        # Should succeed (warning only)
+        assert rc == 0, f"Expected rc=0 without --strict-irr, got {rc}"
+
+        # Check that audit contains irr_warning event
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        assert audit_path.exists(), "Audit file should exist"
+        audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+        has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
+        assert has_irr_warning, "Audit should contain irr_warning event when outcome is low"

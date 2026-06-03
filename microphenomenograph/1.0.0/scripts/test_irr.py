@@ -62,7 +62,7 @@ def test_identical_inputs():
 
 
 def test_random_inputs():
-    """AC13.10: Random assignments -> metrics computable (not NaN)."""
+    """AC13.10: Random assignments -> metrics computable (near chance-level with seed 42)."""
     rng = random.Random(42)
     categories_list = ["cat1", "cat2", "cat3", "cat4"]
 
@@ -79,11 +79,14 @@ def test_random_inputs():
         [assignments_b[str(i)] for i in range(70)]
     )
 
-    # With 4 categories and random seed 42, some agreement expected; just check computable
+    # With 4 categories and random seed 42, metrics should be near chance-level (small values)
     assert not (alpha != alpha), f"alpha should not be NaN, got {alpha}"
     assert not (kappa != kappa), f"kappa should not be NaN, got {kappa}"
     assert not (ari != ari), f"ari should not be NaN, got {ari}"
-    print(f"[PASS] Random inputs: a={alpha:.3f}, k={kappa:.3f}, ARI={ari:.3f}")
+    assert abs(alpha) < 0.3, f"alpha with random inputs should be small, got {alpha:.3f}"
+    assert abs(kappa) < 0.3, f"kappa with random inputs should be small, got {kappa:.3f}"
+    assert abs(ari) < 0.3, f"ARI with random inputs should be small, got {ari:.3f}"
+    print(f"[PASS] Random inputs (near chance-level): a={alpha:.3f}, k={kappa:.3f}, ARI={ari:.3f}")
 
 
 def test_bootstrap_speed():
@@ -160,24 +163,35 @@ def test_asymmetric_marginals():
     print(f"[PASS] Asymmetric marginals: a={alpha:.3f}, k={kappa:.3f} (both computable and < 1.0)")
 
 
+def test_ari_partial_agreement():
+    """AC13.10: ARI Hubert-Arabie reference: [0,0,0,1,1,1] vs [0,0,1,1,2,2] ~= 0.2424."""
+    result = adjusted_rand_index([0,0,0,1,1,1], [0,0,1,1,2,2])
+    assert abs(result - 0.2424) < 0.001, f"ARI should be ~= 0.2424, got {result:.4f}"
+    print(f"[PASS] ARI partial agreement: {result:.4f} (expected ~= 0.2424)")
+
+
 def test_block_bootstrap_vs_naive_for_alpha_u():
-    """AC32.3: Block bootstrap CI for aU is wider than naive bootstrap CI."""
-    # Simulate 70 utterances with segmentation agreement (many boundaries at same places)
-    # Boundaries as (start, end) tuples
-    boundaries_a = [(0, 8), (8, 16), (16, 24), (24, 32), (32, 40), (40, 48), (48, 56), (56, 64), (64, 70)]
-    boundaries_b = [(0, 8), (8, 16), (16, 24), (24, 32), (32, 40), (40, 48), (48, 56), (56, 64), (64, 70)]
+    """AC32.3: Block bootstrap CI for aU (on real boundaries) is wider than naive bootstrap CI."""
+    from irr import _derive_boundaries
 
-    # Create per-utterance labels (for bootstrap)
-    labels_a = ["seg" + str(i // 8) for i in range(70)]
-    labels_b = ["seg" + str(i // 8) for i in range(70)]
+    # Create label sequences where boundaries are clear (70 utterances total)
+    # Segment each 10 utterances: 7 segments
+    labels_a = ["seg" + str(i // 10) for i in range(70)]
+    labels_b = ["seg" + str(i // 10) for i in range(70)]
+    assert len(labels_a) == 70
+    assert len(labels_b) == 70
 
-    # Naive bootstrap
+    # Define metric function for αU bootstrap
+    def metric_alpha_u(a, b):
+        assignments_a = {str(i): a[i] for i in range(len(a))}
+        assignments_b = {str(i): b[i] for i in range(len(b))}
+        bounds_a = _derive_boundaries(assignments_a, len(a))
+        bounds_b = _derive_boundaries(assignments_b, len(b))
+        return alpha_unitizing(bounds_a, bounds_b, len(a))
+
+    # Naive bootstrap (no block)
     ci_naive = bootstrap_ci(
-        lambda a, b: alpha_nominal(*compute_coincidence(
-            {str(i): a[i] for i in range(len(a))},
-            {str(i): b[i] for i in range(len(b))},
-            [], [], []
-        )),
+        metric_alpha_u,
         labels_a,
         labels_b,
         n_bootstrap=1000,
@@ -188,11 +202,7 @@ def test_block_bootstrap_vs_naive_for_alpha_u():
     # Block bootstrap (block_length ~= sqrt(70) = 8)
     block_length = max(1, round(70 ** 0.5))
     ci_block = bootstrap_ci(
-        lambda a, b: alpha_nominal(*compute_coincidence(
-            {str(i): a[i] for i in range(len(a))},
-            {str(i): b[i] for i in range(len(b))},
-            [], [], []
-        )),
+        metric_alpha_u,
         labels_a,
         labels_b,
         n_bootstrap=1000,
@@ -203,12 +213,12 @@ def test_block_bootstrap_vs_naive_for_alpha_u():
     naive_width = ci_naive['ci_hi'] - ci_naive['ci_lo']
     block_width = ci_block['ci_hi'] - ci_block['ci_lo']
 
-    # Block bootstrap should be >= naive CI width (accounts for autocorrelation)
+    # Block bootstrap should be >= naive CI width (accounts for autocorrelation in boundary structure)
     assert block_width >= naive_width * 0.95, (
         f"Block bootstrap CI should be >= naive CI width: "
         f"naive={naive_width:.4f}, block={block_width:.4f}"
     )
-    print(f"[PASS] Block bootstrap wider: naive_width={naive_width:.4f}, block_width={block_width:.4f}")
+    print(f"[PASS] Block bootstrap wider for aU: naive_width={naive_width:.4f}, block_width={block_width:.4f}")
 
 
 if __name__ == "__main__":
@@ -218,6 +228,7 @@ if __name__ == "__main__":
         test_bootstrap_speed,
         test_deterministic_cis,
         test_asymmetric_marginals,
+        test_ari_partial_agreement,
         test_block_bootstrap_vs_naive_for_alpha_u,
     ]
 
