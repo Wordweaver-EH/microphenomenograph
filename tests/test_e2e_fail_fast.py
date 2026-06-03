@@ -971,11 +971,6 @@ class TestDAGPrerequisite:
         json_dst, md_dst, prompt_dst = _copy_fixture(
             "synchronic", "theme_grouping_within_idu", scope
         )
-        # We need to call mpi_step.main directly to override --participant
-        analyses = run_dir / "analyses"
-        json_path = json_dst
-        md_path = md_dst
-        prompt_path = prompt_dst
         args = [
             "close",
             "--actor", "mpi-analyst",
@@ -983,10 +978,10 @@ class TestDAGPrerequisite:
             "--stage", "synchronic",
             "--substep", "theme_grouping_within_idu",
             "--scope", scope,
-            "--artifact", str(json_path),
-            "--artifact", str(md_path),
-            "--prompt-artifact", str(prompt_path),
-            "--units-json", str(json_path),
+            "--artifact", str(json_dst),
+            "--artifact", str(md_dst),
+            "--prompt-artifact", str(prompt_dst),
+            "--units-json", str(json_dst),
             "--reason", "DAG prerequisite positive test",
             "--run-dir", str(run_dir),
         ]
