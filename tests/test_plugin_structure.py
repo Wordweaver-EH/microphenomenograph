@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import csv
+import pytest
 from pathlib import Path
 
 
@@ -446,12 +447,14 @@ class TestAC5_3_AntiFabrication:
 
 
 class TestAC7_3_KappaWarningThreshold:
-    """AC7.3: Kappa < 0.61 triggers warning and exit code 2."""
+    """AC7.3: Kappa < 0.61 triggers warning and exit code 2. [LEGACY: kappa.py merged into irr.py in Phase 13]"""
 
     def test_kappa_warning_on_low_value(self):
-        """Test that kappa.py emits WARNING and exits with code 2 when below threshold."""
+        """Test that kappa.py emits WARNING and exits with code 2 when below threshold. [SKIPPED: kappa.py merged into irr.py]"""
         kappa_script = PLUGIN_ROOT / "scripts" / "kappa.py"
-        assert kappa_script.exists(), f"kappa.py not found at {kappa_script}"
+        # Phase 13: kappa.py merged into irr.py; functionality tested via test_kappa.py
+        if not kappa_script.exists():
+            pytest.skip("kappa.py merged into irr.py (Phase 13); functionality in irr.compute_kappa and test_kappa.py")
 
         # Create minimal CSV files that produce low kappa
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -538,8 +541,11 @@ class TestAC7_3_KappaWarningThreshold:
             assert "WARNING" in result.stdout, f"Expected 'WARNING' in stdout. Got: {result.stdout}"
 
     def test_kappa_no_warning_on_high_value(self):
-        """Test that kappa.py does not warn when kappa >= 0.61."""
+        """Test that kappa.py does not warn when kappa >= 0.61. [SKIPPED: kappa.py merged into irr.py]"""
         kappa_script = PLUGIN_ROOT / "scripts" / "kappa.py"
+        # Phase 13: kappa.py merged into irr.py; functionality tested via test_kappa.py
+        if not kappa_script.exists():
+            pytest.skip("kappa.py merged into irr.py (Phase 13); functionality in irr.compute_kappa and test_kappa.py")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
