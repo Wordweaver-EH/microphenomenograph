@@ -1,6 +1,6 @@
 # microphenomenograph repo
 
-_Last updated: 2026-06-03 (design fb65db5; Plan 1 Phases 1–6 + Plan 2 Phases 7, 9–11 implemented)_
+_Last updated: 2026-06-03 (design fb65db5; Plan 1 + Plan 2 all 13 phases landed)_
 
 Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline implementing Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis.
 
@@ -24,7 +24,7 @@ The plugin's own contracts (pipeline stages, data formats, manifest schema, exec
 
 **Documentation-as-Done contract.** Every pipeline step closes via `scripts/mpi_step.py` (transactional close protocol: artifact + audit event + manifest mutation + git commit, all keyed by `close_id`). See `docs/design-plans/2026-05-17-doc-as-done.md` (`fb65db5`) for the full design — 13 implementation phases split across two implementation plans; 34 acceptance criteria; transcript-span grounding mandatory; replay-grade prompt capture; bootstrap CIs for IRR (Krippendorff α + Cohen κ + αU block-bootstrap + ARI). Walkthrough at `docs/design-plans/2026-05-17-doc-as-done.html`.
 
-**Implementation status (Plan 2, in progress).** Plan 1 (Phases 1–6) landed: `scripts/mpi_step.py` exposes verbs `init`, `close`, `render`, `verify`, `unlock`, `accept-head`; `scripts/_mpi_schemas.py` carries per-substep schemas plus `validate_prompt_artifact`; `scripts/_mpi_atomic.py` provides atomic file primitives; `agents/mpi-analyst.md` declares Write/Bash tools, persistence rules, and anti-fabrication guards; `mpi-diachronic` / `mpi-synchronic` SKILL.md files include the Closure subsection that drives self-persisted artifacts. Plan 2 (Phases 7, 9–11) landed: `agents/mpi-cross-analyst.md` declares Write/Bash tools and anti-fabrication guards; cross-participant skills (`mpi-generic-diachronic`, `mpi-generic-synchronic`, `mpi-global-synchronic`) include Closure subsections for self-persisted artifact production; E2E pipeline tests (`test_mpi_orchestration.py`) pass. Phase 12 (docs reconciliation) and Phase 13 (full IRR calibration module with `scripts/irr.py`) in progress.
+**Implementation status (all phases landed).** Plan 1 (Phases 1–6) landed: `scripts/mpi_step.py` exposes verbs `init`, `close`, `render`, `verify`, `unlock`, `accept-head`; `scripts/_mpi_schemas.py` carries per-substep schemas plus `validate_prompt_artifact`; `scripts/_mpi_atomic.py` provides atomic file primitives; `agents/mpi-analyst.md` declares Write/Bash tools, persistence rules, and anti-fabrication guards; `mpi-diachronic` / `mpi-synchronic` SKILL.md files include the Closure subsection that drives self-persisted artifacts. Plan 2 (Phases 7, 9–13) landed: `agents/mpi-cross-analyst.md` declares Write/Bash tools and anti-fabrication guards; cross-participant skills (`mpi-generic-diachronic`, `mpi-generic-synchronic`, `mpi-global-synchronic`) include Closure subsections for self-persisted artifact production; E2E pipeline tests (`test_mpi_orchestration.py`) pass; Phase 12 (docs reconciliation) completed; Phase 13 (full IRR calibration module with `scripts/irr.py`, Krippendorff α + Cohen κ + αU + ARI, bootstrap CIs, auto-trigger + --strict-irr gate) completed.
 
 ## Operational requirements
 

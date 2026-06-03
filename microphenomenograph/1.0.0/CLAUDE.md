@@ -1,6 +1,6 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-06-03 (Plan 1 Phases 1–6 landed; Plan 2 Phases 7, 9–11 landed)_
+_Last updated: 2026-06-03 (Plan 1 Phases 1–6 + Plan 2 Phases 7, 9–13 all landed)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
@@ -8,8 +8,8 @@ Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) a
 
 The design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `fb65db5`, v3.22). Implementation is split into two implementation plans:
 
-- **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — Phases 1–6 LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending. AC11.3 (prompt artifact SHA-mismatch enforcement via replay-grade path resolution) is Plan 2 scope; at close time only schema structure is enforced.
-- **Plan 2 (Phases 7, 9–11) — LANDED; Phase 12 (docs) + Phase 13 (IRR) in progress:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline tests landed. Phase 12 (docs reconciliation) and Phase 13 (full IRR calibration module) in progress.
+- **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending. AC11.3 (prompt artifact SHA-mismatch enforcement via replay-grade path resolution) is Plan 2 scope; at close time only schema structure is enforced.
+- **Plan 2 (Phases 7, 9–13) — ALL LANDED:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline tests; Phase 12 (docs reconciliation); Phase 13 (full IRR calibration module with `scripts/irr.py` exposing Krippendorff α + Cohen κ + αU + ARI with bootstrap CIs, auto-trigger after calibration transcript closes, --strict-irr gate for cross-participant stages).
 
 The "Substep DAG" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
 
