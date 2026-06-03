@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Add scripts/ to path
 sys.path.insert(0, str(Path(__file__).parent))
-from kappa import load_diachronic, load_synchronic, compute_kappa
+from irr import load_diachronic_csv as load_diachronic, load_synchronic_csv as load_synchronic, compute_kappa
 
 # Path to inter-rater examples (relative to plugin root)
 PLUGIN_ROOT = Path(__file__).parent.parent
