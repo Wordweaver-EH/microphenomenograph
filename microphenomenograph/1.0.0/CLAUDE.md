@@ -67,10 +67,18 @@ Example: `Participant 1, Suggestion 2 (Scored 3/5)` → p=1, s=2, score=3
 - High: 4–5
 
 ### Manifest (`.mpi/project.json`)
-Runtime state file. Tracked keys per participant/suggestion:
-- `stage_status`: `pending | done | flagged`
-- `output_path`: path to stage output file
-- `mode`: `yolo | assisted`
+Runtime state file. Top-level structure:
+- `version`: `"2.0"`
+- `run_id`: UUID4 string
+- `study`: `{run_repo_mode, git_remote_configured, calibration_mode?}`
+- `participants`: dict keyed by participant scope (e.g. `p1s1`, `p1s1-idu1`), each with:
+  - `stages`: dict keyed by stage name, each with:
+    - `status`: `pending | done | flagged | error`
+    - `substeps`: dict keyed by substep name, each with:
+      - `status`: `pending | done | flagged | error`
+      - `close_id`: UUID4 of the close that set this substep to `done`
+      - `output_path`: path to primary artifact
+      - `artifact_shas`: dict of artifact SHA-256 hashes
 
 
 ## Examples
@@ -87,5 +95,5 @@ Runtime state file. Tracked keys per participant/suggestion:
 
 ## Execution modes
 
-- **yolo** — fully automated, parallel subagent fan-out, git commits per stage
-- **assisted** — human confirms each participant's output before proceeding
+- **yolo** — fully automated, strictly sequential substep-level closes; one `git commit` per substep (via `mpi_step.py close`)
+- **assisted** — human confirms each substep's output before proceeding

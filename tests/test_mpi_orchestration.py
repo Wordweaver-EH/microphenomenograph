@@ -9,7 +9,7 @@ b. Resume logic: stages with 'done' status are skipped on re-run
 c. Downstream cascade: if diachronic resets to pending, generic_diachronic
    resets too; synchronic reset cascades to generic_synchronic/global_synchronic/hypothesis
 d. Git commit format: 'mpi: <actor> <stage>.<substep> <scope> (<N>units <K>flagged)' per substep
-e. Reasoning log: entry format '[ISO timestamp] pNsN stage: ...'
+e. Reasoning log: entry format '[ISO timestamp] actor participant stage.substep: ...'
 f. Yolo mode flag sets manifest mode to 'yolo'
 """
 
@@ -76,9 +76,21 @@ class OrchestrationSpec:
 
     @staticmethod
     def validate_reasoning_log_entry(entry: str) -> bool:
-        """Validate reasoning log entry format: [ISO timestamp] pNsN stage: ..."""
-        # Expected format: [2026-05-17T12:34:56Z] p1s1 diachronic: ...
-        pattern = r'^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]\s+p\d+s\d+\s+\w+:\s+.+'
+        """Validate reasoning log entry format: [ISO timestamp] actor participant stage.substep: ...
+
+        Production format (from mpi_step.py render verb):
+          [{ts}] {actor_name} {participant} {stage}.{substep}: {reason}[. {N} units[, {K} flagged]][ commit=<sha7>]
+
+        Example:
+          [2026-06-03T12:34:56.123456+00:00] mpi-analyst p1s1 diachronic.criteria_grouping: Grouped IDUs. 3 units commit=abc1234
+        """
+        # Format: [timestamp] actor participant stage.substep: detail
+        # - timestamp: ISO 8601 with any timezone representation
+        # - actor: non-whitespace token (e.g. mpi-analyst)
+        # - participant: non-whitespace token (e.g. p1s1, p1s1-idu1)
+        # - stage.substep: word.word
+        # - detail: non-empty
+        pattern = r'^\[[\dT:+.\-Z]+\]\s+\S+\s+\S+\s+[a-z_]+\.[a-z_]+:\s+.+'
         return bool(re.match(pattern, entry))
 
 
@@ -406,26 +418,26 @@ class ManifestOrchestratorTester:
         print("\n[Test E] Reasoning Log Entry Format")
         print("-" * 80)
 
-        # Valid log entries
+        # Valid log entries (format: [timestamp] actor participant stage.substep: detail)
         valid_entries = [
-            "[2026-05-17T14:23:45Z] p1s1 diachronic: Identified 5 IDUs. 1 flagged.",
-            "[2026-05-17T14:23:46Z] p1s2 synchronic: Identified 8 ISUs. 0 flagged.",
-            "[2026-05-17T14:24:00Z] p2s1 diachronic: Identified 3 IDUs. 2 flagged.",
+            "[2026-06-03T14:23:45.123456+00:00] mpi-analyst p1s1 diachronic.criteria_grouping: Grouped IDUs. 5 units commit=abc1234",
+            "[2026-06-03T14:23:46.000000+00:00] mpi-analyst p1s2 synchronic.theme_grouping_within_idu: Grouped themes. 8 units commit=def5678",
+            "[2026-06-03T14:24:00.999999+00:00] mpi-cross-analyst generic_diachronic idu_similarity_grouping.idu_similarity_grouping: Grouped. 12 units commit=ghi9012",
         ]
 
         for entry in valid_entries:
             is_valid = OrchestrationSpec.validate_reasoning_log_entry(entry)
             self.assert_true(
                 is_valid,
-                f"Valid reasoning log entry: {entry[:50]}..."
+                f"Valid reasoning log entry: {entry[:70]}..."
             )
 
         # Invalid entries
         invalid_entries = [
-            "p1s1 diachronic: Missing timestamp",  # No timestamp
-            "[2026-05-17 14:23:45Z] p1s1 diachronic: Bad timestamp format",  # Wrong format
-            "[2026-05-17T14:23:45Z] p1s1: Missing stage name",  # No stage
-            "[2026-05-17T14:23:45Z] 1s1 diachronic: Invalid participant key",  # Bad key
+            "mpi-analyst p1s1 diachronic.criteria_grouping: Missing timestamp",  # No timestamp
+            "[2026-05-17 14:23:45Z] mpi-analyst p1s1 diachronic.criteria_grouping: Bad timestamp",  # Space in timestamp
+            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1: Missing stage.substep",  # No stage.substep
+            "[2026-06-03T14:23:45+00:00] mpi-analyst p1s1 diachronic_only: Missing dot separator",  # No dot
         ]
 
         for entry in invalid_entries:
