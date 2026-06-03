@@ -146,7 +146,16 @@ def _git_commit_count(run_dir: Path) -> int:
 
 
 def _no_tmp_files(analyses_dir: Path) -> bool:
-    """Return True if no .tmp files exist in the analyses dir."""
+    """
+    Return True if no .tmp files exist in the analyses dir.
+
+    Note: We check .tmp files (created by atomic_write) rather than the final
+    artifact path itself, because atomic_write creates a .tmp file, writes to it,
+    then renames it atomically. If close fails, the .tmp file may be left behind
+    but the final artifact (json/md/prompt.json) is inputs to close, not outputs,
+    so checking for leftover .tmp files is sufficient to validate no half-written
+    artifacts were produced.
+    """
     return not any(analyses_dir.glob("*.tmp"))
 
 
@@ -816,4 +825,107 @@ class TestAC28_4_SpanExcerptMismatch:
         _run_close(run_dir, units, prompt)
         assert _git_commit_count(run_dir) == commits_before, (
             "Git commit was created despite span_excerpt_mismatch"
+        )
+
+
+# ---------------------------------------------------------------------------
+# DAG prerequisite enforcement (Important #3 — AC SUBSTEP_PREREQUISITES)
+# ---------------------------------------------------------------------------
+
+class TestDAGPrerequisite:
+    """
+    Verify that the substep DAG prerequisite check blocks close when the
+    required upstream substep is not yet done (prereq_unsatisfied).
+
+    Tests the synchronic.theme_grouping_within_idu → diachronic.idu_naming_ordering
+    edge: attempting synchronic close before diachronic.idu_naming_ordering is done
+    must exit non-zero with 'prereq_unsatisfied' in the error output.
+    """
+
+    def _make_synchronic_units(self) -> dict:
+        """Build a minimal valid synchronic theme_grouping_within_idu payload."""
+        raw_bytes = (_TRANSCRIPTS_SRC / f"{_TID}.txt").read_bytes()
+        excerpt = raw_bytes[41:86].decode("utf-8")
+        return {
+            "analysis_type": "synchronic",
+            "participant": f"{_TID}-idu1",
+            "idu_name": "Test IDU",
+            "isus": [
+                {
+                    "isu_name": "Test ISU",
+                    "criteria": "test criteria",
+                    "confidence": 3,
+                    "flag_for_review": False,
+                    "utterance_refs": [
+                        {
+                            "transcript_id": _TID,
+                            "utterance_number": 1,
+                            "byte_start": 41,
+                            "byte_end": 86,
+                            "raw_excerpt": excerpt,
+                        }
+                    ],
+                }
+            ],
+        }
+
+    def test_synchronic_without_prereq_exit_nonzero(self, tmp_path):
+        """
+        synchronic.theme_grouping_within_idu requires diachronic.idu_naming_ordering.
+        Close must exit non-zero when the prerequisite is not met.
+        """
+        run_dir = _setup_minimal_run(tmp_path)
+        units = self._make_synchronic_units()
+        prompt = _make_valid_prompt(
+            "synchronic", "theme_grouping_within_idu", f"{_TID}-idu1"
+        )
+        rc = _run_close(
+            run_dir, units, prompt,
+            stage="synchronic",
+            substep="theme_grouping_within_idu",
+            scope=f"{_TID}-idu1",
+        )
+        assert rc != 0, (
+            "Expected exit non-zero for synchronic close without "
+            "diachronic.idu_naming_ordering done"
+        )
+
+    def test_synchronic_without_prereq_error_message(self, tmp_path, capsys):
+        """Error output must mention prereq_unsatisfied."""
+        run_dir = _setup_minimal_run(tmp_path)
+        units = self._make_synchronic_units()
+        prompt = _make_valid_prompt(
+            "synchronic", "theme_grouping_within_idu", f"{_TID}-idu1"
+        )
+        _run_close(
+            run_dir, units, prompt,
+            stage="synchronic",
+            substep="theme_grouping_within_idu",
+            scope=f"{_TID}-idu1",
+        )
+        captured = capsys.readouterr()
+        assert (
+            "prereq_unsatisfied" in captured.err
+            or "prereq_unsatisfied" in captured.out
+        ), (
+            "Expected 'prereq_unsatisfied' in error output. "
+            f"stderr={captured.err!r}, stdout={captured.out!r}"
+        )
+
+    def test_synchronic_without_prereq_manifest_unchanged(self, tmp_path):
+        """Manifest must be unchanged when a DAG prerequisite is not satisfied."""
+        run_dir = _setup_minimal_run(tmp_path)
+        before = _manifest_snapshot(run_dir)
+        units = self._make_synchronic_units()
+        prompt = _make_valid_prompt(
+            "synchronic", "theme_grouping_within_idu", f"{_TID}-idu1"
+        )
+        _run_close(
+            run_dir, units, prompt,
+            stage="synchronic",
+            substep="theme_grouping_within_idu",
+            scope=f"{_TID}-idu1",
+        )
+        assert _manifest_snapshot(run_dir) == before, (
+            "Manifest was modified when DAG prerequisite was not met"
         )

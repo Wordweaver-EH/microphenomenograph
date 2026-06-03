@@ -315,14 +315,59 @@ def _cascade_reset(
     Returns updated manifest dict.
     """
     analyses_dir = run_dir / "analyses"
+
+    reset_substep_labels: list[str] = []
+    # Collect (art_scope, art_stage, art_substep) tuples to move — file movement
+    # is deferred until after we know the superseded_dir path.
+    reset_file_moves: list[tuple[str, str, str]] = []
+    participants = manifest.get("participants", {})
+
+    def _check_substep(p_key: str, stage: str, substep: str, art_scope: str) -> bool:
+        """
+        Return True if the substep is 'done' (i.e. will be reset).
+        Collects the file-move tuple for later; does NOT move files yet
+        (superseded_dir is not yet defined at this point).
+        """
+        p_data = participants.get(p_key, {})
+        stage_data = p_data.get("stages", {}).get(stage, {})
+        substep_data = stage_data.get("substeps", {}).get(substep, {})
+        if substep_data.get("status") == "done":
+            reset_file_moves.append((art_scope, stage, substep))
+            return True
+        return False
+
+    # --- Collect diachronic downstream substeps for scope (pNsN) ---
+    for substep in _CASCADE_DIACHRONIC_SUBSTEPS:
+        if _check_substep(scope, "diachronic", substep, scope):
+            reset_substep_labels.append(f"{scope} diachronic.{substep}")
+
+    # --- Collect all synchronic substeps for all iduN scopes under this transcript ---
+    idu_prefix = f"{scope}-idu"
+    for p_key in list(participants.keys()):
+        if p_key.startswith(idu_prefix):
+            for substep in _CASCADE_SYNCHRONIC_SUBSTEPS:
+                if _check_substep(p_key, "synchronic", substep, p_key):
+                    reset_substep_labels.append(f"{p_key} synchronic.{substep}")
+
+    # --- Collect cross-participant stages ---
+    # Cross-participant stages use non-pNsN keys; we look for any participant key
+    # matching the stage (generic/global/hypothesis) regardless of scope
+    for cross_stage, cross_substeps in _CASCADE_CROSS_PARTICIPANT_STAGES.items():
+        for p_key in list(participants.keys()):
+            for substep in cross_substeps:
+                if _check_substep(p_key, cross_stage, substep, p_key):
+                    reset_substep_labels.append(f"{p_key} {cross_stage}.{substep}")
+
+    if not reset_substep_labels:
+        # Nothing downstream was done — no cascade needed
+        return manifest
+
+    # Create _superseded directory only now that we know resets will occur
     superseded_dir = analyses_dir / "_superseded" / revision_close_id
     superseded_dir.mkdir(parents=True, exist_ok=True)
 
-    reset_substep_labels: list[str] = []
-    participants = manifest.get("participants", {})
-
-    def _move_artifact_files(art_scope: str, art_stage: str, art_substep: str) -> None:
-        """Move the three artifact files (json, md, prompt.json) if they exist."""
+    # Move artifact files into superseded_dir
+    for art_scope, art_stage, art_substep in reset_file_moves:
         for ext in ("json", "md", "prompt.json"):
             src = analyses_dir / f"{art_scope}-{art_stage}.{art_substep}.{ext}"
             if src.exists():
@@ -331,46 +376,6 @@ def _cascade_reset(
                     os.rename(str(src), str(dst))
                 except OSError:
                     pass  # Non-fatal: continue cascade
-
-    def _reset_substep(p_key: str, stage: str, substep: str, art_scope: str) -> bool:
-        """
-        Reset a substep in the manifest if it's 'done'. Returns True if reset occurred.
-        p_key is the manifest participant key; art_scope is used for file naming.
-        """
-        p_data = participants.get(p_key, {})
-        stage_data = p_data.get("stages", {}).get(stage, {})
-        substep_data = stage_data.get("substeps", {}).get(substep, {})
-        if substep_data.get("status") == "done":
-            _move_artifact_files(art_scope, stage, substep)
-            return True
-        return False
-
-    # --- Reset diachronic downstream substeps for scope (pNsN) ---
-    for substep in _CASCADE_DIACHRONIC_SUBSTEPS:
-        if _reset_substep(scope, "diachronic", substep, scope):
-            reset_substep_labels.append(f"{scope} diachronic.{substep}")
-
-    # --- Reset all synchronic substeps for all iduN scopes under this transcript ---
-    # Find all synchronic scopes that start with scope + "-idu"
-    idu_prefix = f"{scope}-idu"
-    for p_key in list(participants.keys()):
-        if p_key.startswith(idu_prefix):
-            for substep in _CASCADE_SYNCHRONIC_SUBSTEPS:
-                if _reset_substep(p_key, "synchronic", substep, p_key):
-                    reset_substep_labels.append(f"{p_key} synchronic.{substep}")
-
-    # --- Reset cross-participant stages ---
-    # Cross-participant stages use non-pNsN keys; we look for any participant key
-    # matching the stage (generic/global/hypothesis) regardless of scope
-    for cross_stage, cross_substeps in _CASCADE_CROSS_PARTICIPANT_STAGES.items():
-        for p_key in list(participants.keys()):
-            for substep in cross_substeps:
-                if _reset_substep(p_key, cross_stage, substep, p_key):
-                    reset_substep_labels.append(f"{p_key} {cross_stage}.{substep}")
-
-    if not reset_substep_labels:
-        # Nothing downstream was done — no cascade needed
-        return manifest
 
     # --- Write tombstone ---
     tombstone = {
@@ -705,17 +710,30 @@ def _validate_utterance_refs(
 
         registry = registry_cache[transcript_id]
 
-        # Step 2: Look up utterance_number
+        # Step 2: Look up utterance_number (registry keys are always strings)
         unum_key = str(utterance_number) if utterance_number is not None else None
-        unum_int_key = utterance_number  # Some registries may use int keys
 
-        unum_entry = registry.get(unum_key) or registry.get(unum_int_key)
+        unum_entry = registry.get(unum_key)
         if unum_entry is None:
             ref_errors.append(
                 f"span_out_of_range: {ref_label}: utterance_number={utterance_number} "
                 f"not in offset registry for {transcript_id}"
             )
             return ref_errors
+
+        # Validate byte range against utterance's registered range
+        if byte_start is None or byte_end is None:
+            return ref_errors  # Schema already validates required fields
+        utt_byte_start = unum_entry.get("byte_start")
+        utt_byte_end = unum_entry.get("byte_end")
+        if utt_byte_start is not None and utt_byte_end is not None:
+            if not (utt_byte_start <= byte_start <= byte_end <= utt_byte_end):
+                ref_errors.append(
+                    f"span_out_of_range: {ref_label}: "
+                    f"ref byte range [{byte_start}:{byte_end}] outside utterance range "
+                    f"[{utt_byte_start}:{utt_byte_end}] for {transcript_id}.{utterance_number}"
+                )
+                return ref_errors
 
         # Step 3: Load raw transcript bytes
         if transcript_id not in raw_file_cache:
@@ -1232,8 +1250,14 @@ def cmd_close(args: argparse.Namespace) -> int:
         if superseded_after > superseded_before:
             # Cascade produced changes — save manifest and commit
             _save_manifest(run_dir, updated_manifest)
+            # Stage the _superseded directory tree and manifest explicitly
+            cascade_add_paths = [
+                str(manifest_path),
+                str(audit_path),
+                str(run_dir / "analyses" / "_superseded" / close_id),
+            ]
             r_cascade_add = _git(
-                ["add", "--all"],
+                ["add"] + cascade_add_paths,
                 cwd=run_dir, check=False,
             )
             if r_cascade_add.returncode == 0:

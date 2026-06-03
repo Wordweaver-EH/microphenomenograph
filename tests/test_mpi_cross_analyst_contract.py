@@ -93,6 +93,9 @@ def _setup_transcript_files(run_dir: Path, transcript_id: str, raw_text: str) ->
     """
     Write minimal raw transcript and offset registry files for span-ref validation.
     raw_text must be ASCII and must contain at least the bytes referenced by fixtures.
+
+    Offset registry format is a flat dict: {"1": {byte_start, byte_end}, "2": ...}
+    with string keys (utterance numbers as strings).
     """
     raw_dir = run_dir / "transcripts" / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -100,17 +103,14 @@ def _setup_transcript_files(run_dir: Path, transcript_id: str, raw_text: str) ->
 
     offsets_dir = run_dir / "transcripts" / "offsets"
     offsets_dir.mkdir(parents=True, exist_ok=True)
-    # Minimal offset registry: one utterance at byte range 0..(len of first sentence)
+    # Canonical offset registry: flat dict with string keys
+    # Key is utterance number as string; value is {byte_start, byte_end}
     raw_bytes = raw_text.encode("utf-8")
     offsets = {
-        "transcript_id": transcript_id,
-        "utterances": [
-            {
-                "utterance_number": 1,
-                "byte_start": 0,
-                "byte_end": len(raw_bytes),
-            }
-        ],
+        "1": {
+            "byte_start": 0,
+            "byte_end": len(raw_bytes),
+        }
     }
     (offsets_dir / f"{transcript_id}.json").write_text(
         json.dumps(offsets, indent=2), encoding="utf-8"
