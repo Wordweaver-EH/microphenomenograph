@@ -888,6 +888,181 @@ def _validate_utterance_refs(
 
 
 # ---------------------------------------------------------------------------
+# IRR calibration helpers (Phase 13)
+# ---------------------------------------------------------------------------
+
+def _get_calibration_transcript_ids(manifest: dict) -> set:
+    """
+    Get the set of calibration transcript IDs from the manifest.
+    Handles both single transcript and stratified modes.
+    Returns a set of transcript IDs.
+    """
+    study = manifest.get("study", {})
+    cal_transcript = study.get("calibration_transcript")
+    if isinstance(cal_transcript, list):
+        # Stratified: list of transcript IDs
+        return set(cal_transcript)
+    elif isinstance(cal_transcript, str):
+        # Single transcript or "first"
+        if cal_transcript == "first":
+            # Return first transcript with any done substep
+            for pid, pdata in manifest.get("participants", {}).items():
+                for stage, sdata in pdata.get("stages", {}).items():
+                    for substep, substep_data in sdata.get("substeps", {}).items():
+                        if substep_data.get("status") == "done":
+                            # Extract transcript_id from participant key (e.g., "p1s1" from "p1s1")
+                            transcript_id = pid.split("-idu")[0]
+                            return {transcript_id}
+            return set()
+        else:
+            return {cal_transcript}
+    return set()
+
+
+def _load_irr_records(run_dir: Path) -> list:
+    """
+    Load IRR calibration records from .mpi/irr_calibration.jsonl.
+    Returns list of dicts, or [] if file doesn't exist.
+    """
+    irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+    if not irr_path.exists():
+        return []
+    records = []
+    try:
+        with open(irr_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return records
+
+
+def _is_last_synchronic_idu(manifest: dict, transcript_id: str) -> bool:
+    """
+    Check if all IDU scopes for transcript_id have synchronic.isu_second_level_grouping done.
+    Returns True if all IDUs of this transcript have synchronic.isu_second_level_grouping done.
+    """
+    participants = manifest.get("participants", {})
+    all_done = True
+    found_any = False
+    for pid, pdata in participants.items():
+        # Check if this participant is for the target transcript
+        if not pid.startswith(transcript_id + "-idu"):
+            continue
+        found_any = True
+        stages = pdata.get("stages", {})
+        synchronic = stages.get("synchronic", {})
+        isu_status = synchronic.get("substeps", {}).get("isu_second_level_grouping", {})
+        if isu_status.get("status") != "done":
+            all_done = False
+            break
+    return found_any and all_done
+
+
+def _maybe_trigger_irr_calibration(
+    run_dir: Path,
+    stage: str,
+    substep: str,
+    scope: str,
+    manifest: dict,
+    close_id: str,
+    audit_path: Path,
+) -> None:
+    """
+    Check if the just-closed substep triggers IRR calibration.
+    Fires for:
+      - diachronic.idu_naming_ordering: scope is pNsN (transcript scope)
+      - synchronic.isu_second_level_grouping (last IDU): scope is pNsN-iduN
+
+    Appends irr_calibration_scheduled audit event if triggered.
+    """
+    calibration_ids = _get_calibration_transcript_ids(manifest)
+
+    # Derive transcript_id from scope (handles both pNsN and pNsN-iduN forms)
+    transcript_id = scope.split("-idu")[0]  # "p1s1-idu2" → "p1s1"; "p1s1" → "p1s1"
+
+    if transcript_id not in calibration_ids:
+        return
+
+    trigger_irr = False
+    irr_stage = None
+
+    if stage == "diachronic" and substep == "idu_naming_ordering":
+        trigger_irr = True
+        irr_stage = "diachronic"
+    elif stage == "synchronic" and substep == "isu_second_level_grouping":
+        # Only trigger after LAST IDU for this transcript
+        if _is_last_synchronic_idu(manifest, transcript_id):
+            trigger_irr = True
+            irr_stage = "synchronic"
+
+    if trigger_irr and irr_stage:
+        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "orchestrator", "name": "orchestrator"},
+            "event": {"kind": "event", "action": "irr_calibration_scheduled", "outcome": "success"},
+            "mpi": {
+                "stage": irr_stage,
+                "transcript_id": transcript_id,
+                "triggered_by": f"{stage}.{substep}",
+            },
+            "reason": f"Calibration transcript {transcript_id} {irr_stage} stage complete",
+        }
+        append_jsonl(audit_path, event)
+
+
+def _check_irr_gate(
+    run_dir: Path,
+    stage: str,
+    substep: str,
+    scope: str,
+    args,
+    audit_path: Path,
+) -> int:
+    """
+    At the start of each cross-participant close, check IRR calibration outcome.
+    - If outcome is low/missing: ALWAYS emit irr_warning audit event.
+    - Without --strict-irr: proceed (return 0).
+    - With --strict-irr: exit with irr_check_failed (return 1).
+    """
+    irr_records = _load_irr_records(run_dir)
+    last_record = irr_records[-1] if irr_records else None
+    outcome = last_record.get("outcome") if last_record else None
+
+    if outcome != "passed":
+        # Always emit irr_warning, regardless of --strict-irr
+        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        blocked_reason = "irr_low" if outcome == "low" else "irr_missing"
+        irr_warning_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "orchestrator", "name": "orchestrator"},
+            "event": {"kind": "event", "action": "irr_warning", "outcome": "warning"},
+            "mpi": {
+                "stage": stage,
+                "substep": substep,
+                "scope": scope,
+                "blocked_reason": blocked_reason,
+            },
+            "reason": f"IRR outcome is {outcome or 'missing'}; {'--strict-irr blocks' if getattr(args, 'strict_irr', False) else 'proceeding'}"
+        }
+        append_jsonl(audit_path, irr_warning_event)
+
+        if getattr(args, 'strict_irr', False):
+            print(f"ERROR irr_check_failed: IRR outcome is {outcome or 'missing'} (--strict-irr set)", file=sys.stderr)
+            return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # close subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -1064,6 +1239,14 @@ def cmd_close(args: argparse.Namespace) -> int:
             print(f"ERROR {msg}", file=sys.stderr)
             return _abort(msg)
 
+    # --- IRR gate check (Phase 13, AC13.8-13.9) ---
+    # For cross-participant stages, check IRR calibration outcome
+    cross_participant_stages = {"generic_diachronic", "generic_synchronic", "global_synchronic", "hypothesis"}
+    if args.stage in cross_participant_stages:
+        irr_check_rc = _check_irr_gate(run_dir, args.stage, args.substep, args.scope, args, audit_path)
+        if irr_check_rc != 0:
+            return _abort("irr_check_failed")
+
     # --- Task 4: Acquire substep reservation (AC20.7) ---
     reservation_rc = _acquire_substep_reservation(
         run_dir, args.stage, args.substep, args.scope, close_id,
@@ -1238,6 +1421,18 @@ def cmd_close(args: argparse.Namespace) -> int:
 
     # Task 4: Release substep reservation on success
     _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+
+    # --- Phase 13: IRR calibration auto-trigger (AC13.2) ---
+    reload_manifest = _load_manifest(run_dir)
+    _maybe_trigger_irr_calibration(
+        run_dir=run_dir,
+        stage=args.stage,
+        substep=args.substep,
+        scope=args.scope,
+        manifest=reload_manifest,
+        close_id=close_id,
+        audit_path=audit_path,
+    )
 
     # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
     if args.stage == "diachronic" and args.substep == "criteria_revision":
@@ -1490,6 +1685,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Required for LLM-invoking substeps.")
     p_close.add_argument("--run-dir", default=".", metavar="DIR",
                          help="Path to the MPI run directory (default: cwd).")
+    p_close.add_argument("--strict-irr", action="store_true",
+                         help="Block cross-participant stages if IRR is missing or low.")
 
     # render
     p_render = sub.add_parser("render", help="Regenerate reasoning.log from audit.jsonl.")
