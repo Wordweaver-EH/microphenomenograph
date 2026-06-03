@@ -60,7 +60,7 @@ class TestAC1_2_SkillsDiscoverable:
         "mpi-generic-synchronic",
         "mpi-global-synchronic",
         "mpi-hypothesis",
-        "mpi-kappa",
+        "mpi-irr",
     ]
 
     def test_all_10_skills_exist(self):
