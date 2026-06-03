@@ -426,7 +426,7 @@ class ManifestOrchestratorTester:
         valid_entries = [
             "[2026-06-03T14:23:45.123456+00:00] mpi-analyst p1s1 diachronic.criteria_grouping: Grouped IDUs. 5 units commit=abc1234",
             "[2026-06-03T14:23:46.000000+00:00] mpi-analyst p1s2 synchronic.theme_grouping_within_idu: Grouped themes. 8 units commit=def5678",
-            "[2026-06-03T14:24:00.999999+00:00] mpi-cross-analyst event1 generic_diachronic.idu_similarity_grouping: Grouped. 12 units commit=ghi9012",
+            "[2026-06-03T14:24:00.999999+00:00] mpi-cross-analyst event1-cat-3 generic_diachronic.idu_similarity_grouping: Grouped. 12 units commit=ghi9012",
         ]
 
         for entry in valid_entries:
