@@ -1,6 +1,6 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-05-18 (Plan 1 Phases 1–6 landed; Plan 2 not yet implemented)_
+_Last updated: 2026-06-03 (Plan 1 Phases 1–6 landed; Plan 2 Phases 7, 9–11 landed)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
@@ -9,7 +9,7 @@ Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) a
 The design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `fb65db5`, v3.22). Implementation is split into two implementation plans:
 
 - **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — Phases 1–6 LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending. AC11.3 (prompt artifact SHA-mismatch enforcement via replay-grade path resolution) is Plan 2 scope; at close time only schema structure is enforced.
-- **Plan 2 (Phases 7, 9, 10, 11, 12, 13) — NOT YET IMPLEMENTED:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline test, docs reconciliation, IRR calibration.
+- **Plan 2 (Phases 7, 9–11) — LANDED; Phase 12 (docs) + Phase 13 (IRR) in progress:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline tests landed. Phase 12 (docs reconciliation) and Phase 13 (full IRR calibration module) in progress.
 
 The "Pipeline overview" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
 
@@ -33,19 +33,19 @@ IRR calibration runs automatically after the calibration transcript's diachronic
 
 Hypothesis generation produces **candidate mechanism hypotheses, not causal estimates**. Every artifact carries a verbatim disclaimer. Each claim carries `{supports, contradicts, ambiguous, n_transcripts, n_iv_levels_covered, uncertainty_language, negative_cases}` with `raw_span_refs` on every support/contradict/ambiguous entry.
 
-## Pipeline overview
+## Substep DAG
 
-## Pipeline overview
-
-Seven analysis stages, each producing a markdown table output:
-
-1. **mpi-init** — scan transcripts, parse headers, write `.mpi/project.json` manifest
-2. **mpi-transcript-prep** — normalise utterance numbering and speaker labels
-3. **mpi-diachronic** — per-participant IDU coding (via `mpi-analyst` subagent)
-4. **mpi-synchronic** — per-participant ISU coding (via `mpi-analyst` subagent)
-5. **mpi-generic-diachronic** / **mpi-generic-synchronic** / **mpi-global-synchronic** — cross-participant aggregation (via `mpi-cross-analyst`)
-6. **mpi-hypothesis** — causal hypothesis generation from global synchronic output
-7. **mpi-kappa** — Cohen's κ inter-rater reliability between two analysis directories
+| Stage | Substeps | Iteration | Actor |
+|---|---|---|---|
+| `init` | `scan_transcripts` → `propose_study_config` → `confirm_study_config` | one-shot | orchestrator |
+| `transcript_prep` | `hash_raw` → `normalize` → `register_offsets` | per transcript | orchestrator |
+| `diachronic` | `criteria_grouping` → `criteria_revision` → `idu_naming_ordering` | per transcript | mpi-analyst (LLM) |
+| `synchronic` | `theme_grouping_within_idu` → `isu_naming` → `isu_second_level_grouping` | per transcript × IDU | mpi-analyst (LLM) |
+| `generic_diachronic` | `participant_row_assembly` (orch) → `idu_similarity_grouping` → `pattern_identification` → `cross_iv_contrast` | per study | mpi-cross-analyst |
+| `generic_synchronic` | `select_generic_idus_of_interest` → `worksheet_assembly` (orch) → `isu_second_level_grouping` | per study | mpi-cross-analyst |
+| `global_synchronic` | `global_synchronic` | per study | mpi-cross-analyst (LLM) |
+| `hypothesis` | `evidence_extraction` → `candidate_drafting` → `weak_evidence_review` | per study | mpi-cross-analyst (LLM) |
+| `irr_calibration` | `independent_analyst` → `alignment` → `agreement_computation` (orch) | per calibration transcript | mpi-cross-analyst |
 
 ## Data formats
 
@@ -66,9 +66,6 @@ Runtime state file. Tracked keys per participant/suggestion:
 - `output_path`: path to stage output file
 - `mode`: `yolo | assisted`
 
-### Analysis output paths
-- Per-participant: `analyses/pNsN-{stage}.md`
-- Cross-participant: `analyses/{stage}.md`
 
 ## Examples
 
