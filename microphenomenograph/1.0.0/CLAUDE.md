@@ -11,7 +11,7 @@ The design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `f
 - **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — Phases 1–6 LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending. AC11.3 (prompt artifact SHA-mismatch enforcement via replay-grade path resolution) is Plan 2 scope; at close time only schema structure is enforced.
 - **Plan 2 (Phases 7, 9–11) — LANDED; Phase 12 (docs) + Phase 13 (IRR) in progress:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline tests landed. Phase 12 (docs reconciliation) and Phase 13 (full IRR calibration module) in progress.
 
-The "Pipeline overview" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
+The "Substep DAG" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
 
 ## Documentation-as-Done contract
 
@@ -41,11 +41,17 @@ Hypothesis generation produces **candidate mechanism hypotheses, not causal esti
 | `transcript_prep` | `hash_raw` → `normalize` → `register_offsets` | per transcript | orchestrator |
 | `diachronic` | `criteria_grouping` → `criteria_revision` → `idu_naming_ordering` | per transcript | mpi-analyst (LLM) |
 | `synchronic` | `theme_grouping_within_idu` → `isu_naming` → `isu_second_level_grouping` | per transcript × IDU | mpi-analyst (LLM) |
-| `generic_diachronic` | `participant_row_assembly` (orch) → `idu_similarity_grouping` → `pattern_identification` → `cross_iv_contrast` | per study | mpi-cross-analyst |
-| `generic_synchronic` | `select_generic_idus_of_interest` → `worksheet_assembly` (orch) → `isu_second_level_grouping` | per study | mpi-cross-analyst |
-| `global_synchronic` | `global_synchronic` | per study | mpi-cross-analyst (LLM) |
-| `hypothesis` | `evidence_extraction` → `candidate_drafting` → `weak_evidence_review` | per study | mpi-cross-analyst (LLM) |
+| `generic_diachronic` | `participant_row_assembly` (orch) → `idu_similarity_grouping` (LLM) → `pattern_identification` (LLM) → `cross_iv_contrast` (LLM) | per (event × IV category) | mpi-cross-analyst |
+| `generic_synchronic` | `select_generic_idus_of_interest` (LLM) → `worksheet_assembly` (orch) → `isu_second_level_grouping` (LLM) | per (event × IV category × generic-IDU) | mpi-cross-analyst |
+| `global_synchronic` | `global_synchronic` | per (generic-IDU × IV category) | mpi-cross-analyst (LLM) |
+| `hypothesis` | `evidence_extraction` → `candidate_drafting` → `weak_evidence_review` | first two per DV focus; review global | mpi-cross-analyst (LLM) |
 | `irr_calibration` | `independent_analyst` → `alignment` → `agreement_computation` (orch) | per calibration transcript | mpi-cross-analyst |
+
+**Prerequisite gates** (enforced by `mpi_step.py close`):
+- `generic_diachronic.*`: all transcripts for the event must have all diachronic + synchronic substeps `done`, with no pending split/merge flags
+- `generic_synchronic.*`: matching `generic_diachronic.*` must be `done`
+- `global_synchronic.*`: all matching `generic_synchronic.*` must be `done`
+- `hypothesis.*`: all `generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic.*` must be `done`
 
 ## Data formats
 

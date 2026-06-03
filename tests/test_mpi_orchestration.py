@@ -8,7 +8,7 @@ a. Stage ordering is correct (transcript-prep → diachronic → synchronic →
 b. Resume logic: stages with 'done' status are skipped on re-run
 c. Downstream cascade: if diachronic resets to pending, generic_diachronic
    resets too; synchronic reset cascades to generic_synchronic/global_synchronic/hypothesis
-d. Git commit format: 'mpi: pNsN {stage} analysis' per-participant
+d. Git commit format: 'mpi: <actor> <stage>.<substep> <scope> (<N>units <K>flagged)' per substep
 e. Reasoning log: entry format '[ISO timestamp] pNsN stage: ...'
 f. Yolo mode flag sets manifest mode to 'yolo'
 """
@@ -40,7 +40,7 @@ class OrchestrationSpec:
         "hypothesis",
     ]
 
-    # Per-participant stages (can be parallelized in yolo mode)
+    # Per-participant stages (sequential in yolo mode — Plan 2 contract)
     PER_PARTICIPANT_STAGES = {"transcript_prep", "diachronic", "synchronic"}
 
     # Cross-participant stages
@@ -70,12 +70,9 @@ class OrchestrationSpec:
     }
 
     @staticmethod
-    def get_commit_message(participant_key: Optional[str], stage: str) -> str:
-        """Return expected commit message format."""
-        if participant_key:
-            return f"mpi: {participant_key} {stage} analysis"
-        else:
-            return f"mpi: {stage} analysis"
+    def get_commit_message(actor: str, stage: str, substep: str, scope: str, n_units: int = 0, n_flagged: int = 0) -> str:
+        """Return expected commit message format (substep-level)."""
+        return f"mpi: {actor} {stage}.{substep} {scope} ({n_units}units {n_flagged}flagged)"
 
     @staticmethod
     def validate_reasoning_log_entry(entry: str) -> bool:
@@ -360,46 +357,46 @@ class ManifestOrchestratorTester:
         print("\n[Test D] Git Commit Format")
         print("-" * 80)
 
-        # Test per-participant commit format
+        # Test per-participant commit format (substep-level)
         per_participant_commits = [
-            OrchestrationSpec.get_commit_message("p1s1", "transcript_prep"),
-            OrchestrationSpec.get_commit_message("p2s3", "diachronic"),
-            OrchestrationSpec.get_commit_message("p1s2", "synchronic"),
+            OrchestrationSpec.get_commit_message("p1s1", "transcript_prep", "hash_raw", "p1s1.transcript_prep", 1, 0),
+            OrchestrationSpec.get_commit_message("p2s3", "diachronic", "criteria_grouping", "p2s3.diachronic", 5, 1),
+            OrchestrationSpec.get_commit_message("p1s2", "synchronic", "theme_grouping_within_idu", "p1s2.synchronic.idu1", 8, 0),
         ]
 
         expected_per_participant = [
-            "mpi: p1s1 transcript_prep analysis",
-            "mpi: p2s3 diachronic analysis",
-            "mpi: p1s2 synchronic analysis",
+            "mpi: p1s1 transcript_prep.hash_raw p1s1.transcript_prep (1units 0flagged)",
+            "mpi: p2s3 diachronic.criteria_grouping p2s3.diachronic (5units 1flagged)",
+            "mpi: p1s2 synchronic.theme_grouping_within_idu p1s2.synchronic.idu1 (8units 0flagged)",
         ]
 
         for actual, expected in zip(per_participant_commits, expected_per_participant):
             self.assert_equal(
                 actual,
                 expected,
-                f"Per-participant commit: {expected}"
+                f"Per-participant substep commit: {expected}"
             )
 
-        # Test cross-participant commit format
+        # Test cross-participant commit format (substep-level)
         cross_participant_commits = [
-            OrchestrationSpec.get_commit_message(None, "generic_diachronic"),
-            OrchestrationSpec.get_commit_message(None, "generic_synchronic"),
-            OrchestrationSpec.get_commit_message(None, "global_synchronic"),
-            OrchestrationSpec.get_commit_message(None, "hypothesis"),
+            OrchestrationSpec.get_commit_message("generic_diachronic", "generic_diachronic", "idu_similarity_grouping", "event1", 12, 2),
+            OrchestrationSpec.get_commit_message("generic_synchronic", "generic_synchronic", "worksheet_assembly", "event1", 8, 0),
+            OrchestrationSpec.get_commit_message("global_synchronic", "global_synchronic", "global_synchronic", "study1", 15, 3),
+            OrchestrationSpec.get_commit_message("hypothesis", "hypothesis", "candidate_drafting", "study1.dv1", 10, 1),
         ]
 
         expected_cross_participant = [
-            "mpi: generic_diachronic analysis",
-            "mpi: generic_synchronic analysis",
-            "mpi: global_synchronic analysis",
-            "mpi: hypothesis analysis",
+            "mpi: generic_diachronic generic_diachronic.idu_similarity_grouping event1 (12units 2flagged)",
+            "mpi: generic_synchronic generic_synchronic.worksheet_assembly event1 (8units 0flagged)",
+            "mpi: global_synchronic global_synchronic.global_synchronic study1 (15units 3flagged)",
+            "mpi: hypothesis hypothesis.candidate_drafting study1.dv1 (10units 1flagged)",
         ]
 
         for actual, expected in zip(cross_participant_commits, expected_cross_participant):
             self.assert_equal(
                 actual,
                 expected,
-                f"Cross-participant commit: {expected}"
+                f"Cross-participant substep commit: {expected}"
             )
 
         return self.failed == 0

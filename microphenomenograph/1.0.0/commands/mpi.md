@@ -25,7 +25,7 @@ Microphenomenological Interview (MPI) analysis pipeline.
 | `generic-synchronic` | Cross-participant synchronic aggregation | mpi-generic-synchronic |
 | `global-synchronic` | Global synchronic synthesis | mpi-global-synchronic |
 | `hypothesis` | Generate causal research hypotheses | mpi-hypothesis |
-| `kappa [dir1] [dir2]` | Compute Cohen's κ inter-rater reliability | mpi-kappa |
+| `irr calibrate` | Compute inter-rater reliability (α, κ, αU, ARI with CIs) | mpi-irr |
 | `all` | Run full pipeline (respects mode setting) | orchestration logic |
 
 ## Options
@@ -70,7 +70,7 @@ Unknown subcommand: '<subcommand>'
 Usage: /mpi <subcommand> [options]
 
 Available subcommands: init, status, transcript-prep, diachronic, synchronic,
-generic-diachronic, generic-synchronic, global-synchronic, hypothesis, kappa, all
+generic-diachronic, generic-synchronic, global-synchronic, hypothesis, irr, all
 ```
 
 Subcommands `transcript-prep`, `diachronic`, and `synchronic` accept an optional
