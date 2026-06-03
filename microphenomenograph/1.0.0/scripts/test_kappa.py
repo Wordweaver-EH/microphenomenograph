@@ -12,6 +12,7 @@ import math
 import tempfile
 import csv
 from pathlib import Path
+import pytest
 
 # Add scripts/ to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,6 +28,7 @@ REFERENCE_SYNCHRONIC_KAPPA = 0.60
 TOLERANCE = 0.01
 
 
+@pytest.mark.skipif(not INTER_RATER_DIR.exists(), reason="inter-rater CSV fixtures not present (examples/inter-rater/ missing)")
 def test_diachronic_kappa_matches_reference():
     """AC7.1: Diachronic kappa matches kappa.Rmd within ±0.01."""
     kev = load_diachronic(INTER_RATER_DIR / "kev-diachronic-analysis.csv")
@@ -39,6 +41,7 @@ def test_diachronic_kappa_matches_reference():
     print(f"[PASS] Diachronic kappa: {kappa:.2f} (reference: {REFERENCE_DIACHRONIC_KAPPA})")
 
 
+@pytest.mark.skipif(not INTER_RATER_DIR.exists(), reason="inter-rater CSV fixtures not present (examples/inter-rater/ missing)")
 def test_synchronic_kappa_matches_reference():
     """AC7.1: Synchronic kappa matches kappa.Rmd within ±0.01."""
     kev = load_synchronic(INTER_RATER_DIR / "kev-synchronic-analysis.csv")
@@ -51,6 +54,7 @@ def test_synchronic_kappa_matches_reference():
     print(f"[PASS] Synchronic kappa: {kappa:.2f} (reference: {REFERENCE_SYNCHRONIC_KAPPA})")
 
 
+@pytest.mark.skipif(not INTER_RATER_DIR.exists(), reason="inter-rater CSV fixtures not present (examples/inter-rater/ missing)")
 def test_separate_diachronic_and_synchronic():
     """AC7.2: Kappa reported separately for each stage."""
     kev_dia = load_diachronic(INTER_RATER_DIR / "kev-diachronic-analysis.csv")
