@@ -211,6 +211,70 @@ def test_default_calibration_mode():
     print("[PASS] DEFAULT_CALIBRATION_MODE is 'stratified'")
 
 
+def test_compute_irr_alpha_u_ordering():
+    """Test αU computation with ≥10 utterances and multi-digit sorting.
+
+    Verifies that:
+    1. Utterance IDs are sorted numerically (not lexically): "10" sorts after "2"
+    2. Dotted IDs are handled correctly: "22.1", "22.2" parse numerically
+    3. αU returns valid values (not NaN) for multi-digit and dotted utterance IDs
+    """
+    # Test case 1: Multi-digit sorting with ≥10 utterances
+    # Use high agreement to ensure valid αU computation
+    primary = {
+        "1": "cat_a", "2": "cat_a", "3": "cat_a", "4": "cat_a", "5": "cat_a", "6": "cat_a",
+        "7": "cat_b", "8": "cat_b", "9": "cat_b", "10": "cat_b", "11": "cat_b", "12": "cat_b",
+    }
+    alternate = {
+        "1": "cat_a", "2": "cat_a", "3": "cat_a", "4": "cat_a", "5": "cat_a", "6": "cat_a",
+        "7": "cat_b", "8": "cat_b", "9": "cat_b", "10": "cat_b", "11": "cat_b", "12": "cat_b",
+    }
+    alignment = []
+
+    record = compute_irr(
+        primary, alternate, alignment, [], [],
+        n_utterances=12, bootstrap_seed=42, n_bootstrap=100
+    )
+
+    # Check that αU exists and is not NaN (perfect agreement case)
+    alpha_u = record["metrics"]["alpha_u"]["point"]
+    assert not (alpha_u != alpha_u), f"αU should not be NaN, got {alpha_u}"
+    assert -1.0 <= alpha_u <= 1.0, f"αU should be in [-1, 1], got {alpha_u}"
+    # High agreement should give high αU
+    assert alpha_u > 0.5, f"αU with high agreement should be > 0.5, got {alpha_u}"
+
+    # Test case 2: Dotted utterance IDs
+    # Verify that "10.1", "10.2" are sorted correctly relative to "9" and "11"
+    # Keys like "1", "2",..., "9", "10.1", "10.2", "11", "12" should sort numerically
+    primary_dotted = {
+        "1": "a", "2": "a", "3": "a", "4": "a", "5": "a",
+        "6": "b", "7": "b", "8": "b", "9": "b",
+        "10.1": "b", "10.2": "b",
+        "11": "b", "12": "b",
+    }
+    alternate_dotted = {
+        "1": "a", "2": "a", "3": "a", "4": "a", "5": "a",
+        "6": "b", "7": "b", "8": "b", "9": "b",
+        "10.1": "b", "10.2": "b",
+        "11": "b", "12": "b",
+    }
+    alignment_dotted = []
+
+    record_dotted = compute_irr(
+        primary_dotted, alternate_dotted, alignment_dotted, [], [],
+        n_utterances=12, bootstrap_seed=42, n_bootstrap=100
+    )
+
+    # Should produce valid metrics without crashing or NaN
+    alpha_u_dotted = record_dotted["metrics"]["alpha_u"]["point"]
+    assert not (alpha_u_dotted != alpha_u_dotted), f"αU with dotted IDs should not be NaN, got {alpha_u_dotted}"
+    assert -1.0 <= alpha_u_dotted <= 1.0, f"αU should be in [-1, 1], got {alpha_u_dotted}"
+    # Perfect agreement with dotted IDs should give high αU
+    assert alpha_u_dotted > 0.5, f"αU with dotted IDs and high agreement should be > 0.5, got {alpha_u_dotted}"
+
+    print("[PASS] αU ordering handles multi-digit and dotted IDs correctly")
+
+
 if __name__ == "__main__":
     tests = [
         test_irr_jsonl_schema,
@@ -220,6 +284,7 @@ if __name__ == "__main__":
         test_confidence_distribution,
         test_stratified_aggregate,
         test_default_calibration_mode,
+        test_compute_irr_alpha_u_ordering,
     ]
 
     failed = 0

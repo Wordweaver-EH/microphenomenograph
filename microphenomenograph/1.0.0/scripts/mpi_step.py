@@ -1018,13 +1018,46 @@ def _check_irr_gate(
 ) -> int:
     """
     At the start of each cross-participant close, check IRR calibration outcome.
-    - If outcome is low/missing: ALWAYS emit irr_warning audit event.
+
+    Maps cross-participant stages to upstream IRR stage:
+      - generic_diachronic → diachronic
+      - generic_synchronic → synchronic
+      - global_synchronic → synchronic
+      - hypothesis → synchronic
+
+    Filters irr_calibration.jsonl to records matching the upstream stage.
+    If any matching record has outcome != "passed": ALWAYS emit irr_warning audit event.
     - Without --strict-irr: proceed (return 0).
     - With --strict-irr: exit with irr_check_failed (return 1).
     """
+    # Map cross-participant stages to upstream IRR stages
+    stage_to_irr_stage = {
+        "generic_diachronic": "diachronic",
+        "generic_synchronic": "synchronic",
+        "global_synchronic": "synchronic",
+        "hypothesis": "synchronic",
+    }
+    irr_stage = stage_to_irr_stage.get(stage)
+    if not irr_stage:
+        # Not a cross-participant stage, skip IRR check
+        return 0
+
     irr_records = _load_irr_records(run_dir)
-    last_record = irr_records[-1] if irr_records else None
-    outcome = last_record.get("outcome") if last_record else None
+    # Filter records to those matching the upstream stage
+    stage_records = [r for r in irr_records if r.get("stage") == irr_stage]
+    # Check any matching record; if any has outcome != "passed", that's a failure
+    outcome = None
+    for record in stage_records:
+        record_outcome = record.get("outcome")
+        if record_outcome != "passed":
+            outcome = record_outcome
+            break
+    if not stage_records:
+        # No records for this stage found
+        outcome = None
+    elif outcome is None:
+        # All records for this stage passed
+        outcome = "passed"
 
     if outcome != "passed":
         # Always emit irr_warning, regardless of --strict-irr

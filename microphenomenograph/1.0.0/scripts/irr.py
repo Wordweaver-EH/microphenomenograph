@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IRR calibration module — Krippendorff α, Cohen's κ, αU, ARI with bootstrap CIs.
+IRR calibration module — Krippendorff α, Cohen's κ, αU (approximation), ARI with bootstrap CIs.
 
 Implements inter-rater reliability (IRR) metrics for MPI analysis quality assessment.
 Pure Python stdlib (no external dependencies).
@@ -11,7 +11,7 @@ Key functions:
   - compute_coincidence: Build union-of-categories coincidence matrix
   - alpha_nominal: Krippendorff's nominal α (primary metric)
   - cohens_kappa: Cohen's κ (secondary, literal match to manual)
-  - alpha_unitizing: Krippendorff's αU (segmentation metric, label-independent)
+  - alpha_unitizing: Boundary-agreement approximation for segmentation (label-independent)
   - adjusted_rand_index: ARI (label-permutation-invariant sanity check)
   - bootstrap_ci: Naive utterance or block bootstrap for CIs
   - compute_irr: Top-level convenience — all 4 metrics with bootstrap CIs
@@ -19,7 +19,6 @@ Key functions:
 Default calibration mode: "stratified" (one transcript per IV-level stratum).
 """
 import csv
-import json
 import math
 import random
 from pathlib import Path
@@ -150,6 +149,43 @@ def load_synchronic_csv(csv_path):
 
         assignments[utt] = isunum
     return assignments
+
+
+# ---------------------------------------------------------------------------
+# Shared utterance sorting
+# ---------------------------------------------------------------------------
+
+def _utt_sort_key(utterance_id: str) -> tuple:
+    """
+    Parse utterance ID into numeric tuple for sorting.
+    Handles both integer strings ("1", "10", "2") and dotted strings ("22.1", "22.2").
+
+    Returns tuple of integers for lexicographic (numeric) sorting.
+
+    Examples:
+      "1" -> (1,)
+      "10" -> (10,)
+      "2" -> (2,)
+      "22.1" -> (22, 1)
+      "22.2" -> (22, 2)
+    """
+    utt_str = str(utterance_id)
+    parts = utt_str.split('.')
+    try:
+        # All parts should be numeric
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        # Fallback: try to extract leading numeric part
+        numeric_part = ""
+        for char in utt_str:
+            if char.isdigit():
+                numeric_part += char
+            else:
+                break
+        if numeric_part:
+            return (int(numeric_part),)
+        # Last resort: return 0 for non-numeric strings
+        return (0,)
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +374,11 @@ def alpha_unitizing(
     n_utterances: int,
 ) -> float:
     """
-    Krippendorff's unitizing α (αU) for segmentation agreement.
+    Segmentation agreement metric (αU approximation).
+
+    This is a boundary-agreement approximation, not the canonical length-weighted
+    Krippendorff αU continuum formula. The metric is chance-corrected via bootstrap.
+
     Operates on raw utterance-range boundaries, label-independent.
 
     Args:
@@ -409,8 +449,6 @@ def adjusted_rand_index(labels_a: list, labels_b: list) -> float:
 
     Reference: Hubert & Arabie (1985), Comparing Partitions. J. Classification.
     """
-    from math import comb
-
     if len(labels_a) != len(labels_b):
         raise ValueError("labels_a and labels_b must have same length")
 
@@ -433,16 +471,16 @@ def adjusted_rand_index(labels_a: list, labels_b: list) -> float:
 
     # Compute the three terms of the ARI formula
     # Term 1: sum over contingency cells of C(n_ij, 2)
-    sum_cij = sum(comb(count, 2) for count in contingency.values())
+    sum_cij = sum(math.comb(count, 2) for count in contingency.values())
 
     # Term 2: sum of C(a_i, 2) for each row
-    sum_ai = sum(comb(count, 2) for count in row_sums.values())
+    sum_ai = sum(math.comb(count, 2) for count in row_sums.values())
 
     # Term 3: sum of C(b_j, 2) for each column
-    sum_bj = sum(comb(count, 2) for count in col_sums.values())
+    sum_bj = sum(math.comb(count, 2) for count in col_sums.values())
 
     # Total binomial coefficient
-    cn2 = comb(n, 2)
+    cn2 = math.comb(n, 2)
 
     if cn2 == 0:
         return 1.0 if labels_a == labels_b else 0.0
@@ -569,35 +607,33 @@ def _derive_boundaries(assignments: dict, n_utterances: int) -> list:
     if not assignments:
         return boundaries
 
-    # Sort assignment keys by utterance number (extract numeric portion)
-    def utt_number(utt_id):
-        # Handle both "1" and "p1s1.1" formats
-        parts = str(utt_id).split('.')
-        try:
-            return int(parts[-1])
-        except ValueError:
-            return int(parts[0]) if parts[0].isdigit() else 0
-
-    sorted_utts = sorted(assignments.keys(), key=utt_number)
+    # Sort assignment keys using _utt_sort_key for numeric ordering
+    sorted_utts = sorted(assignments.keys(), key=_utt_sort_key)
     if not sorted_utts:
         return boundaries
 
     current_cat = assignments[sorted_utts[0]]
-    start_utt = utt_number(sorted_utts[0])
+    start_tuple = _utt_sort_key(sorted_utts[0])
+    start_utt = start_tuple[0] if start_tuple else 0
 
     for i in range(1, len(sorted_utts)):
         uid = sorted_utts[i]
         cat = assignments[uid]
-        utt_num = utt_number(uid)
+        utt_tuple = _utt_sort_key(uid)
+        utt_num = utt_tuple[0] if utt_tuple else 0
 
         if cat != current_cat:
             # Category change: close the previous boundary
-            boundaries.append((start_utt, utt_number(sorted_utts[i - 1])))
+            end_tuple = _utt_sort_key(sorted_utts[i - 1])
+            end_utt = end_tuple[0] if end_tuple else 0
+            boundaries.append((start_utt, end_utt))
             start_utt = utt_num
             current_cat = cat
 
     # Close the last boundary
-    boundaries.append((start_utt, utt_number(sorted_utts[-1])))
+    end_tuple = _utt_sort_key(sorted_utts[-1])
+    end_utt = end_tuple[0] if end_tuple else 0
+    boundaries.append((start_utt, end_utt))
 
     return boundaries
 
@@ -614,6 +650,12 @@ def compute_irr(
 ) -> dict:
     """
     Top-level convenience: runs all four metrics with bootstrap CIs.
+
+    Computes:
+      - Nominal α: Primary agreement metric
+      - Cohen's κ: Secondary metric for literal match comparison
+      - αU (approximation): Boundary-agreement metric for segmentation
+      - ARI: Label-permutation-invariant sanity check
 
     Args:
         primary: {utterance_id: category}
@@ -638,7 +680,8 @@ def compute_irr(
     )
 
     # Build lists of labels for bootstrap
-    utterance_ids = sorted(set(primary.keys()) | set(alternate.keys()))
+    # Use _utt_sort_key for numeric sorting (handles "1", "10", "2", "22.1", etc.)
+    utterance_ids = sorted(set(primary.keys()) | set(alternate.keys()), key=_utt_sort_key)
     labels_primary = [primary.get(uid, "") for uid in utterance_ids]
     labels_alternate = [alternate.get(uid, "") for uid in utterance_ids]
 

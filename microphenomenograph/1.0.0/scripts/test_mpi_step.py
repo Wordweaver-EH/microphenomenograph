@@ -1568,3 +1568,73 @@ class TestStrictIRRGate:
         audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
         has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
         assert has_irr_warning, "Audit should contain irr_warning event when outcome is low"
+
+    def test_strict_irr_multi_record_filters_by_stage(self, tmp_path):
+        """With --strict-irr and multiple records: gate filters by stage and blocks if any non-passed.
+
+        Tests that when irr_calibration.jsonl has multiple records (e.g., one per stratum),
+        _check_irr_gate filters by the upstream stage and blocks if ANY matching record
+        has outcome != "passed".
+        """
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write TWO IRR records: first one is low, second one is passed
+        # This simulates the stratified mode with multiple calibration transcripts
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(
+            json.dumps({
+                "stage": "diachronic",
+                "transcript_id": "p1s1",
+                "outcome": "low",  # First record: low outcome
+                "n_utterances": 70,
+            }) + "\n" +
+            json.dumps({
+                "stage": "diachronic",
+                "transcript_id": "p1s2",
+                "outcome": "passed",  # Second record: passed
+                "n_utterances": 65,
+            }) + "\n"
+        )
+
+        # Try to close generic_diachronic with --strict-irr
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with multi-record IRR and --strict-irr",
+            "--run-dir", str(run_dir),
+            "--strict-irr",  # KEY: strict-irr gate enabled
+        ])
+
+        # Should fail because first record (for diachronic stage) has outcome='low'
+        # even though the second record passed
+        assert rc != 0, f"Expected non-zero rc with --strict-irr and low outcome in first record, got {rc}"
+
+        # Check audit log contains irr_warning
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        if audit_path.exists():
+            audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+            has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
+            assert has_irr_warning, "Audit should contain irr_warning event for low outcome"
