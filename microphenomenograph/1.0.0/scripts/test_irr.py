@@ -221,6 +221,36 @@ def test_block_bootstrap_vs_naive_for_alpha_u():
     print(f"[PASS] Block bootstrap wider for aU: naive_width={naive_width:.4f}, block_width={block_width:.4f}")
 
 
+def test_utt_sort_key_numeric_ordering():
+    """Test that _utt_sort_key correctly sorts utterance IDs numerically, not lexically.
+
+    This is a direct test for the sort key function. With lexical sort, "10" < "2" < "3",
+    which breaks boundary detection in alpha_unitizing. This test ensures numeric sort
+    is applied everywhere utterance IDs are sorted.
+    """
+    from irr import _utt_sort_key
+
+    # Test single-digit and multi-digit numeric IDs
+    test_ids = ["1", "2", "10", "22.1", "22.2", "9"]
+    expected_order = ["1", "2", "9", "10", "22.1", "22.2"]
+
+    sorted_ids = sorted(test_ids, key=_utt_sort_key)
+    assert sorted_ids == expected_order, (
+        f"_utt_sort_key numeric sort failed: got {sorted_ids}, expected {expected_order}"
+    )
+
+    # Verify that lexical sort would give wrong order
+    lexical_order = sorted(test_ids)
+    assert lexical_order != expected_order, (
+        f"Lexical sort should differ from numeric sort"
+    )
+    assert lexical_order == ["1", "10", "2", "22.1", "22.2", "9"], (
+        f"Lexical sort should be ['1', '10', '2', '22.1', '22.2', '9'], got {lexical_order}"
+    )
+
+    print(f"[PASS] _utt_sort_key numeric ordering: {test_ids} -> {sorted_ids}")
+
+
 if __name__ == "__main__":
     tests = [
         test_identical_inputs,
@@ -230,6 +260,7 @@ if __name__ == "__main__":
         test_asymmetric_marginals,
         test_ari_partial_agreement,
         test_block_bootstrap_vs_naive_for_alpha_u,
+        test_utt_sort_key_numeric_ordering,
     ]
 
     failed = 0

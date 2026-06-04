@@ -251,22 +251,29 @@ def test_compute_irr_alpha_u_ordering():
     # With disagreement at one boundary, expect moderate αU (not perfect, not terrible)
     assert alpha_u > 0.0, f"αU with localized disagreement should be > 0.0, got {alpha_u}"
     assert alpha_u < 1.0, f"αU with disagreement should be < 1.0 (not perfect), got {alpha_u}"
+    # Pin the expected value: correct numeric sort → 0.2727, buggy lexical sort → 0.8182
+    # Use tolerance of 0.05 to exclude the buggy value
+    assert abs(alpha_u - 0.2727) < 0.05, (
+        f"αU with numeric sort should be ~0.2727 (got {alpha_u:.4f}). "
+        f"If value is ~0.8182, sort is lexical (buggy)."
+    )
 
-    # Test case 2: Dotted utterance IDs with disagreement
+    # Test case 2: Dotted utterance IDs with disagreement at multi-digit boundary
     # Keys: "1"-"9", "10.1", "10.2", "11"-"12"
-    # - Analyst A: "1"-"5" → "A", rest → "B"
-    # - Analyst B: "1"-"7" → "A", rest → "B"
-    # Disagreement at boundary between "7" and "8" (or "7" and "10.1" if sort is wrong)
+    # - Analyst A: "1"-"7" → "A", rest → "B"  (split between 7 and 8)
+    # - Analyst B: "1"-"9" → "A", rest → "B"  (split between 9 and 10.1)
+    # This creates disagreement at the boundary transition to multi-digit keys.
+    # Numeric sort: "1"<"2"<..."9"<"10.1"<"10.2"<"11"<"12"
+    # Lexical sort would wrongly place "10.1"/"10.2" earlier
     primary_dotted = {
-        "1": "A", "2": "A", "3": "A", "4": "A", "5": "A",
-        "6": "B", "7": "B", "8": "B", "9": "B",
+        "1": "A", "2": "A", "3": "A", "4": "A", "5": "A", "6": "A", "7": "A",
+        "8": "B", "9": "B",
         "10.1": "B", "10.2": "B",
         "11": "B", "12": "B",
     }
     alternate_dotted = {
-        "1": "A", "2": "A", "3": "A", "4": "A", "5": "A",
-        "6": "A", "7": "A",
-        "8": "B", "9": "B",
+        "1": "A", "2": "A", "3": "A", "4": "A", "5": "A", "6": "A", "7": "A",
+        "8": "A", "9": "A",
         "10.1": "B", "10.2": "B",
         "11": "B", "12": "B",
     }
@@ -277,13 +284,16 @@ def test_compute_irr_alpha_u_ordering():
         n_utterances=12, bootstrap_seed=42, n_bootstrap=100
     )
 
-    # With numeric sort on dotted IDs, should produce valid metrics
+    # With numeric sort on dotted IDs, should produce specific value
     alpha_u_dotted = record_dotted["metrics"]["alpha_u"]["point"]
     assert not (alpha_u_dotted != alpha_u_dotted), f"αU with dotted IDs should not be NaN, got {alpha_u_dotted}"
     assert -1.0 <= alpha_u_dotted <= 1.0, f"αU should be in [-1, 1], got {alpha_u_dotted}"
-    # Disagreement at one boundary should give moderate αU
-    assert alpha_u_dotted > -1.0 and alpha_u_dotted < 1.0, \
-        f"αU with disagreement and dotted IDs should be valid, got {alpha_u_dotted}"
+    # Pin the expected value for dotted case: numeric sort should give ~0.3333
+    # (disagreement at 8/9 boundary vs 10.1 boundary affects αU)
+    assert abs(alpha_u_dotted - 0.3333) < 0.05, (
+        f"αU with dotted numeric sort should be ~0.3333 (got {alpha_u_dotted:.4f}). "
+        f"Large deviations suggest incorrect sort order."
+    )
 
 
 if __name__ == "__main__":
