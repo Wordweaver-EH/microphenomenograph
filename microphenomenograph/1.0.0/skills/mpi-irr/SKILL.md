@@ -89,8 +89,8 @@ Append one structured record to `.mpi/irr_calibration.jsonl`.
 
 At the start of each cross-participant stage (`mpi-generic-diachronic`, etc.):
 
-1. Read `.mpi/irr_calibration.jsonl` (most recent record for the upstream stage)
-2. If missing or `outcome == "low"`:
+1. Read `.mpi/irr_calibration.jsonl` and filter to records matching the upstream stage
+2. If no matching records, or if **any** matching record has `outcome != "passed"`:
    - Emit `irr_warning` audit event with `mpi.blocked_reason: "irr_low|irr_missing"`
    - **Without `--strict-irr`**: proceed with a console warning
    - **With `--strict-irr`**: exit with `irr_check_failed` error before producing any artifact
@@ -135,6 +135,6 @@ Phase 13 implements `scripts/irr.py` which backs the agreement computation.
 | `irr_calibration.agreement_computation` | orchestrator | record appended to `.mpi/irr_calibration.jsonl` | `global` | Mechanical computation; no LLM, no prompt artifact. Writes four metrics with bootstrap CIs |
 
 **Cross-participant warning gate:** Skills that follow IRR calibration in the pipeline
-(`mpi-generic-diachronic`, etc.) emit an `irr_warning` audit event at stage start if the
-most-recent IRR record's α CI lower bound is below 0.6 or no IRR record exists. They proceed
-unless `--strict-irr` is passed, in which case they exit with a named ERROR.
+(`mpi-generic-diachronic`, etc.) emit an `irr_warning` audit event at stage start if
+**any** IRR record for the upstream stage has outcome != "passed", or no records exist.
+They proceed unless `--strict-irr` is passed, in which case they exit with a named ERROR.

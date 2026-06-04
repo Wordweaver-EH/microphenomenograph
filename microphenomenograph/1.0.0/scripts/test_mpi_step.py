@@ -1638,3 +1638,64 @@ class TestStrictIRRGate:
             audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
             has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
             assert has_irr_warning, "Audit should contain irr_warning event for low outcome"
+
+    def test_strict_irr_missing_outcome_key_blocks(self, tmp_path):
+        """With --strict-irr and missing outcome key: gate treats as irr_missing and blocks.
+
+        Tests that a stage-matching record with a missing 'outcome' key is treated as
+        a missing outcome (not as a "passed" outcome) and triggers irr_missing block.
+        This is a defense-in-depth regression test: untrusted writes (from LLM-driven
+        mpi-irr skill) should not be able to bypass the gate via missing keys.
+        """
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write an IRR record with missing 'outcome' key (simulates malformed write)
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(json.dumps({
+            "stage": "diachronic",
+            "transcript_id": "p1s1",
+            # Missing 'outcome' key
+            "n_utterances": 70,
+        }) + "\n")
+
+        # Try to close generic_diachronic with --strict-irr
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with missing outcome key and --strict-irr",
+            "--run-dir", str(run_dir),
+            "--strict-irr",  # KEY: strict-irr gate enabled
+        ])
+
+        # Should fail because outcome key is missing (treats as irr_missing)
+        assert rc != 0, f"Expected non-zero rc with --strict-irr and missing outcome key, got {rc}"
+
+        # Check that stderr contains irr_check_failed
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        if audit_path.exists():
+            audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+            has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
+            assert has_irr_warning, "Audit should contain irr_warning event for missing outcome"

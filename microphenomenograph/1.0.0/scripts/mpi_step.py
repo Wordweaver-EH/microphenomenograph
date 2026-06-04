@@ -1045,19 +1045,16 @@ def _check_irr_gate(
     irr_records = _load_irr_records(run_dir)
     # Filter records to those matching the upstream stage
     stage_records = [r for r in irr_records if r.get("stage") == irr_stage]
-    # Check any matching record; if any has outcome != "passed", that's a failure
-    outcome = None
-    for record in stage_records:
-        record_outcome = record.get("outcome")
-        if record_outcome != "passed":
-            outcome = record_outcome
-            break
+
+    # Determine outcome: if no records, outcome is None (irr_missing).
+    # If any matching record has outcome != "passed", use that outcome.
+    # Otherwise, all records passed.
     if not stage_records:
-        # No records for this stage found
-        outcome = None
-    elif outcome is None:
-        # All records for this stage passed
-        outcome = "passed"
+        outcome = None  # No records → irr_missing path
+    else:
+        # Find first non-"passed" outcome, or default to "passed"
+        failing = [r.get("outcome") for r in stage_records if r.get("outcome") != "passed"]
+        outcome = failing[0] if failing else "passed"
 
     if outcome != "passed":
         # Always emit irr_warning, regardless of --strict-irr
