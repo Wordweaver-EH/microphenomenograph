@@ -647,6 +647,11 @@ def compute_irr(
     n_utterances: int,
     bootstrap_seed: int = 42,
     n_bootstrap: int = 5000,
+    stage: str = "diachronic",
+    transcript_id: str = "",
+    participant_id: str = "",
+    primary_model: str = "",
+    alternate_model: str = "",
 ) -> dict:
     """
     Top-level convenience: runs all four metrics with bootstrap CIs.
@@ -665,6 +670,11 @@ def compute_irr(
         n_utterances: total utterance count
         bootstrap_seed: seed for reproducibility
         n_bootstrap: number of bootstrap resamples
+        stage: "diachronic" or "synchronic" (required for IRR gate mapping)
+        transcript_id: identifier of the transcript (optional)
+        participant_id: identifier of the participant (optional)
+        primary_model: primary analysis model name (optional)
+        alternate_model: alternate analysis model name (optional)
 
     Returns: dict with all metrics, CIs, confidence distribution, outcome
     """
@@ -815,11 +825,11 @@ def compute_irr(
 
     # Build complete record
     record = {
-        "stage": "diachronic",  # Or "synchronic", set by caller
-        "participant_id": "",  # Set by caller
-        "transcript_id": "",  # Set by caller
-        "primary_model": "",  # Set by caller
-        "alternate_model": "",  # Set by caller
+        "stage": stage,
+        "participant_id": participant_id,
+        "transcript_id": transcript_id,
+        "primary_model": primary_model,
+        "alternate_model": alternate_model,
         "n_utterances": n_utterances,
         "n_bootstrap": n_bootstrap,
         "bootstrap_seed": bootstrap_seed,

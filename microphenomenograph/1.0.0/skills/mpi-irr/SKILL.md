@@ -12,21 +12,25 @@ transcript's diachronic and synchronic stages complete. Warning-by-default; opt-
 `--strict-irr` blocks cross-participant stages.
 
 Two IRR checks per run:
-1. After `diachronic.idu_naming_ordering` closes for the calibration transcript
-2. After `synchronic.isu_second_level_grouping` (last IDU) closes for the calibration transcript
+1. After `diachronic.idu_naming_ordering` closes for each calibration transcript
+2. After `synchronic.isu_second_level_grouping` (last IDU) closes for each calibration transcript
 
-When `study.calibration_transcript = "stratified"`, both checks fire once per calibration
-transcript, plus one aggregate summary record per stage.
+When `study.calibration_mode = "stratified"`, both checks fire once per calibration
+transcript in `study.calibration_transcript_ids`, plus one aggregate summary record per stage.
 
 ## Calibration transcript strategy
 
-Set at `/mpi init --calibration <strategy>`. Valid strategies:
+Set at `/mpi init --calibration <strategy>`. Stored in manifest as:
+- `study.calibration_transcript_ids`: list of transcript IDs selected for IRR calibration
+- `study.calibration_mode`: string, either `"stratified"` (default) or `"smoke_test"`
+
+Valid strategies:
 
 | Strategy | Meaning | Notes |
 |---|---|---|
-| `stratified` | One transcript per (suggestion × IV-level) stratum (default) | Methodologically defensible; requires ≥1 transcript per stratum |
-| `<transcript_id>` | Specific transcript (e.g., `p1s1`) | Defensible if pre-chosen and documented |
-| `first` | First transcript to complete (smoke-test mode) | Sets `study.calibration_mode = "smoke_test"` in manifest; user must confirm |
+| `stratified` | One transcript per (suggestion × IV-level) stratum (default) | Methodologically defensible; requires ≥1 transcript per stratum; populates `study.calibration_transcript_ids` |
+| `<transcript_id>` | Specific transcript (e.g., `p1s1`) | Defensible if pre-chosen and documented; sets `study.calibration_transcript_ids = ["p1s1"]` |
+| `first` | First transcript to complete (smoke-test mode) | Sets `study.calibration_mode = "smoke_test"` and `study.calibration_transcript_ids` dynamically |
 
 If `stratified` is requested but any stratum has zero transcripts, init refuses with
 `stratified_unavailable` and prompts the user to pick an alternative.
@@ -71,8 +75,15 @@ they contribute zero-diagonal cells with nonzero marginals, not "structural zero
 
 ### Step 3: `irr_calibration.agreement_computation` (orchestrator)
 
-Call `scripts/irr.py:compute_irr()` with the aligned assignments. Writes four metrics with
-95% bootstrap CIs:
+Call `scripts/irr.py:compute_irr()` with the aligned assignments. Caller MUST pass:
+- `primary`, `alternate`: {utterance_id: category} dicts
+- `alignment`: [{primary, alternate, confidence, rationale}, ...]
+- `unmatched_primary`, `unmatched_alternate`: lists of unmatched categories
+- `n_utterances`: total utterance count
+- `stage`: **REQUIRED** — either `"diachronic"` or `"synchronic"` per the calibration stage
+- `transcript_id`, `participant_id`, `primary_model`, `alternate_model`: optional metadata strings
+
+Writes four metrics with 95% bootstrap CIs:
 
 | Metric | Bootstrap | Notes |
 |---|---|---|
@@ -81,7 +92,9 @@ Call `scripts/irr.py:compute_irr()` with the aligned assignments. Writes four me
 | αU | Block (block_length ≈ sqrt(N)) | Segmentation metric, label-independent |
 | ARI | Naive utterance | Label-permutation-invariant sanity check |
 
-Append one structured record to `.mpi/irr_calibration.jsonl`.
+Append one structured record to `.mpi/irr_calibration.jsonl`. The `stage` field in the
+record is set to the caller-provided value (either `"diachronic"` or `"synchronic"`), which
+is used by the IRR gate to map cross-participant stages to their upstream IRR stage.
 
 `outcome = "passed"` iff `alpha.ci_lo >= 0.6` (conservative against small-N noise).
 

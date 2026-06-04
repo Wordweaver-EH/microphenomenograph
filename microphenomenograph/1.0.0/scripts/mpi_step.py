@@ -1493,6 +1493,11 @@ def cmd_close(args: argparse.Namespace) -> int:
                 cwd=run_dir, check=False,
             )
             if r_cascade_add.returncode == 0:
+                # Also stage all deletions in analyses/ (original artifact paths)
+                _git(
+                    ["add", "-u", "analyses/"],
+                    cwd=run_dir, check=False,
+                )
                 _git(
                     ["commit", "-m",
                      f"mpi: cascade reset after criteria_revision re-close {close_id[:7]}"],

@@ -1416,6 +1416,25 @@ class TestStrictIRRGate:
             }
         }
 
+        # Mark generic_synchronic prerequisites as done for the IDU scope
+        manifest["participants"][f"{transcript_id}-idu1"]["stages"]["generic_synchronic"] = {
+            "status": "done",
+            "substeps": {
+                "select_generic_idus_of_interest": {
+                    "status": "done",
+                    "close_id": "fake-close-id-11",
+                    "output_path": "analyses/fake.json",
+                    "artifact_shas": {},
+                },
+                "worksheet_assembly": {
+                    "status": "done",
+                    "close_id": "fake-close-id-12",
+                    "output_path": "analyses/fake.json",
+                    "artifact_shas": {},
+                },
+            }
+        }
+
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
         return run_dir
@@ -1699,3 +1718,126 @@ class TestStrictIRRGate:
             audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
             has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
             assert has_irr_warning, "Audit should contain irr_warning event for missing outcome"
+
+    def test_strict_irr_synchronic_stage_record_passed_allows_close(self, tmp_path):
+        """With --strict-irr and synchronic stage record with outcome='passed': generic_synchronic close succeeds.
+
+        Tests that the synchronic → synchronic mapping works correctly and allows close
+        when a record with stage='synchronic' and outcome='passed' exists.
+        """
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write a synchronic IRR record with outcome='passed'
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(json.dumps({
+            "stage": "synchronic",  # KEY: synchronic stage
+            "transcript_id": "p1s1",
+            "outcome": "passed",
+            "n_utterances": 50,
+        }) + "\n")
+
+        # Try to close a generic_synchronic substep with --strict-irr and passing synchronic IRR record
+        art_json = _write_artifact(run_dir, "p1s1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_synchronic", "isu_second_level_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_synchronic",
+            "event": "Test Event",
+            "iv_category": "low",
+            "generic_idu": "Test IDU",
+            "isus": [{
+                "isu_name": "Test ISU",
+                "criteria": ["Test criteria"],
+                "confidence": 4,
+                "flag_for_review": False,
+                "isu_second_level_of_abstraction": "Level 2",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1-idu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "p1s1-idu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with synchronic passed IRR",
+            "--run-dir", str(run_dir),
+            "--strict-irr",
+        ])
+
+        # Should succeed because synchronic IRR outcome is "passed"
+        assert rc == 0, f"Expected rc=0 with --strict-irr and synchronic outcome='passed', got {rc}"
+
+    def test_strict_irr_synchronic_stage_record_low_blocks_close(self, tmp_path):
+        """With --strict-irr and synchronic stage record with outcome='low': generic_synchronic close fails.
+
+        Tests that the synchronic → synchronic mapping correctly blocks when a record
+        with stage='synchronic' and outcome='low' exists.
+        """
+        run_dir = self._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+
+        # Pre-write a synchronic IRR record with outcome='low'
+        irr_path = run_dir / ".mpi" / "irr_calibration.jsonl"
+        irr_path.write_text(json.dumps({
+            "stage": "synchronic",  # KEY: synchronic stage
+            "transcript_id": "p1s1",
+            "outcome": "low",
+            "n_utterances": 50,
+        }) + "\n")
+
+        # Try to close a generic_synchronic substep with --strict-irr but low synchronic IRR outcome
+        art_json = _write_artifact(run_dir, "p1s1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_synchronic", "isu_second_level_grouping")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_synchronic",
+            "event": "Test Event",
+            "iv_category": "low",
+            "generic_idu": "Test IDU",
+            "isus": [{
+                "isu_name": "Test ISU",
+                "criteria": ["Test criteria"],
+                "confidence": 4,
+                "flag_for_review": False,
+                "isu_second_level_of_abstraction": "Level 2",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1-idu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "p1s1-idu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close with synchronic low IRR",
+            "--run-dir", str(run_dir),
+            "--strict-irr",
+        ])
+
+        # Should fail because synchronic IRR outcome is "low"
+        assert rc != 0, f"Expected non-zero rc with --strict-irr and synchronic outcome='low', got {rc}"
+
+        # Check audit log contains irr_warning
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        if audit_path.exists():
+            audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+            has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
+            assert has_irr_warning, "Audit should contain irr_warning event for synchronic low outcome"

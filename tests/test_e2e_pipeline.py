@@ -1035,8 +1035,9 @@ class TestAC30_CrossParticipantCascade:
         analyses = run_dir / "analyses"
         analyses.mkdir()
 
-        # The cross-participant participant key and its artifact
-        gd_key = "generic_diachronic"
+        # The cross-participant participant key (realistic format: event<E>-cat-<C>)
+        # and its artifact
+        gd_key = "event1-cat-low"
         gd_artifact_json = (
             analyses / f"{gd_key}-generic_diachronic.idu_similarity_grouping.json"
         )
@@ -1048,10 +1049,10 @@ class TestAC30_CrossParticipantCascade:
             encoding="utf-8",
         )
         gd_artifact_md.write_text(
-            "# generic_diachronic idu_similarity_grouping\n", encoding="utf-8"
+            "# event1-cat-low idu_similarity_grouping\n", encoding="utf-8"
         )
 
-        # Manifest: p1s1 criteria_grouping done; generic_diachronic idu_similarity done
+        # Manifest: p1s1 criteria_grouping done; event1-cat-low idu_similarity done
         manifest = {
             "version": "2.0",
             "run_id": "cross-cascade-run-id",
@@ -1118,6 +1119,7 @@ class TestAC30_CrossParticipantCascade:
         run_dir, gd_artifact_json, gd_artifact_md = cross_cascade_run
         analyses = run_dir / "analyses"
         tid = "p1s1"
+        gd_key = "event1-cat-low"
 
         # Confirm artifact exists before cascade
         assert gd_artifact_json.exists(), (
@@ -1156,19 +1158,32 @@ class TestAC30_CrossParticipantCascade:
             "_superseded/ directory not created after cascade"
         )
         assert not gd_artifact_json.exists(), (
-            "generic_diachronic idu_similarity_grouping.json still at original path "
+            f"{gd_key}-generic_diachronic artifact still at original path "
             "after cascade — cross-participant cascade branch did not fire"
         )
         # Confirm it landed in _superseded/<close_id>/
-        gd_key = "generic_diachronic"
         found = any(
             (subdir / f"{gd_key}-generic_diachronic.idu_similarity_grouping.json").exists()
             for subdir in superseded_dir.iterdir()
             if subdir.is_dir()
         )
         assert found, (
-            "generic_diachronic idu_similarity_grouping.json not found in _superseded/ "
+            f"{gd_key}-generic_diachronic.idu_similarity_grouping.json not found in _superseded/ "
             "— cross-participant cascade artifacts not moved correctly"
+        )
+
+        # AC30 additional check: git tree must be clean after cascade (no unstaged deletions)
+        # The cascade should stage both the moved artifacts AND the deletions at the original paths
+        git_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=run_dir,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        assert git_status.stdout.strip() == "", (
+            f"git tree dirty after cascade reset: {git_status.stdout}\n"
+            "Cascade commit should stage all deletions in analyses/ via 'git add -u'"
         )
 
 

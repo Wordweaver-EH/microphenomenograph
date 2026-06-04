@@ -175,7 +175,7 @@ This means running init twice never resets completed work.
 6. For each file, read line 1 and parse the header regex.
    - On parse failure: print error and skip this file (do not abort entire run).
 7. Build the participant entry (new or merge with existing per idempotency rules).
-8. Write manifest via `mpi_step.py close` (atomic write handled by the helper).
+8. Write manifest directly to `.mpi/project.json` (atomic write, not via `mpi_step.py close`).
 9. Report: "Initialised N participants in `<RUN_DIR>`. M already had completed stages
    (preserved). Run subsequent /mpi commands from `<RUN_DIR>`."
 
@@ -202,7 +202,7 @@ when `study.config_provenance == "llm_proposed_user_confirmed"`).
 |---------|-------|-----------|-------|
 | `init.scan_transcripts` | orchestrator | `<manifest>.json` (initial write) | No prompt artifact. Records `study.transcripts[transcript_id].raw_sha256` for each transcript. |
 | `init.propose_study_config` | orchestrator (LLM optional) | `init.propose_study_config.{json,md}` + `.prompt.json` when LLM path | Skipped entirely when `study.config_provenance` is `preregistered` or `user_specified`. |
-| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` (records final IV/DV) | Records `study.config_provenance` immutably; also records `study.calibration_transcript`. |
+| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` (records final IV/DV) | Records `study.config_provenance` immutably; also records `study.calibration_transcript_ids` and `study.calibration_mode`. |
 
 **Commit message format:** `mpi: orchestrator init.<substep> (<N>transcripts scanned)` or similar.
 

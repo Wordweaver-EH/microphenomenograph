@@ -72,7 +72,9 @@ Example: `Participant 1, Suggestion 2 (Scored 3/5)` → p=1, s=2, score=3
 Runtime state file. Top-level structure:
 - `version`: `"2.0"`
 - `run_id`: UUID4 string
-- `study`: `{run_repo_mode, git_remote_configured, calibration_mode?}`
+- `study`: `{run_repo_mode, git_remote_configured, calibration_transcript_ids: [], calibration_mode?}`
+  - `calibration_transcript_ids`: list of transcript IDs selected for IRR calibration (e.g., `["p1s1", "p3s2"]` for stratified mode)
+  - `calibration_mode`: optional string, either `"stratified"` (default, one per IV-level stratum) or `"smoke_test"` (first available)
 - `participants`: dict keyed by participant scope (e.g. `p1s1`, `p1s1-idu1`), each with:
   - `stages`: dict keyed by stage name, each with:
     - `status`: `pending | done | flagged | error`
