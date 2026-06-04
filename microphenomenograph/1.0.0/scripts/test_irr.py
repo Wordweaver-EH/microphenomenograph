@@ -248,7 +248,96 @@ def test_utt_sort_key_numeric_ordering():
         f"Lexical sort should be ['1', '10', '2', '22.1', '22.2', '9'], got {lexical_order}"
     )
 
-    print(f"[PASS] _utt_sort_key numeric ordering: {test_ids} -> {sorted_ids}")
+
+def test_compute_irr_stage_field_propagates():
+    """Verify compute_irr stage parameter propagates into returned record.
+
+    This test catches regressions where stage parameter is ignored or hardcoded.
+    The record's 'stage' field must reflect the parameter passed to compute_irr,
+    not default to 'diachronic' regardless of caller intent.
+
+    This is critical for --strict-irr gate: cross-participant stages must correctly
+    route to synchronic calibration, not diachronic (which would be unverified).
+    """
+    # Minimal utterance data (2 raters, 4 utterances)
+    primary = {"1": "A", "2": "A", "3": "B", "4": "B"}
+    alternate = {"1": "A", "2": "B", "3": "B", "4": "A"}
+
+    # Test default stage (should be "diachronic")
+    record_default = compute_irr(
+        primary,
+        alternate,
+        alignment=[],
+        unmatched_primary=[],
+        unmatched_alternate=[],
+        n_utterances=4,
+        n_bootstrap=100,
+        bootstrap_seed=42,
+    )
+    assert record_default["stage"] == "diachronic", (
+        f"Default stage should be 'diachronic', got {record_default['stage']!r}"
+    )
+
+    # Test explicit synchronic stage
+    record_sync = compute_irr(
+        primary,
+        alternate,
+        alignment=[],
+        unmatched_primary=[],
+        unmatched_alternate=[],
+        n_utterances=4,
+        n_bootstrap=100,
+        bootstrap_seed=42,
+        stage="synchronic",
+    )
+    assert record_sync["stage"] == "synchronic", (
+        f"stage='synchronic' should propagate into record, got {record_sync['stage']!r}. "
+        f"If 'diachronic', the stage parameter is being ignored or hardcoded."
+    )
+
+    # Test explicit diachronic stage
+    record_dia = compute_irr(
+        primary,
+        alternate,
+        alignment=[],
+        unmatched_primary=[],
+        unmatched_alternate=[],
+        n_utterances=4,
+        n_bootstrap=100,
+        bootstrap_seed=42,
+        stage="diachronic",
+    )
+    assert record_dia["stage"] == "diachronic"
+
+    print("[PASS] compute_irr stage propagation: default diachronic, explicit values respected")
+
+
+def test_compute_irr_invalid_stage_raises():
+    """Verify compute_irr raises ValueError for invalid stage parameter.
+
+    This prevents silent bugs where synchronic calibration calls might typo the stage,
+    e.g., compute_irr(..., stage="synchro") would silently default to diachronic
+    without validation. ValueError catches the mistake immediately.
+    """
+    primary = {"1": "A", "2": "B"}
+    alternate = {"1": "A", "2": "A"}
+
+    try:
+        compute_irr(
+            primary,
+            alternate,
+            alignment=[],
+            unmatched_primary=[],
+            unmatched_alternate=[],
+            n_utterances=2,
+            n_bootstrap=100,
+            bootstrap_seed=42,
+            stage="invalid",
+        )
+        assert False, "compute_irr should raise ValueError for invalid stage"
+    except ValueError as e:
+        assert "stage must be" in str(e), f"Error message should mention valid stages, got {str(e)!r}"
+        print(f"[PASS] compute_irr invalid stage raises: {str(e)}")
 
 
 if __name__ == "__main__":

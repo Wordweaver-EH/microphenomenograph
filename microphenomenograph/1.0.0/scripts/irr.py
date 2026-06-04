@@ -678,6 +678,10 @@ def compute_irr(
 
     Returns: dict with all metrics, CIs, confidence distribution, outcome
     """
+    # Validate stage parameter
+    if stage not in {"diachronic", "synchronic"}:
+        raise ValueError(f"stage must be 'diachronic' or 'synchronic', got {stage!r}")
+
     # Compute pre-alignment α (before alignment is applied)
     categories_pre, matrix_pre = compute_coincidence(
         primary, alternate, [], unmatched_primary, unmatched_alternate
