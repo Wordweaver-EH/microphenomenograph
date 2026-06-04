@@ -1,6 +1,6 @@
 # microphenomenograph repo
 
-_Last updated: 2026-06-03 (design fb65db5; Plan 1 + Plan 2 all 13 phases landed)_
+_Last updated: 2026-06-04 (design fb65db5; Plan 1 + Plan 2 all 13 phases landed)_
 
 Repository for the `microphenomenograph` Claude Code plugin — a CLI pipeline implementing Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis.
 
@@ -50,10 +50,10 @@ Run with `pytest` from repo root.
 
 Helper scripts live inside the plugin (`microphenomenograph/1.0.0/scripts/`):
 
-- `kappa.py` — Cohen's κ computation; used by IRR agreement computation
-- `test_kappa.py` — unit tests for kappa, grounded in `osf-archive/R/kappa.Rmd`
+- `irr.py` — IRR calibration module (Phase 13, landed); computes α/κ/αU/ARI with bootstrap CIs. Absorbs the former `kappa.py` Cohen's κ logic (grounded in `osf-archive/R/kappa.Rmd`). Note: αU here is a boundary-agreement approximation, not the canonical length-weighted Krippendorff αU continuum formula.
+- `test_kappa.py` — legacy κ unit tests; skipped (logic merged into `irr.py` in Phase 13)
+- `test_irr.py` — unit tests for `irr.py` metrics (α/κ/αU/ARI, sort keys, bootstrap)
 - `convert_osf_analyses.py` — one-shot XLSX → markdown converter used to populate `examples/analyses/`
-- `irr.py` — IRR calibration module (Phase 13 in progress); computes α/κ/αU/ARI with bootstrap CIs
 
 ## Conventions
 

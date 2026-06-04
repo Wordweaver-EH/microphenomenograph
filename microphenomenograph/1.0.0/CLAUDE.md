@@ -1,6 +1,6 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-06-03 (Plan 1 Phases 1–6 + Plan 2 Phases 7, 9–13 all landed)_
+_Last updated: 2026-06-04 (Plan 1 Phases 1–6 + Plan 2 Phases 7, 9–13 all landed)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
@@ -29,7 +29,9 @@ All phase events share a single `close_id` (UUID4). The manifest records the clo
 
 Every analytic unit (IDU, ISU, GDU pattern, hypothesis claim) carries `utterance_refs: [{transcript_id, utterance_number, byte_start, byte_end, raw_excerpt}, ...]` validated against the immutable raw transcript via `transcripts/offsets/<transcript_id>.json`. Empty `utterance_refs` rejects close. Replay verifies call integrity; grounding verifies output groundedness. Both v1.
 
-IRR calibration runs automatically after the calibration transcript's diachronic + synchronic complete, computing α + κ + αU + ARI with bootstrap 95% CIs (block bootstrap for αU; naive utterance bootstrap for α/κ/ARI). Default calibration strategy is `stratified` (one transcript per IV-level stratum); `first` available only as smoke-test mode (sets `study.calibration_mode = "smoke_test"` in manifest). Warning-by-default; opt-in `--strict-irr` blocks.
+IRR calibration runs automatically after the calibration transcript's diachronic + synchronic complete, computing α + κ + αU + ARI with bootstrap 95% CIs (block bootstrap for αU; naive utterance bootstrap for α/κ/ARI). αU here is a **boundary-agreement approximation**, not the canonical length-weighted Krippendorff αU continuum formula (chance-corrected via the block bootstrap). Default calibration strategy is `stratified` (one transcript per IV-level stratum; `DEFAULT_CALIBRATION_MODE = "stratified"` in `scripts/irr.py`); `first` available only as smoke-test mode (sets `study.calibration_mode = "smoke_test"` in manifest). Warning-by-default; opt-in `--strict-irr` blocks.
+
+The `--strict-irr` gate maps each cross-participant stage to its upstream IRR stage (`generic_diachronic` → `diachronic`; `generic_synchronic`, `global_synchronic`, and `hypothesis` → `synchronic`), filters `irr_calibration.jsonl` to records for that upstream stage, and blocks if **any** matching record has `outcome != "passed"` (a missing/None outcome routes to `irr_missing`, not pass). This checks all records for the upstream stage, not just the most recent one.
 
 Hypothesis generation produces **candidate mechanism hypotheses, not causal estimates**. Every artifact carries a verbatim disclaimer. Each claim carries `{supports, contradicts, ambiguous, n_transcripts, n_iv_levels_covered, uncertainty_language, negative_cases}` with `raw_span_refs` on every support/contradict/ambiguous entry.
 
