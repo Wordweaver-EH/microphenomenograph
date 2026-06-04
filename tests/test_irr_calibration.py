@@ -251,11 +251,11 @@ def test_compute_irr_alpha_u_ordering():
     # With disagreement at one boundary, expect moderate αU (not perfect, not terrible)
     assert alpha_u > 0.0, f"αU with localized disagreement should be > 0.0, got {alpha_u}"
     assert alpha_u < 1.0, f"αU with disagreement should be < 1.0 (not perfect), got {alpha_u}"
-    # Pin the expected value: correct numeric sort → 0.2727, buggy lexical sort → 0.8182
-    # Use tolerance of 0.05 to exclude the buggy value
+    # Pin the expected value: correct numeric sort → ~0.2727.
+    # A lexical-sort regression moves αU well outside the ±0.05 band.
     assert abs(alpha_u - 0.2727) < 0.05, (
         f"αU with numeric sort should be ~0.2727 (got {alpha_u:.4f}). "
-        f"If value is ~0.8182, sort is lexical (buggy)."
+        f"Large deviations suggest incorrect (lexical) sort order in _utt_sort_key or _derive_boundaries."
     )
 
     # Test case 2: Dotted utterance IDs with disagreement at multi-digit boundary
