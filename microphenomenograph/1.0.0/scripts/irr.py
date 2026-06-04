@@ -876,9 +876,94 @@ def compute_irr(
             "kappa_method": kappa_ci["method"],
             "alpha_u_method": au_ci["method"],
             "ari_method": ari_ci["method"],
+            "alpha_u_block_length": block_length,
         },
         "outcome": outcome,
         "notes": "",
     }
 
     return record
+
+
+def aggregate_stratum_records(records: list) -> dict:
+    """
+    Aggregate multiple stratum IRR records into a single aggregate record.
+
+    Args:
+        records: list of IRR records (each from compute_irr)
+
+    Returns:
+        dict: aggregate record with:
+            - record_type: "aggregate"
+            - n_strata: int, number of strata
+            - metrics: dict with pooled metrics (point = mean, ci_lo = min, ci_hi = max)
+            - outcome: "passed" if all strata passed, else "low"
+            - strata_outcomes: list of per-stratum outcomes
+            - notes: aggregation summary
+
+    Raises:
+        ValueError: if records is empty
+    """
+    if not records:
+        raise ValueError("Cannot aggregate empty list of stratum records")
+
+    n_strata = len(records)
+
+    # Collect outcomes
+    strata_outcomes = [r.get("outcome", "unknown") for r in records]
+    # Outcome is "passed" only if ALL strata are "passed"
+    outcome = "passed" if all(o == "passed" for o in strata_outcomes) else "low"
+
+    # Pool metrics: point = mean, ci_lo = min, ci_hi = max
+    aggregated_metrics = {}
+    metric_names = ["alpha", "kappa", "alpha_u", "ari", "alpha_pre_alignment", "alpha_sensitivity_low_conf_excluded"]
+
+    for metric_name in metric_names:
+        # Collect metric data from all strata
+        metric_data = [
+            r.get("metrics", {}).get(metric_name)
+            for r in records
+        ]
+        # Filter out None values (some metrics may not be present)
+        metric_data = [m for m in metric_data if m is not None]
+
+        if not metric_data:
+            continue
+
+        # Extract point, ci_lo, ci_hi from each stratum
+        points = [m.get("point") for m in metric_data if m.get("point") is not None]
+        ci_los = [m.get("ci_lo") for m in metric_data if m.get("ci_lo") is not None]
+        ci_his = [m.get("ci_hi") for m in metric_data if m.get("ci_hi") is not None]
+
+        # Compute aggregate values
+        if points:
+            agg_point = sum(points) / len(points)
+        else:
+            agg_point = None
+
+        agg_ci_lo = min(ci_los) if ci_los else None
+        agg_ci_hi = max(ci_his) if ci_his else None
+
+        # Build aggregated metric
+        agg_metric = {}
+        if agg_point is not None:
+            agg_metric["point"] = agg_point
+        if agg_ci_lo is not None:
+            agg_metric["ci_lo"] = agg_ci_lo
+        if agg_ci_hi is not None:
+            agg_metric["ci_hi"] = agg_ci_hi
+
+        if agg_metric:
+            aggregated_metrics[metric_name] = agg_metric
+
+    # Build aggregate record
+    aggregate_record = {
+        "record_type": "aggregate",
+        "n_strata": n_strata,
+        "metrics": aggregated_metrics,
+        "outcome": outcome,
+        "strata_outcomes": strata_outcomes,
+        "notes": f"Aggregated {n_strata} stratum records; outcome='passed' iff all strata passed",
+    }
+
+    return aggregate_record

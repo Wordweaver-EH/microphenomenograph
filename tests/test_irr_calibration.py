@@ -177,11 +177,47 @@ def test_confidence_distribution():
     print("[PASS] confidence_distribution has all percentiles")
 
 
-def test_stratified_aggregate():
-    """AC24.4: Two stratum records can be aggregated to produce aggregate summary."""
-    # This is a simplified test that verifies the structure
-    # In practice, aggregation happens in the orchestrator layer
+def test_bootstrap_disclosure_fields():
+    """AC32.1/32.2: Record includes bootstrap method fields and alpha_u_block_length."""
+    primary = {str(i): "cat_a" for i in range(20)}
+    alternate = {str(i): "cat_a" for i in range(20)}
+    alignment = []
+    unmatched_primary = []
+    unmatched_alternate = []
 
+    record = compute_irr(
+        primary, alternate, alignment, unmatched_primary, unmatched_alternate,
+        n_utterances=20, bootstrap_seed=42, n_bootstrap=100
+    )
+
+    # Verify bootstrap dict exists and has all method fields
+    assert "bootstrap" in record, "Missing 'bootstrap' key in record"
+    bootstrap = record["bootstrap"]
+
+    # Check method fields
+    assert bootstrap["alpha_method"] == "naive_utterance", "alpha_method should be 'naive_utterance'"
+    assert bootstrap["kappa_method"] == "naive_utterance", "kappa_method should be 'naive_utterance'"
+    assert bootstrap["alpha_u_method"] == "block_utterance", "alpha_u_method should be 'block_utterance'"
+    assert bootstrap["ari_method"] == "naive_utterance", "ari_method should be 'naive_utterance'"
+
+    # Check alpha_u_block_length is present and is a valid int >= 1
+    assert "alpha_u_block_length" in bootstrap, "Missing 'alpha_u_block_length' in bootstrap dict"
+    block_length = bootstrap["alpha_u_block_length"]
+    assert isinstance(block_length, int), f"alpha_u_block_length should be int, got {type(block_length)}"
+    assert block_length >= 1, f"alpha_u_block_length should be >= 1, got {block_length}"
+
+    # For n_utterances=20, block_length should be round(sqrt(20)) = round(4.47) = 4
+    expected_block_length = max(1, round(20 ** 0.5))
+    assert block_length == expected_block_length, f"Expected block_length={expected_block_length}, got {block_length}"
+
+    print("[PASS] bootstrap disclosure fields present and correct")
+
+
+def test_stratified_aggregate():
+    """AC24.4: Stratified aggregate record computed from multiple stratum records."""
+    from irr import aggregate_stratum_records
+
+    # Build two stratum records (high agreement, so both should pass)
     record1 = compute_irr(
         {str(i): "cat_a" for i in range(5)},
         {str(i): "cat_a" for i in range(5)},
@@ -196,12 +232,79 @@ def test_stratified_aggregate():
         n_utterances=7, bootstrap_seed=43, n_bootstrap=50
     )
 
-    # Both records should have all required fields
-    for rec in [record1, record2]:
-        assert "metrics" in rec
-        assert "alpha" in rec["metrics"]
+    # Aggregate the two records
+    aggregate = aggregate_stratum_records([record1, record2])
 
-    print("[PASS] Stratum records have proper structure for aggregation")
+    # Check aggregate structure
+    assert aggregate["record_type"] == "aggregate", f"record_type should be 'aggregate', got {aggregate.get('record_type')}"
+    assert aggregate["n_strata"] == 2, f"n_strata should be 2, got {aggregate.get('n_strata')}"
+
+    # Check metrics pooling
+    assert "metrics" in aggregate, "Aggregate should have 'metrics' key"
+    metrics = aggregate["metrics"]
+    assert "alpha" in metrics, "Aggregate metrics should have 'alpha'"
+
+    # Point estimate should be mean of strata
+    alpha_point1 = record1["metrics"]["alpha"]["point"]
+    alpha_point2 = record2["metrics"]["alpha"]["point"]
+    expected_alpha_point = (alpha_point1 + alpha_point2) / 2.0
+    assert abs(aggregate["metrics"]["alpha"]["point"] - expected_alpha_point) < 1e-6, \
+        f"Aggregate alpha point should be mean of strata: {expected_alpha_point}, got {aggregate['metrics']['alpha']['point']}"
+
+    # CI bounds should be min/max of strata
+    alpha_ci_lo1 = record1["metrics"]["alpha"]["ci_lo"]
+    alpha_ci_lo2 = record2["metrics"]["alpha"]["ci_lo"]
+    expected_ci_lo = min(alpha_ci_lo1, alpha_ci_lo2)
+    assert aggregate["metrics"]["alpha"]["ci_lo"] == expected_ci_lo, \
+        f"Aggregate ci_lo should be min of strata: {expected_ci_lo}, got {aggregate['metrics']['alpha']['ci_lo']}"
+
+    # Since both records should have outcome='passed', aggregate should also be 'passed'
+    assert aggregate["outcome"] == "passed", f"Both strata passed, so aggregate should be 'passed', got {aggregate['outcome']}"
+    assert aggregate["strata_outcomes"] == ["passed", "passed"], f"strata_outcomes should list each stratum outcome"
+
+    print("[PASS] Stratified aggregate computed correctly")
+
+
+def test_stratified_aggregate_with_low_outcome():
+    """AC24.4: Aggregate outcome is 'low' if any stratum is 'low'."""
+    from irr import aggregate_stratum_records
+
+    # Build one high-agreement (passed) and one low-agreement (low outcome) record
+    record_high = compute_irr(
+        {str(i): "cat_a" for i in range(20)},
+        {str(i): "cat_a" for i in range(20)},
+        [], [], [],
+        n_utterances=20, bootstrap_seed=42, n_bootstrap=100
+    )
+
+    record_low = compute_irr(
+        {"1": "cat1", "2": "cat2", "3": "cat3", "4": "cat4", "5": "cat5"},
+        {"1": "catx", "2": "caty", "3": "catz", "4": "catw", "5": "catv"},
+        [], [], [],
+        n_utterances=5, bootstrap_seed=42, n_bootstrap=100
+    )
+
+    # Aggregate: one passed, one low
+    aggregate = aggregate_stratum_records([record_high, record_low])
+
+    # Outcome should be 'low' since at least one stratum is low
+    assert aggregate["outcome"] == "low", f"Aggregate with one low stratum should be 'low', got {aggregate['outcome']}"
+    assert "passed" in aggregate["strata_outcomes"], "One stratum should have passed"
+    assert "low" in aggregate["strata_outcomes"], "One stratum should have low"
+
+    print("[PASS] Aggregate outcome is 'low' when any stratum is 'low'")
+
+
+def test_stratified_aggregate_empty_raises():
+    """AC24.4: aggregate_stratum_records raises ValueError for empty list."""
+    from irr import aggregate_stratum_records
+
+    try:
+        aggregate_stratum_records([])
+        assert False, "Should have raised ValueError for empty list"
+    except ValueError as e:
+        assert "empty" in str(e).lower(), f"Error message should mention 'empty', got: {e}"
+        print("[PASS] aggregate_stratum_records raises ValueError for empty list")
 
 
 def test_default_calibration_mode():

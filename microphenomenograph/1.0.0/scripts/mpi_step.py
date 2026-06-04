@@ -1455,6 +1455,27 @@ def cmd_close(args: argparse.Namespace) -> int:
         audit_path=audit_path,
     )
 
+    # --- Phase 13: IRR alignment auto-accept in yolo mode (AC13.3) ---
+    if args.stage == "irr_calibration" and args.substep == "alignment":
+        # Emit irr_alignment_auto_accepted event on successful alignment close
+        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        auto_accept_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": getattr(args, "actor_kind", "subagent"), "name": args.actor},
+            "event": {"kind": "event", "action": "irr_alignment_auto_accepted", "outcome": "success"},
+            "mpi": {
+                "stage": "irr_calibration",
+                "substep": "alignment",
+                "scope": args.scope,
+                "close_id": close_id,
+            },
+            "reason": "IRR calibration alignment auto-accepted on successful close",
+        }
+        append_jsonl(audit_path, auto_accept_event)
+
     # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
     if args.stage == "diachronic" and args.substep == "criteria_revision":
         # Check if any downstream substeps are 'done' — if so, cascade reset them.

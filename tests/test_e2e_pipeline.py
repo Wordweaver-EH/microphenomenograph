@@ -1172,6 +1172,31 @@ class TestAC30_CrossParticipantCascade:
             "— cross-participant cascade artifacts not moved correctly"
         )
 
+        # AC16.2: Assert cascade_reset events are emitted with cascade_source
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        assert audit_path.exists(), "Audit file should exist after cascade"
+
+        audit_events = []
+        for line in audit_path.read_text().splitlines():
+            if line.strip():
+                audit_events.append(json.loads(line))
+
+        # Find cascade_reset events
+        cascade_reset_events = [
+            e for e in audit_events
+            if e.get("event", {}).get("action") == "cascade_reset"
+        ]
+        assert len(cascade_reset_events) > 0, (
+            "At least one cascade_reset event should be emitted after criteria_revision re-close"
+        )
+
+        # Verify each cascade_reset event has cascade_source
+        for event in cascade_reset_events:
+            cascade_source = event.get("mpi", {}).get("cascade_source")
+            assert cascade_source is not None and cascade_source != "", (
+                f"cascade_reset event must have non-empty cascade_source, got: {cascade_source}"
+            )
+
         # AC30 additional check: git tree must be clean after cascade (no unstaged deletions)
         # The cascade should stage both the moved artifacts AND the deletions at the original paths
         git_status = subprocess.run(

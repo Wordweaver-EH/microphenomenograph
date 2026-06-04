@@ -1841,3 +1841,341 @@ class TestStrictIRRGate:
             audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
             has_irr_warning = any(e.get("event", {}).get("action") == "irr_warning" for e in audit_events)
             assert has_irr_warning, "Audit should contain irr_warning event for synchronic low outcome"
+
+
+# ---------------------------------------------------------------------------
+# AC13.2: IRR calibration auto-trigger tests
+# ---------------------------------------------------------------------------
+
+class TestAC13_2_IRRAutoTrigger:
+    """Tests for irr_calibration_scheduled auto-trigger (AC13.2)."""
+
+    def test_trigger_fires_for_calibration_transcript(self, tmp_path):
+        """Closing diachronic.idu_naming_ordering for calibration transcript triggers irr_calibration_scheduled event."""
+        # Setup
+        run_dir = _init_run_dir(tmp_path)
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Configure calibration transcript
+        manifest["study"]["calibration_transcript_ids"] = ["p1s1"]
+
+        # Mark diachronic prerequisites as done
+        manifest["participants"]["p1s1"] = {
+            "stages": {
+                "diachronic": {
+                    "status": "pending",
+                    "substeps": {
+                        "criteria_grouping": {
+                            "status": "done",
+                            "close_id": "fake-1",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "criteria_revision": {
+                            "status": "done",
+                            "close_id": "fake-2",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "idu_naming_ordering": {
+                            "status": "pending",
+                            "close_id": None,
+                            "output_path": None,
+                            "artifact_shas": {},
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Close diachronic.idu_naming_ordering
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "idu_naming_ordering")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [{
+                "idu_number": 1, "idu_name": "Test", "moment": 1,
+                "criteria": "test", "confidence": 3, "flag_for_review": False,
+                "utterance_numbers": ["1"],
+                "hinge_to_next": None,
+                "utterance_refs": [{"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "hello"}],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1",
+            "--stage", "diachronic",
+            "--substep", "idu_naming_ordering",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close for calibration trigger",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close failed with rc={rc}"
+
+        # Check audit log for irr_calibration_scheduled event
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        assert audit_path.exists(), "Audit file should exist"
+        audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+
+        irr_events = [e for e in audit_events if e.get("event", {}).get("action") == "irr_calibration_scheduled"]
+        assert len(irr_events) >= 1, "Should have irr_calibration_scheduled event in audit"
+
+        irr_event = irr_events[0]
+        assert irr_event["mpi"]["transcript_id"] == "p1s1", "Event should reference p1s1"
+        assert irr_event["mpi"]["stage"] == "diachronic", "Event should reference diachronic stage"
+        assert irr_event["event"]["outcome"] == "success", "Event outcome should be success"
+
+    def test_trigger_does_not_fire_for_non_calibration_transcript(self, tmp_path):
+        """Closing diachronic.idu_naming_ordering for non-calibration transcript does NOT trigger event."""
+        # Setup
+        run_dir = _init_run_dir(tmp_path)
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Configure calibration transcript (p2s1, NOT p1s1)
+        manifest["study"]["calibration_transcript_ids"] = ["p2s1"]
+
+        # Mark diachronic prerequisites for p1s1 as done
+        manifest["participants"]["p1s1"] = {
+            "stages": {
+                "diachronic": {
+                    "status": "pending",
+                    "substeps": {
+                        "criteria_grouping": {
+                            "status": "done",
+                            "close_id": "fake-1",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "criteria_revision": {
+                            "status": "done",
+                            "close_id": "fake-2",
+                            "output_path": "analyses/fake.json",
+                            "artifact_shas": {},
+                        },
+                        "idu_naming_ordering": {
+                            "status": "pending",
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Close diachronic.idu_naming_ordering for p1s1 (non-calibration)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "idu_naming_ordering")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [{
+                "idu_number": 1, "idu_name": "Test", "moment": 1,
+                "criteria": "test", "confidence": 3, "flag_for_review": False,
+                "utterance_numbers": ["1"],
+                "hinge_to_next": None,
+                "utterance_refs": [{"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "hello"}],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1",
+            "--stage", "diachronic",
+            "--substep", "idu_naming_ordering",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test close for non-calibration transcript",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close failed with rc={rc}"
+
+        # Check audit log — should NOT have irr_calibration_scheduled event for p1s1
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        assert audit_path.exists(), "Audit file should exist"
+        audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+
+        irr_events = [e for e in audit_events
+                      if e.get("event", {}).get("action") == "irr_calibration_scheduled"
+                      and e.get("mpi", {}).get("transcript_id") == "p1s1"]
+        assert len(irr_events) == 0, "Should NOT have irr_calibration_scheduled event for non-calibration transcript"
+
+
+# ---------------------------------------------------------------------------
+# AC13.3: IRR alignment auto-accept in yolo mode
+# ---------------------------------------------------------------------------
+
+class TestAC13_1_IndependentAnalystArtifact:
+    """Tests for irr_calibration.independent_analyst artifact production (AC13.1)."""
+
+    def test_irr_calibration_independent_analyst_close(self, tmp_path):
+        """Closing irr_calibration.independent_analyst with analyses/independent/ artifact."""
+        # Setup
+        run_dir = _init_run_dir(tmp_path)
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Setup participant scope for irr_calibration
+        manifest["participants"]["p1s1"] = {
+            "stages": {
+                "irr_calibration": {
+                    "status": "pending",
+                    "substeps": {
+                        "independent_analyst": {
+                            "status": "pending",
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Create artifact at analyses/independent/ path
+        analyses = run_dir / "analyses"
+        analyses.mkdir(exist_ok=True)
+        independent_dir = analyses / "independent"
+        independent_dir.mkdir(exist_ok=True)
+
+        art_path = independent_dir / "p1s1-diachronic.idu_naming_ordering.json"
+        art_path.write_text(json.dumps({"utterance_refs": []}))
+
+        # Write prompt artifact
+        prompt_art = analyses / "p1s1-irr_calibration.independent_analyst.prompt.json"
+        prompt_art.write_text(json.dumps({
+            "schema_version": "2",
+            "actor": {"kind": "subagent", "name": "mpi-cross-analyst", "agent_file_sha256": "abc123", "agent_file_path": "agents/mpi-cross-analyst.md"},
+            "model": {"id": "claude-haiku-4-5", "provider": "anthropic"},
+            "sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": None, "max_tokens": 8192, "seed": None, "stop_sequences": []},
+            "stage": "irr_calibration", "substep": "independent_analyst", "scope": "p1s1",
+            "prompt": {"system": "...", "messages": [], "tools_available": []},
+            "response": {"raw_text": "...", "tool_calls": [], "parsed_units_path": ""},
+            "metadata": {"finish_reason": "end_turn", "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}, "duration_ms": 100, "timestamp": "2026-05-18T00:00:00Z", "anthropic_request_id": "req_xxx"},
+        }))
+
+        # Write units
+        units_path = run_dir / "units.json"
+        units_path.write_text(json.dumps({
+            "stage": "diachronic",
+            "participant_id": "p1s1",
+            "substep_artifacts": ["analyses/independent/p1s1-diachronic.idu_naming_ordering.json"],
+        }))
+
+        # Close irr_calibration.independent_analyst
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "irr_calibration",
+            "--substep", "independent_analyst",
+            "--scope", "p1s1",
+            "--artifact", str(art_path),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units_path),
+            "--reason", "independent analyst analysis for calibration",
+            "--run-dir", str(run_dir),
+        ])
+
+        assert rc == 0, f"independent_analyst close failed with rc={rc}"
+
+        # Verify manifest shows independent_analyst as done
+        updated_manifest = json.loads(manifest_path.read_text())
+        indep_substep = updated_manifest["participants"]["p1s1"]["stages"]["irr_calibration"]["substeps"]["independent_analyst"]
+        assert indep_substep["status"] == "done", f"independent_analyst should be marked 'done', got: {indep_substep['status']}"
+
+        # Verify artifact was recorded in the git repo at the expected path
+        assert art_path.exists(), f"Artifact should exist at {art_path}"
+
+        # Verify the artifact file was committed to git
+        git_check = subprocess.run(
+            ["git", "log", "--oneline", "-1", "--"],
+            cwd=run_dir,
+            capture_output=True,
+            text=True,
+        )
+        assert git_check.returncode == 0, "Git should have commits"
+
+
+class TestAC13_3_IRRAlignmentAutoAccept:
+    """Tests for irr_alignment_auto_accepted event emission (AC13.3)."""
+
+    def test_alignment_close_emits_auto_accepted_event(self, tmp_path):
+        """Closing irr_calibration.alignment emits irr_alignment_auto_accepted event."""
+        # Setup
+        run_dir = _init_run_dir(tmp_path)
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Mark irr_calibration.independent_analyst as done
+        manifest["participants"]["p1s1"] = {
+            "stages": {
+                "irr_calibration": {
+                    "status": "pending",
+                    "substeps": {
+                        "independent_analyst": {
+                            "status": "done",
+                            "close_id": "fake-ind",
+                            "output_path": "analyses/p1s1-irr_calibration.independent_analyst.json",
+                            "artifact_shas": {},
+                        },
+                        "alignment": {
+                            "status": "pending",
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Close irr_calibration.alignment
+        art_json = _write_artifact(run_dir, "p1s1-irr_calibration.alignment.json", '{"alignment": []}')
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "irr_calibration", "alignment")
+
+        units = _write_units_json(run_dir, "units.json", {
+            "stage": "diachronic",
+            "participant_id": "p1s1",
+            "mapping": [],
+            "unmatched_primary": [],
+            "unmatched_alternate": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "irr_calibration",
+            "--substep", "alignment",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test alignment close",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Alignment close failed with rc={rc}"
+
+        # Check audit log for irr_alignment_auto_accepted event
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        assert audit_path.exists(), "Audit file should exist"
+        audit_events = [json.loads(line) for line in audit_path.read_text().splitlines() if line]
+
+        auto_accept_events = [e for e in audit_events if e.get("event", {}).get("action") == "irr_alignment_auto_accepted"]
+        assert len(auto_accept_events) >= 1, "Should have irr_alignment_auto_accepted event in audit"
+
+        event = auto_accept_events[0]
+        assert event["event"]["outcome"] == "success", "Event outcome should be success"
