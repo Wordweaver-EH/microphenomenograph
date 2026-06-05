@@ -1282,45 +1282,79 @@ class TestManifestWriteSafety:
     def test_lock_is_reacquirable_after_process_exit(self, tmp_path):
         """AC4.3: After process exit (normal or signal), lock is re-acquirable."""
         run_dir = _init_run_dir(tmp_path)
+        ready_marker = run_dir / ".mpi" / "lock_holder_ready"
+        helper_script = run_dir / "lock_holder_helper.py"
 
-        # Create artifacts and units for p1s1
-        art1_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
-        art1_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# p1s1")
-        prompt1 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
-        units1 = _write_units_json(run_dir, "units1.json", VALID_CRITERIA_GROUPING_UNITS)
+        # Write a helper script that acquires the lock and sleeps indefinitely
+        helper_code = f'''
+import sys
+import time
+from pathlib import Path
+sys.path.insert(0, {str(SCRIPTS_DIR)!r})
+from _mpi_atomic import acquire_close_lock
+
+run_dir = Path({str(run_dir)!r})
+ready_marker = Path({str(ready_marker)!r})
+
+with acquire_close_lock(run_dir):
+    # Signal that lock is acquired
+    ready_marker.write_text("ready")
+    # Hold the lock indefinitely
+    time.sleep(999)
+'''
+        helper_script.write_text(helper_code)
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(SCRIPTS_DIR)
 
-        # Start a close process
-        proc = subprocess.Popen([
-            sys.executable, "-m", "mpi_step", "close",
-            "--actor", "mpi-analyst", "--participant", "p1s1",
-            "--stage", "diachronic", "--substep", "criteria_grouping",
-            "--scope", "p1s1", "--artifact", str(art1_json), "--artifact", str(art1_md),
-            "--prompt-artifact", str(prompt1), "--units-json", str(units1),
-            "--reason", "test", "--run-dir", str(run_dir),
-        ], cwd=run_dir, env=env)
+        # Start helper process to hold the lock
+        proc = subprocess.Popen(
+            [sys.executable, str(helper_script)],
+            cwd=run_dir,
+            env=env,
+        )
 
-        # Give it time to acquire the lock
-        time.sleep(0.5)
+        # Poll for the ready marker (timeout after 5 seconds)
+        start_time = time.time()
+        while not ready_marker.exists() and time.time() - start_time < 5:
+            time.sleep(0.05)
+        assert ready_marker.exists(), "Helper process failed to acquire lock (ready marker not created)"
 
-        # Terminate the process
+        # Now in the parent, try to acquire the lock in a separate thread
+        # This thread should BLOCK while the helper holds the lock
+        lock_acquired_event = threading.Event()
+        thread_trying_event = threading.Event()
+
+        def try_acquire():
+            """Try to acquire; set event when acquired."""
+            thread_trying_event.set()  # Signal that we're about to block
+            with acquire_close_lock(run_dir):
+                lock_acquired_event.set()
+
+        acq_thread = threading.Thread(target=try_acquire, daemon=True)
+        acq_thread.start()
+
+        # Wait for thread to signal it's trying
+        acq_thread_trying = thread_trying_event.wait(timeout=1)
+        assert acq_thread_trying, "Acquire thread did not start"
+
+        # Negative control: lock should NOT be acquired yet (subprocess holds it)
+        time.sleep(0.3)
+        assert not lock_acquired_event.is_set(), \
+            "Lock acquired while helper holds it — lock implementation is broken"
+
+        # Now terminate the helper process
         proc.terminate()
         proc.wait(timeout=5)
 
-        # Now try to acquire the lock in-process — should succeed without blocking
-        # (This tests that the OS released the lock on process exit)
-        try:
-            with acquire_close_lock(run_dir):
-                pass  # Lock acquired successfully
-            lock_reacquired = True
-        except Exception:
-            lock_reacquired = False
+        # After helper exits, the thread should acquire the lock (OS auto-released it)
+        acq_thread.join(timeout=5)
+        assert lock_acquired_event.is_set(), \
+            "Lock not acquired after helper process exit — OS did not auto-release"
 
-        assert lock_reacquired, "Lock should be re-acquirable after process exit"
         # Lock file should still exist (by design)
-        assert (run_dir / ".mpi" / "close.lock").exists()
+        assert (run_dir / ".mpi" / "close.lock").exists(), \
+            "Lock file should persist after release"
 
     def test_lock_blocks_concurrent_acquisition(self, tmp_path):
         """Deterministic serialization test: lock primitives actually block."""
@@ -1353,9 +1387,9 @@ class TestManifestWriteSafety:
         releasing_1_idx = lock_sequence.index("releasing_1")
         acquired_2_idx = lock_sequence.index("acquired_2")
 
-        # Thread 2 should have acquired after thread 1 released (or at least not concurrently)
-        assert acquired_2_idx > releasing_1_idx or acquired_2_idx > acquired_1_idx, \
-            "Thread 2 should not acquire until thread 1 releases (serialization enforced)"
+        # Thread 2 must acquire after thread 1 releases — serialization enforced
+        assert acquired_2_idx > releasing_1_idx, \
+            "thread 2 acquired before thread 1 released — lock did not serialize"
 
 
 class TestCloseFailures:
