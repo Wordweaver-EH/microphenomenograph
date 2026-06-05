@@ -2812,3 +2812,371 @@ class TestAC13_3_IRRAlignmentAutoAccept:
 
         event = auto_accept_events[0]
         assert event["event"]["outcome"] == "success", "Event outcome should be success"
+
+
+# ---------------------------------------------------------------------------
+# Helper for creating manifests with specific substeps done
+# ---------------------------------------------------------------------------
+
+def _make_manifest_with_substep_done(
+    participant: str,
+    stage: str,
+    substep: str,
+    close_id: str = "test-close-id",
+) -> dict:
+    """Create a minimal v2.0 manifest with given substep marked done."""
+    return {
+        "version": "2.0",
+        "run_id": "test-run-id",
+        "study": {},
+        "participants": {
+            participant: {
+                "stages": {
+                    stage: {
+                        "status": "done",
+                        "substeps": {
+                            substep: {
+                                "status": "done",
+                                "close_id": close_id,
+                                "output_path": f"analyses/{participant}-{stage}.{substep}.json",
+                                "artifact_shas": {},
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 cross-scope prerequisite resolution tests
+# ---------------------------------------------------------------------------
+
+class TestPrereqScopeResolutionClose:
+    """Integration tests for cross-scope prerequisite resolution in cmd_close."""
+
+    def test_ac1_1_worksheet_assembly_with_event_key_transform(self, tmp_path):
+        """AC1.1: worksheet_assembly closes when select_generic_idus_of_interest done under event key."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event3 having select_generic_idus_of_interest done
+        manifest = _make_manifest_with_substep_done(
+            "event3",
+            "generic_synchronic",
+            "select_generic_idus_of_interest",
+        )
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close worksheet_assembly with scope event3-cat-low-gidu1
+        # This should look up event3 and find select_generic_idus_of_interest done
+        art_json = _write_artifact(run_dir, "event3-cat-low-gidu1-generic_synchronic.worksheet_assembly.json")
+        art_md = _write_artifact(run_dir, "event3-cat-low-gidu1-generic_synchronic.worksheet_assembly.md", "# output")
+        units = _write_units_json(run_dir, "units.json", {
+            "event": "event3",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "rows": []
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event3-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "worksheet_assembly",
+            "--scope", "event3-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "worksheet_assembly should close successfully"
+
+    def test_ac1_2_worksheet_assembly_fails_without_prereq(self, tmp_path):
+        """AC1.2: worksheet_assembly fails when select_generic_idus_of_interest missing."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with NO event3 entry
+        manifest = {"version": "2.0", "run_id": "test-run-id", "study": {}, "participants": {}}
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close worksheet_assembly
+        art_json = _write_artifact(run_dir, "event3-cat-low-gidu1-generic_synchronic.worksheet_assembly.json")
+        art_md = _write_artifact(run_dir, "event3-cat-low-gidu1-generic_synchronic.worksheet_assembly.md", "# output")
+        units = _write_units_json(run_dir, "units.json", {
+            "event": "event3",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "rows": []
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event3-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "worksheet_assembly",
+            "--scope", "event3-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "worksheet_assembly should fail prereq check"
+
+    def test_ac2_1_weak_evidence_review_all_candidate_draftings_done(self, tmp_path):
+        """AC2.1: weak_evidence_review closes when all candidate_drafting entries done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with 2 DV focuses both having candidate_drafting done
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"dv_focuses": None},
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "done",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done",
+                                    "close_id": "test-id",
+                                    "output_path": "analyses/dv-automaticity-hypothesis.candidate_drafting.json",
+                                    "artifact_shas": {},
+                                }
+                            }
+                        }
+                    }
+                },
+                "dv-attention": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "done",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done",
+                                    "close_id": "test-id",
+                                    "output_path": "analyses/dv-attention-hypothesis.candidate_drafting.json",
+                                    "artifact_shas": {},
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close weak_evidence_review with scope global
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "weak_evidence_review should close when all candidate_drafting done"
+
+    def test_ac2_2_weak_evidence_review_fails_no_candidate_draftings(self, tmp_path):
+        """AC2.2: weak_evidence_review fails when no candidate_drafting entries exist."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with no candidate_drafting entries
+        manifest = {"version": "2.0", "run_id": "test-run-id", "study": {}, "participants": {}}
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close weak_evidence_review
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "weak_evidence_review should fail when no candidate_drafting entries"
+
+    def test_ac2_3_weak_evidence_review_fails_one_pending(self, tmp_path):
+        """AC2.3: weak_evidence_review fails when one candidate_drafting is pending."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with 2 focuses, one done and one pending
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"dv_focuses": None},
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "done",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done",
+                                    "close_id": "test-id",
+                                    "output_path": "analyses/dv-automaticity-hypothesis.candidate_drafting.json",
+                                    "artifact_shas": {},
+                                }
+                            }
+                        }
+                    }
+                },
+                "dv-attention": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "pending",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "pending"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close weak_evidence_review
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "weak_evidence_review should fail when one candidate_drafting is pending"
+
+    def test_ac2_4_weak_evidence_review_fails_flagged(self, tmp_path):
+        """AC2.4: weak_evidence_review fails when a candidate_drafting is flagged."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with one focus flagged
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"dv_focuses": None},
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "flagged",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "flagged"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close weak_evidence_review
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "weak_evidence_review should fail when candidate_drafting is flagged"
+
+    def test_ac3_1_backward_compat_sync_to_diachronic(self, tmp_path):
+        """AC3.1: Synchronic→diachronic scope stripping still works."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with p1s1 having idu_naming_ordering done
+        manifest = _make_manifest_with_substep_done(
+            "p1s1",
+            "diachronic",
+            "idu_naming_ordering",
+        )
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close theme_grouping_within_idu with scope p1s1-idu2
+        # This should strip to p1s1 and find idu_naming_ordering done
+        art_json = _write_artifact(run_dir, "p1s1-idu2-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, "p1s1-idu2-synchronic.theme_grouping_within_idu.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1-idu2", "synchronic", "theme_grouping_within_idu")
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "synchronic",
+            "participant": "p1s1-idu2",
+            "idu_name": "IDU2",
+            "isus": []
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-analyst",
+            "--participant", "p1s1-idu2",
+            "--stage", "synchronic",
+            "--substep", "theme_grouping_within_idu",
+            "--scope", "p1s1-idu2",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "theme_grouping_within_idu should close with backward-compat strip"

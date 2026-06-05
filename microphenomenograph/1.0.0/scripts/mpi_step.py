@@ -1329,14 +1329,27 @@ def cmd_close(args: argparse.Namespace) -> int:
     # Check substep DAG prerequisites
     prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
     for prereq_stage, prereq_substep in prereqs:
-        prereq_participant = _prereq_participant_key(args.participant, prereq_stage)
-        status = _get_substep_status(manifest, prereq_participant, prereq_stage, prereq_substep)
-        if status != "done":
-            msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
-                   f"must be 'done' before closing ({args.stage}, {args.substep}); "
-                   f"current status: {status}")
-            print(f"ERROR {msg}", file=sys.stderr)
-            return _abort(msg)
+        prereq_participant = _prereq_participant_key(
+            args.participant,
+            prereq_stage,
+            prereq_substep=prereq_substep,
+            downstream_stage=args.stage,
+            downstream_substep=args.substep,
+        )
+        if prereq_participant == "all_match":
+            if not _all_candidate_draftings_done(manifest, prereq_stage, prereq_substep):
+                msg = (f"prereq_unsatisfied: all ({prereq_stage}, {prereq_substep}) "
+                       f"entries must be 'done' before closing ({args.stage}, {args.substep})")
+                print(f"ERROR {msg}", file=sys.stderr)
+                return _abort(msg)
+        else:
+            status = _get_substep_status(manifest, prereq_participant, prereq_stage, prereq_substep)
+            if status != "done":
+                msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
+                       f"must be 'done' before closing ({args.stage}, {args.substep}); "
+                       f"current status: {status}")
+                print(f"ERROR {msg}", file=sys.stderr)
+                return _abort(msg)
 
     # --- IRR gate check (Phase 13, AC13.8-13.9) ---
     # For cross-participant stages, check IRR calibration outcome
