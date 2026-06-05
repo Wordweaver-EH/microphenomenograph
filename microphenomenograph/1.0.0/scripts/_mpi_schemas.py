@@ -389,11 +389,50 @@ def _validate_irr_calibration_agreement_computation(payload: dict) -> list[Schem
     return _require_keys(payload, ["stage", "participant_id", "metrics", "outcome"], "payload")
 
 
+def _validate_init_scan_transcripts(payload: dict) -> list[SchemaError]:
+    """scan_transcripts — records transcript IDs and their raw SHA256s."""
+    return _require_keys(payload, ["transcript_ids", "raw_sha256_map"], "payload")
+
+
+def _validate_init_propose_study_config(payload: dict) -> list[SchemaError]:
+    """propose_study_config — optional LLM-proposed config; may be skipped."""
+    return _require_keys(payload, ["event_groups_proposed"], "payload")
+
+
+def _validate_init_confirm_study_config(payload: dict) -> list[SchemaError]:
+    """confirm_study_config — human-confirmed study structure; writes event_groups."""
+    errors = _require_keys(payload, ["event_groups", "config_provenance"], "payload")
+    eg = payload.get("event_groups")
+    if eg is not None:
+        if not isinstance(eg, dict):
+            errors.append(SchemaError("payload.event_groups", "must be a dict mapping event IDs to lists of transcript IDs"))
+        else:
+            for eid, tids in eg.items():
+                if not isinstance(tids, list):
+                    errors.append(SchemaError(f"payload.event_groups.{eid}", "must be a list of transcript ID strings"))
+                else:
+                    for i, tid in enumerate(tids):
+                        if not isinstance(tid, str):
+                            errors.append(SchemaError(f"payload.event_groups.{eid}[{i}]", "must be a string transcript ID"))
+    dv = payload.get("dv_focuses")
+    if dv is not None:
+        if not isinstance(dv, list):
+            errors.append(SchemaError("payload.dv_focuses", "must be a list of strings or null"))
+        else:
+            for i, f in enumerate(dv):
+                if not isinstance(f, str):
+                    errors.append(SchemaError(f"payload.dv_focuses[{i}]", "must be a string"))
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
 _VALIDATORS: dict[tuple[str, str], Any] = {
+    ("init", "scan_transcripts"): _validate_init_scan_transcripts,
+    ("init", "propose_study_config"): _validate_init_propose_study_config,
+    ("init", "confirm_study_config"): _validate_init_confirm_study_config,
     ("diachronic", "criteria_grouping"): _validate_diachronic_criteria_grouping,
     ("diachronic", "criteria_revision"): _validate_diachronic_criteria_revision,
     ("diachronic", "idu_naming_ordering"): _validate_diachronic_idu_naming_ordering,
@@ -441,6 +480,12 @@ def validate_units(stage: str, substep: str, payload: Any) -> list[SchemaError]:
 # ---------------------------------------------------------------------------
 
 SUBSTEP_PREREQUISITES: dict[tuple[str, str], list[tuple[str, str]]] = {
+    ("init", "scan_transcripts"): [],
+    ("init", "propose_study_config"): [("init", "scan_transcripts")],
+    # confirm_study_config depends on scan_transcripts only — propose_study_config
+    # is skippable (when config_provenance is preregistered/user_specified),
+    # so it cannot be a hard prerequisite.
+    ("init", "confirm_study_config"): [("init", "scan_transcripts")],
     ("diachronic", "criteria_grouping"): [],
     ("diachronic", "criteria_revision"): [("diachronic", "criteria_grouping")],
     ("diachronic", "idu_naming_ordering"): [("diachronic", "criteria_revision")],

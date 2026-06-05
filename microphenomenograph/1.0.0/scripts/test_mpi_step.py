@@ -107,6 +107,163 @@ class TestValidateUnits:
         assert any("payload" in e.field for e in errors)
 
 
+class TestInitValidators:
+    """Test init-stage validators for Phase 1 cross-scope-prereq-resolution."""
+
+    def test_scan_transcripts_valid(self):
+        """scan_transcripts requires transcript_ids and raw_sha256_map."""
+        valid_payload = {
+            "transcript_ids": ["p1s1", "p1s2", "p2s1"],
+            "raw_sha256_map": {
+                "p1s1": "abc123...",
+                "p1s2": "def456...",
+                "p2s1": "ghi789...",
+            }
+        }
+        errors = validate_units("init", "scan_transcripts", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_scan_transcripts_missing_transcript_ids(self):
+        """scan_transcripts missing transcript_ids should error."""
+        invalid_payload = {
+            "raw_sha256_map": {"p1s1": "abc123..."}
+        }
+        errors = validate_units("init", "scan_transcripts", invalid_payload)
+        assert len(errors) >= 1
+        assert any("transcript_ids" in e.field for e in errors)
+
+    def test_scan_transcripts_missing_raw_sha256_map(self):
+        """scan_transcripts missing raw_sha256_map should error."""
+        invalid_payload = {
+            "transcript_ids": ["p1s1"]
+        }
+        errors = validate_units("init", "scan_transcripts", invalid_payload)
+        assert len(errors) >= 1
+        assert any("raw_sha256_map" in e.field for e in errors)
+
+    def test_propose_study_config_valid(self):
+        """propose_study_config requires event_groups_proposed."""
+        valid_payload = {
+            "event_groups_proposed": {
+                "event1": ["p1s1", "p2s1", "p3s1"],
+                "event2": ["p1s2", "p2s2", "p3s2"],
+            }
+        }
+        errors = validate_units("init", "propose_study_config", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_propose_study_config_missing_event_groups_proposed(self):
+        """propose_study_config missing event_groups_proposed should error."""
+        invalid_payload = {}
+        errors = validate_units("init", "propose_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("event_groups_proposed" in e.field for e in errors)
+
+    def test_confirm_study_config_valid_with_dv_focuses(self):
+        """confirm_study_config with event_groups, dv_focuses, and config_provenance."""
+        valid_payload = {
+            "event_groups": {
+                "event1": ["p1s1", "p2s1", "p3s1"],
+                "event2": ["p1s2", "p2s2", "p3s2"],
+            },
+            "dv_focuses": ["automaticity", "attention", "bodily_sensation"],
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_confirm_study_config_valid_without_dv_focuses(self):
+        """confirm_study_config without dv_focuses (null) should be valid."""
+        valid_payload = {
+            "event_groups": {
+                "event1": ["p1s1", "p2s1"],
+            },
+            "config_provenance": "preregistered"
+        }
+        errors = validate_units("init", "confirm_study_config", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_confirm_study_config_missing_event_groups(self):
+        """confirm_study_config missing event_groups should error."""
+        invalid_payload = {
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("event_groups" in e.field for e in errors)
+
+    def test_confirm_study_config_missing_config_provenance(self):
+        """confirm_study_config missing config_provenance should error."""
+        invalid_payload = {
+            "event_groups": {"event1": ["p1s1"]}
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("config_provenance" in e.field for e in errors)
+
+    def test_confirm_study_config_event_groups_not_dict(self):
+        """confirm_study_config with non-dict event_groups should error."""
+        invalid_payload = {
+            "event_groups": [("event1", ["p1s1"])],  # list instead of dict
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("event_groups" in e.field for e in errors)
+
+    def test_confirm_study_config_event_groups_value_not_list(self):
+        """confirm_study_config with non-list transcript IDs should error."""
+        invalid_payload = {
+            "event_groups": {
+                "event1": "p1s1",  # string instead of list
+            },
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("event1" in e.field for e in errors)
+
+    def test_confirm_study_config_event_groups_list_contains_non_string(self):
+        """confirm_study_config with non-string transcript ID should error."""
+        invalid_payload = {
+            "event_groups": {
+                "event1": ["p1s1", 123],  # number instead of string
+            },
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("event1[1]" in e.field for e in errors)
+
+    def test_confirm_study_config_dv_focuses_not_list(self):
+        """confirm_study_config with non-list dv_focuses should error."""
+        invalid_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "dv_focuses": "automaticity",  # string instead of list
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("dv_focuses" in e.field for e in errors)
+
+    def test_confirm_study_config_dv_focuses_contains_non_string(self):
+        """confirm_study_config with non-string dv_focus should error."""
+        invalid_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "dv_focuses": ["automaticity", 123],  # number instead of string
+            "config_provenance": "user_specified"
+        }
+        errors = validate_units("init", "confirm_study_config", invalid_payload)
+        assert len(errors) >= 1
+        assert any("dv_focuses[1]" in e.field for e in errors)
+
+    def test_init_unknown_substep_errors(self):
+        """Unknown init substep should error."""
+        errors = validate_units("init", "bad_substep", {})
+        assert len(errors) >= 1
+        assert any("substep" in e.field for e in errors)
+
+
 # ---------------------------------------------------------------------------
 # CLI --help tests (AC2.2)
 # ---------------------------------------------------------------------------
