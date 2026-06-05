@@ -486,6 +486,306 @@ class TestInitValidators:
         assert any("substep" in e.field for e in errors)
 
 
+class TestTranscriptPrepValidators:
+    """Test transcript_prep validators and DAG prerequisites for Phase 5."""
+
+    # Schema validation tests (AC5.4)
+    def test_hash_raw_valid(self):
+        """hash_raw with all required fields."""
+        valid_payload = {
+            "transcript_id": "p1s1",
+            "sha256": "abc123...",
+            "byte_size": 1024
+        }
+        errors = validate_units("transcript_prep", "hash_raw", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_hash_raw_missing_transcript_id(self):
+        """hash_raw missing transcript_id should error."""
+        invalid_payload = {
+            "sha256": "abc123...",
+            "byte_size": 1024
+        }
+        errors = validate_units("transcript_prep", "hash_raw", invalid_payload)
+        assert len(errors) >= 1
+        assert any("transcript_id" in e.field for e in errors)
+
+    def test_hash_raw_missing_sha256(self):
+        """hash_raw missing sha256 should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "byte_size": 1024
+        }
+        errors = validate_units("transcript_prep", "hash_raw", invalid_payload)
+        assert len(errors) >= 1
+        assert any("sha256" in e.field for e in errors)
+
+    def test_hash_raw_missing_byte_size(self):
+        """hash_raw missing byte_size should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "sha256": "abc123..."
+        }
+        errors = validate_units("transcript_prep", "hash_raw", invalid_payload)
+        assert len(errors) >= 1
+        assert any("byte_size" in e.field for e in errors)
+
+    def test_normalize_valid(self):
+        """normalize with all required fields."""
+        valid_payload = {
+            "transcript_id": "p1s1",
+            "normalized_path": "transcripts/p1s1.txt",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        errors = validate_units("transcript_prep", "normalize", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_normalize_missing_transcript_id(self):
+        """normalize missing transcript_id should error."""
+        invalid_payload = {
+            "normalized_path": "transcripts/p1s1.txt",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        errors = validate_units("transcript_prep", "normalize", invalid_payload)
+        assert len(errors) >= 1
+        assert any("transcript_id" in e.field for e in errors)
+
+    def test_normalize_missing_normalized_path(self):
+        """normalize missing normalized_path should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        errors = validate_units("transcript_prep", "normalize", invalid_payload)
+        assert len(errors) >= 1
+        assert any("normalized_path" in e.field for e in errors)
+
+    def test_normalize_missing_diff_path(self):
+        """normalize missing diff_path should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "normalized_path": "transcripts/p1s1.txt"
+        }
+        errors = validate_units("transcript_prep", "normalize", invalid_payload)
+        assert len(errors) >= 1
+        assert any("diff_path" in e.field for e in errors)
+
+    def test_register_offsets_valid(self):
+        """register_offsets with all required fields."""
+        valid_payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/p1s1.json",
+            "utterance_count": 42
+        }
+        errors = validate_units("transcript_prep", "register_offsets", valid_payload)
+        assert errors == [], f"Expected no errors, got {errors}"
+
+    def test_register_offsets_missing_transcript_id(self):
+        """register_offsets missing transcript_id should error."""
+        invalid_payload = {
+            "offsets_path": "transcripts/offsets/p1s1.json",
+            "utterance_count": 42
+        }
+        errors = validate_units("transcript_prep", "register_offsets", invalid_payload)
+        assert len(errors) >= 1
+        assert any("transcript_id" in e.field for e in errors)
+
+    def test_register_offsets_missing_offsets_path(self):
+        """register_offsets missing offsets_path should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "utterance_count": 42
+        }
+        errors = validate_units("transcript_prep", "register_offsets", invalid_payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field for e in errors)
+
+    def test_register_offsets_missing_utterance_count(self):
+        """register_offsets missing utterance_count should error."""
+        invalid_payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/p1s1.json"
+        }
+        errors = validate_units("transcript_prep", "register_offsets", invalid_payload)
+        assert len(errors) >= 1
+        assert any("utterance_count" in e.field for e in errors)
+
+    def test_transcript_prep_unknown_substep(self):
+        """Unknown transcript_prep substep should error."""
+        errors = validate_units("transcript_prep", "unknown_substep", {})
+        assert len(errors) >= 1
+        assert any("substep" in e.field for e in errors)
+
+    # DAG prerequisite enforcement tests (AC5.5)
+    def test_normalize_requires_hash_raw_done(self, tmp_path):
+        """normalize fails when hash_raw is not done (prereq_unsatisfied)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Prepare artifact for normalize
+        art_json = _write_artifact(run_dir, "transcript_prep-normalize.json")
+        units_payload = {
+            "transcript_id": "p1s1",
+            "normalized_path": "transcripts/p1s1.txt",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        units = _write_units_json(run_dir, "normalize_units.json", units_payload)
+
+        # Attempt to close normalize without hash_raw done
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "normalize", "--scope", "p1s1",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "testing prereq", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "Close should fail when hash_raw is not done"
+
+    def test_normalize_succeeds_after_hash_raw_done(self, tmp_path):
+        """normalize succeeds after hash_raw is done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # First close hash_raw
+        hash_raw_art = _write_artifact(run_dir, "transcript_prep-hash_raw.json")
+        hash_raw_units_payload = {
+            "transcript_id": "p1s1",
+            "sha256": "abc123...",
+            "byte_size": 1024
+        }
+        hash_raw_units = _write_units_json(run_dir, "hash_raw_units.json", hash_raw_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "hash_raw", "--scope", "p1s1",
+            "--artifact", str(hash_raw_art), "--units-json", str(hash_raw_units),
+            "--reason", "hash computed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"hash_raw close should succeed, got rc={rc}"
+
+        # Now close normalize
+        normalize_art = _write_artifact(run_dir, "transcript_prep-normalize.json")
+        normalize_units_payload = {
+            "transcript_id": "p1s1",
+            "normalized_path": "transcripts/p1s1.txt",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        normalize_units = _write_units_json(run_dir, "normalize_units.json", normalize_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "normalize", "--scope", "p1s1",
+            "--artifact", str(normalize_art), "--units-json", str(normalize_units),
+            "--reason", "transcript normalized", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"normalize close should succeed after hash_raw, got rc={rc}"
+
+    def test_register_offsets_requires_normalize_done(self, tmp_path):
+        """register_offsets fails when normalize is not done (prereq_unsatisfied)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Prepare artifact for register_offsets
+        art_json = _write_artifact(run_dir, "transcript_prep-register_offsets.json")
+        units_payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/p1s1.json",
+            "utterance_count": 42
+        }
+        units = _write_units_json(run_dir, "register_offsets_units.json", units_payload)
+
+        # Attempt to close register_offsets without normalize done
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "register_offsets", "--scope", "p1s1",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "testing prereq", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "Close should fail when normalize is not done"
+
+    def test_register_offsets_requires_both_hash_raw_and_normalize(self, tmp_path):
+        """register_offsets fails when only hash_raw is done (normalize required)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Close hash_raw only
+        hash_raw_art = _write_artifact(run_dir, "transcript_prep-hash_raw.json")
+        hash_raw_units_payload = {
+            "transcript_id": "p1s1",
+            "sha256": "abc123...",
+            "byte_size": 1024
+        }
+        hash_raw_units = _write_units_json(run_dir, "hash_raw_units.json", hash_raw_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "hash_raw", "--scope", "p1s1",
+            "--artifact", str(hash_raw_art), "--units-json", str(hash_raw_units),
+            "--reason", "hash computed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "hash_raw close should succeed"
+
+        # Attempt to close register_offsets without normalize
+        art_json = _write_artifact(run_dir, "transcript_prep-register_offsets.json")
+        units_payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/p1s1.json",
+            "utterance_count": 42
+        }
+        units = _write_units_json(run_dir, "register_offsets_units.json", units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "register_offsets", "--scope", "p1s1",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "testing prereq", "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "Close should fail when normalize is not done (even if hash_raw is done)"
+
+    def test_register_offsets_succeeds_after_normalize_done(self, tmp_path):
+        """register_offsets succeeds after both hash_raw and normalize are done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Close hash_raw
+        hash_raw_art = _write_artifact(run_dir, "transcript_prep-hash_raw.json")
+        hash_raw_units_payload = {
+            "transcript_id": "p1s1",
+            "sha256": "abc123...",
+            "byte_size": 1024
+        }
+        hash_raw_units = _write_units_json(run_dir, "hash_raw_units.json", hash_raw_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "hash_raw", "--scope", "p1s1",
+            "--artifact", str(hash_raw_art), "--units-json", str(hash_raw_units),
+            "--reason", "hash computed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "hash_raw close should succeed"
+
+        # Close normalize
+        normalize_art = _write_artifact(run_dir, "transcript_prep-normalize.json")
+        normalize_units_payload = {
+            "transcript_id": "p1s1",
+            "normalized_path": "transcripts/p1s1.txt",
+            "diff_path": "transcripts/p1s1.diff"
+        }
+        normalize_units = _write_units_json(run_dir, "normalize_units.json", normalize_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "normalize", "--scope", "p1s1",
+            "--artifact", str(normalize_art), "--units-json", str(normalize_units),
+            "--reason", "transcript normalized", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "normalize close should succeed"
+
+        # Now close register_offsets
+        register_offsets_art = _write_artifact(run_dir, "transcript_prep-register_offsets.json")
+        register_offsets_units_payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/p1s1.json",
+            "utterance_count": 42
+        }
+        register_offsets_units = _write_units_json(run_dir, "register_offsets_units.json", register_offsets_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "p1s1",
+            "--stage", "transcript_prep", "--substep", "register_offsets", "--scope", "p1s1",
+            "--artifact", str(register_offsets_art), "--units-json", str(register_offsets_units),
+            "--reason", "offsets registered", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"register_offsets close should succeed after normalize, got rc={rc}"
+
+
 class TestConfirmStudyConfigClose:
     """Test confirm_study_config close mutation for Task 2 Phase 1."""
 
