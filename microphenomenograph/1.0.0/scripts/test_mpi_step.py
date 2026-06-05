@@ -14,7 +14,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import mpi_step
 from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
-from _mpi_schemas import validate_units
+from _mpi_schemas import validate_units, PREREQ_SCOPE_TRANSFORMS, _scope_strip_to_event
+from mpi_step import _prereq_participant_key
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +106,71 @@ class TestValidateUnits:
         errors = validate_units("diachronic", "criteria_grouping", ["list"])
         assert errors
         assert any("payload" in e.field for e in errors)
+
+
+class TestPrereqScopeResolution:
+    """Test _scope_strip_to_event and PREREQ_SCOPE_TRANSFORMS for cross-scope prerequisites."""
+
+    # Tests for _scope_strip_to_event function
+    def test_scope_strip_to_event_basic(self):
+        """AC1.3 basic: 'event3-cat-low-gidu1' → 'event3'"""
+        assert _scope_strip_to_event("event3-cat-low-gidu1") == "event3"
+
+    def test_scope_strip_to_event_double_digit(self):
+        """AC1.3 double-digit: 'event12-cat-moderate-gidu3' → 'event12'"""
+        assert _scope_strip_to_event("event12-cat-moderate-gidu3") == "event12"
+
+    def test_scope_strip_to_event_high_category(self):
+        """AC1.3 variant: 'event1-cat-high-gidu5' → 'event1'"""
+        assert _scope_strip_to_event("event1-cat-high-gidu5") == "event1"
+
+    def test_scope_strip_to_event_no_cat_delimiter(self):
+        """Defensive fallback: input with no '-cat-' returns unchanged"""
+        assert _scope_strip_to_event("p1s1-idu2") == "p1s1-idu2"
+        assert _scope_strip_to_event("p1s1") == "p1s1"
+
+    # Tests for PREREQ_SCOPE_TRANSFORMS table
+    def test_prereq_scope_transforms_has_two_entries(self):
+        """Table has exactly 2 entries"""
+        assert len(PREREQ_SCOPE_TRANSFORMS) == 2
+
+    def test_prereq_scope_transforms_worksheet_assembly_callable(self):
+        """worksheet_assembly → select_generic_idus_of_interest maps to callable"""
+        key = ("generic_synchronic", "worksheet_assembly",
+               "generic_synchronic", "select_generic_idus_of_interest")
+        assert key in PREREQ_SCOPE_TRANSFORMS
+        transform = PREREQ_SCOPE_TRANSFORMS[key]
+        assert callable(transform)
+
+    def test_prereq_scope_transforms_worksheet_assembly_transform(self):
+        """Calling worksheet_assembly transform with event-scope scope"""
+        key = ("generic_synchronic", "worksheet_assembly",
+               "generic_synchronic", "select_generic_idus_of_interest")
+        transform = PREREQ_SCOPE_TRANSFORMS[key]
+        assert transform("event3-cat-low-gidu1") == "event3"
+
+    def test_prereq_scope_transforms_weak_evidence_review_all_match(self):
+        """weak_evidence_review → candidate_drafting maps to 'all_match' sentinel"""
+        key = ("hypothesis", "weak_evidence_review",
+               "hypothesis", "candidate_drafting")
+        assert key in PREREQ_SCOPE_TRANSFORMS
+        assert PREREQ_SCOPE_TRANSFORMS[key] == "all_match"
+
+    # Backward compatibility tests for _prereq_participant_key
+    def test_prereq_participant_key_sync_to_diachronic(self):
+        """AC3.1: synchronic→diachronic scope stripping: 'p1s1-idu2' → 'p1s1'"""
+        result = _prereq_participant_key("p1s1-idu2", "diachronic")
+        assert result == "p1s1"
+
+    def test_prereq_participant_key_diachronic_unchanged(self):
+        """AC3.1: no suffix, unchanged: 'p1s1' → 'p1s1'"""
+        result = _prereq_participant_key("p1s1", "diachronic")
+        assert result == "p1s1"
+
+    def test_prereq_participant_key_same_scope_unchanged(self):
+        """AC3.2: same-scope prereqs unchanged: 'event3-cat-low' → 'event3-cat-low'"""
+        result = _prereq_participant_key("event3-cat-low", "generic_diachronic")
+        assert result == "event3-cat-low"
 
 
 class TestInitValidators:
