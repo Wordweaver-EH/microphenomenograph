@@ -400,10 +400,90 @@ def _validate_transcript_prep_normalize(payload: dict) -> list[SchemaError]:
 
 
 def _validate_transcript_prep_register_offsets(payload: dict) -> list[SchemaError]:
-    """register_offsets — records path of the utterance offset file and utterance count.
-    Phase 6 adds offset format enforcement (flat-dict, byte alignment) on top of this.
     """
-    return _require_keys(payload, ["transcript_id", "offsets_path", "utterance_count"], "payload")
+    register_offsets — records path of the utterance offset file and utterance count.
+
+    In addition to required-fields validation, opens and inspects the offset file
+    to reject the old array format {"transcript_id": ..., "utterances": [...]}.
+
+    Expected flat-dict format:
+        {"1": {"byte_start": N, "byte_end": N}, "2": {...}, ...}
+
+    Keys: string utterance numbers ("1", "2", ...)
+    Values: dicts with "byte_start" and "byte_end" integer fields
+    """
+    import json
+    import os
+
+    errors = _require_keys(payload, ["transcript_id", "offsets_path", "utterance_count"], "payload")
+    if errors:
+        return errors  # Can't check file if required path field is missing
+
+    offsets_path = payload.get("offsets_path")
+    # Path resolution: offsets_path is resolved relative to CWD. The schema validator
+    # does not receive run_dir (unlike _validate_utterance_refs, which is passed run_dir
+    # explicitly at lines 696/714 of mpi_step.py and uses run_dir/"transcripts"/"offsets").
+    # Here we rely on the close-time invariant: CWD == run_dir, because all
+    # `mpi_step.py close` invocations run from inside the run directory with --run-dir .
+    # The file check is therefore equivalent to `(run_dir / offsets_path).exists()`.
+    if offsets_path and os.path.exists(offsets_path):
+        try:
+            data = json.loads(open(offsets_path, encoding="utf-8").read())
+        except (json.JSONDecodeError, OSError) as exc:
+            errors.append(SchemaError(
+                "payload.offsets_path",
+                f"offset file could not be read: {exc}"
+            ))
+            return errors
+
+        # Detect old array format: top-level dict with "utterances" list key
+        if isinstance(data, dict) and "utterances" in data:
+            errors.append(SchemaError(
+                "payload.offsets_path",
+                "offset file is in the old array format "
+                '({"transcript_id": ..., "utterances": [...]}) — '
+                "use the flat-dict format instead: "
+                '{"1": {"byte_start": N, "byte_end": N}, "2": {...}, ...}'
+            ))
+            return errors
+
+        # Validate flat-dict structure
+        if not isinstance(data, dict):
+            errors.append(SchemaError(
+                "payload.offsets_path",
+                f"offset file must be a JSON object (dict), got {type(data).__name__}"
+            ))
+            return errors
+
+        # Spot-check: every key should be a string-encoded integer; every value should
+        # have byte_start and byte_end
+        for key, entry in data.items():
+            try:
+                int(key)
+            except (ValueError, TypeError):
+                errors.append(SchemaError(
+                    "payload.offsets_path",
+                    f"offset file key {key!r} is not a string utterance number"
+                ))
+                break  # Report first bad key only
+            if not isinstance(entry, dict):
+                errors.append(SchemaError(
+                    "payload.offsets_path",
+                    f"offset file entry for utterance {key!r} must be a dict "
+                    "with byte_start and byte_end"
+                ))
+                break
+            for field in ("byte_start", "byte_end"):
+                if field not in entry:
+                    errors.append(SchemaError(
+                        "payload.offsets_path",
+                        f"offset file entry for utterance {key!r} is missing field '{field}'"
+                    ))
+                    break
+            if errors:
+                break
+
+    return errors
 
 
 def _validate_init_scan_transcripts(payload: dict) -> list[SchemaError]:

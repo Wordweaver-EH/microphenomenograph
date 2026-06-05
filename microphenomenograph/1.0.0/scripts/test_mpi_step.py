@@ -616,6 +616,106 @@ class TestTranscriptPrepValidators:
         assert len(errors) >= 1
         assert any("substep" in e.field for e in errors)
 
+    # AC6 offset file format tests (Phase 6)
+    def test_offset_old_array_format_rejected(self, tmp_path):
+        """Offset file in old array format should be rejected."""
+        # Write an old-format offset file
+        old_format = {
+            "transcript_id": "p1s1",
+            "utterances": [
+                {"utterance_number": 1, "byte_start": 0, "byte_end": 42}
+            ]
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(old_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),  # Use absolute path
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+
+        # Should error about old array format
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "old array format" in e.message for e in errors)
+
+    def test_offset_valid_flat_dict_format(self, tmp_path):
+        """Valid flat-dict offset file should pass."""
+        valid_format = {
+            "1": {"byte_start": 0, "byte_end": 42},
+            "2": {"byte_start": 44, "byte_end": 91}
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(valid_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 2
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert errors == [], f"Expected no errors for valid flat-dict, got {errors}"
+
+    def test_offset_non_integer_key_rejected(self, tmp_path):
+        """Offset file with non-integer-string key should be rejected."""
+        bad_format = {
+            "abc": {"byte_start": 0, "byte_end": 42}
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(bad_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "not a string utterance number" in e.message for e in errors)
+
+    def test_offset_missing_byte_start_rejected(self, tmp_path):
+        """Offset entry missing byte_start should be rejected."""
+        bad_format = {
+            "1": {"byte_end": 42}
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(bad_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "byte_start" in e.message for e in errors)
+
+    def test_offset_non_dict_top_level_rejected(self, tmp_path):
+        """Offset file with non-dict top-level should be rejected."""
+        bad_format = [1, 2, 3]
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(bad_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "must be a JSON object" in e.message for e in errors)
+
+    def test_offset_nonexistent_file_valid(self):
+        """Offset file pointing to non-existent file should not error (file not yet written)."""
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": "transcripts/offsets/nonexistent.json",
+            "utterance_count": 42
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert errors == [], f"Expected no errors for nonexistent file, got {errors}"
+
     # DAG prerequisite enforcement tests (AC5.5)
     def test_normalize_requires_hash_raw_done(self, tmp_path):
         """normalize fails when hash_raw is not done (prereq_unsatisfied)."""
