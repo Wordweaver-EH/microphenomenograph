@@ -681,6 +681,83 @@ PREREQ_SCOPE_TRANSFORMS: dict[tuple[str, str, str, str], object] = {
 }
 
 # ---------------------------------------------------------------------------
+# Cross-participant completeness gates
+# ---------------------------------------------------------------------------
+# Maps each cross-participant stage to the upstream substeps that must be
+# done for ALL transcripts in the event before a close can proceed.
+#
+# Structure:
+#   stage -> {
+#     "scope_to_event": callable(scope: str) -> str | None,
+#       # Returns the event ID to look up in event_groups.
+#       # Returns None to check ALL events (global stages).
+#     "required_per_transcript": list[tuple[str, str]]
+#       # (stage, substep) pairs that must be done for each transcript ID
+#       # in the event. For IDU-scoped stages (synchronic), the check scans
+#       # all pNsN-iduK keys for that transcript.
+#     "required_cross_participant": list[tuple[str | None, str, str]]
+#       # (key_prefix, stage, substep) — for stages where the prereq scope is not
+#       # transcript-level. Each entry: check that ANY participant key matching
+#       # key_prefix has that stage/substep done.
+#       # key_prefix=None → use the event ID from events_to_check (e.g. "event1")
+#       # key_prefix="global" → match the literal "global" key (global_synchronic)
+#       # Empty list if not applicable.
+#   }
+#
+# Note: _scope_strip_to_event is defined in this module (Phase 2).
+
+def _scope_to_event_all(_scope: str) -> None:  # type: ignore[return]
+    """Sentinel: check ALL events (for global-scope stages)."""
+    return None
+
+
+COMPLETENESS_GATES: dict[str, dict] = {
+    "generic_diachronic": {
+        # scope: event<E>-cat-<C>
+        "scope_to_event": _scope_strip_to_event,   # defined in Phase 2
+        "required_per_transcript": [
+            ("diachronic", "idu_naming_ordering"),
+            # synchronic: all IDU scopes for the transcript must have
+            # isu_second_level_grouping done — checked by scanning pNsN-iduK keys
+            ("synchronic", "isu_second_level_grouping"),
+        ],
+        "required_cross_participant": [],
+    },
+    "generic_synchronic": {
+        # scope: event<E>-cat-<C>-gidu<G>
+        "scope_to_event": _scope_strip_to_event,
+        "required_per_transcript": [],
+        "required_cross_participant": [
+            # key_prefix=None → match pids starting with the event ID (e.g. "event1-cat-...")
+            (None, "generic_diachronic", "cross_iv_contrast"),
+        ],
+    },
+    "global_synchronic": {
+        # scope: global (or per generic-IDU × IV category)
+        "scope_to_event": _scope_to_event_all,
+        "required_per_transcript": [],
+        "required_cross_participant": [
+            # key_prefix=None → match pids starting with each event ID
+            (None, "generic_synchronic", "isu_second_level_grouping"),
+        ],
+    },
+    "hypothesis": {
+        # scope: dv-<focus> or global
+        "scope_to_event": _scope_to_event_all,
+        "required_per_transcript": [],
+        "required_cross_participant": [
+            # key_prefix="gidu" → match gidu<G>-cat-<C> participant keys.
+            # global_synchronic.global_synchronic is recorded under scope gidu<G>-cat-<C>
+            # (confirmed: mpi-global-synchronic SKILL.md line 33; mpi-cross-analyst.md).
+            # Do NOT use key_prefix=None (event-ID prefix) — gidu keys are NOT prefixed
+            # by event ID.
+            # Do NOT use key_prefix="global" — no participant key is literally "global".
+            ("gidu", "global_synchronic", "global_synchronic"),
+        ],
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Prompt artifact validator (schema_version 2)
 # ---------------------------------------------------------------------------
 
