@@ -4595,3 +4595,258 @@ class TestCompletenessGates:
         ])
         assert rc != 0, "verify should fail when completeness invariant is violated"
         assert "completeness_invariant_violated" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: DV focus scope gate tests (AC8)
+# ---------------------------------------------------------------------------
+
+class TestDVFocusGate:
+    """Integration tests for the undeclared_dv_focus guard and all-match with declared set."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _manifest_with_dv_focuses(dv_focuses, candidate_drafting_statuses=None):
+        """
+        Build a v2.0 manifest with study.dv_focuses set and optional
+        candidate_drafting substep entries.
+
+        candidate_drafting_statuses: dict {focus_key: status} e.g.
+          {"dv-automaticity": "done", "dv-attention": "done"}
+        """
+        participants = {}
+        if candidate_drafting_statuses:
+            for focus_key, status in candidate_drafting_statuses.items():
+                participants[focus_key] = {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": status,
+                                    "close_id": "test-close-id" if status == "done" else None,
+                                }
+                            }
+                        }
+                    }
+                }
+        return {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            # event_groups = {} (empty → completeness gate bypassed for hypothesis)
+            "study": {"dv_focuses": dv_focuses, "event_groups": {}},
+            "participants": participants,
+        }
+
+    # ------------------------------------------------------------------
+    # AC8.1 — schema validation (dv_focuses field)
+    # ------------------------------------------------------------------
+
+    def test_ac8_1_dv_focuses_non_string_entry_rejected(self):
+        """AC8.1: dv_focuses list with non-string entry is rejected by validator."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "dv_focuses": ["automaticity", 123],  # 123 is not a string
+            "config_provenance": "user_specified",
+        })
+        assert len(errors) >= 1
+        assert any("dv_focuses" in e.field for e in errors)
+
+    # ------------------------------------------------------------------
+    # AC8.2 — undeclared DV focus guard
+    # ------------------------------------------------------------------
+
+    def test_ac8_2_undeclared_focus_rejected(self, tmp_path, capsys):
+        """AC8.2: evidence_extraction with an undeclared focus scope is rejected."""
+        run_dir = _init_run_dir(tmp_path)
+
+        manifest = self._manifest_with_dv_focuses(["automaticity", "attention"])
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "dv-unknown-hypothesis.evidence_extraction.json")
+        art_md = _write_artifact(run_dir, "dv-unknown-hypothesis.evidence_extraction.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "dv-unknown", "hypothesis", "evidence_extraction")
+        units = _write_units_json(run_dir, "units.json", {"dv_focus": "unknown", "evidence_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "dv-unknown",
+            "--stage", "hypothesis",
+            "--substep", "evidence_extraction",
+            "--scope", "dv-unknown",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "close should fail for undeclared DV focus"
+        assert "undeclared_dv_focus" in capsys.readouterr().err
+
+    def test_ac8_2_declared_focus_succeeds(self, tmp_path):
+        """AC8.2: evidence_extraction with a declared focus scope succeeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        manifest = self._manifest_with_dv_focuses(["automaticity", "attention"])
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "dv-automaticity-hypothesis.evidence_extraction.json")
+        art_md = _write_artifact(run_dir, "dv-automaticity-hypothesis.evidence_extraction.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "dv-automaticity", "hypothesis", "evidence_extraction")
+        units = _write_units_json(run_dir, "units.json", {"dv_focus": "automaticity", "evidence_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "dv-automaticity",
+            "--stage", "hypothesis",
+            "--substep", "evidence_extraction",
+            "--scope", "dv-automaticity",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "close should succeed for declared DV focus"
+
+    # ------------------------------------------------------------------
+    # AC8.3 — all-match checks declared focuses when dv_focuses is set
+    # ------------------------------------------------------------------
+
+    def test_ac8_3_declared_focus_missing_candidate_drafting_blocked(self, tmp_path, capsys):
+        """AC8.3: weak_evidence_review is blocked when a declared focus has no candidate_drafting done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # dv-automaticity has candidate_drafting done; dv-attention is absent from manifest
+        manifest = self._manifest_with_dv_focuses(
+            ["automaticity", "attention"],
+            {"dv-automaticity": "done"},
+        )
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "weak_evidence_review should be blocked when declared focus missing"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
+
+    def test_ac8_3_all_declared_focuses_done_succeeds(self, tmp_path):
+        """AC8.3: weak_evidence_review succeeds when all declared focuses have candidate_drafting done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        manifest = self._manifest_with_dv_focuses(
+            ["automaticity", "attention"],
+            {"dv-automaticity": "done", "dv-attention": "done"},
+        )
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "weak_evidence_review should succeed when all declared focuses done"
+
+    # ------------------------------------------------------------------
+    # AC8.4 — null dv_focuses falls back to manifest scan
+    # ------------------------------------------------------------------
+
+    def test_ac8_4_null_focuses_manifest_scan_succeeds(self, tmp_path):
+        """AC8.4: With null dv_focuses, weak_evidence_review succeeds when all manifest entries done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        manifest = self._manifest_with_dv_focuses(
+            None,  # null dv_focuses
+            {"dv-automaticity": "done"},
+        )
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "weak_evidence_review should succeed with null dv_focuses and manifest scan"
+
+    def test_ac8_4_null_focuses_pending_entry_blocked(self, tmp_path, capsys):
+        """AC8.4: With null dv_focuses, weak_evidence_review is blocked if any manifest entry is pending."""
+        run_dir = _init_run_dir(tmp_path)
+
+        manifest = self._manifest_with_dv_focuses(
+            None,  # null dv_focuses
+            {"dv-automaticity": "pending"},
+        )
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest) + "\n")
+
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "weak_evidence_review should be blocked with pending candidate_drafting"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
