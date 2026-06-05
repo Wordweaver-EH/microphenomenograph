@@ -1314,47 +1314,53 @@ with acquire_close_lock(run_dir):
             env=env,
         )
 
-        # Poll for the ready marker (timeout after 5 seconds)
-        start_time = time.time()
-        while not ready_marker.exists() and time.time() - start_time < 5:
-            time.sleep(0.05)
-        assert ready_marker.exists(), "Helper process failed to acquire lock (ready marker not created)"
+        try:
+            # Poll for the ready marker (timeout after 5 seconds)
+            start_time = time.time()
+            while not ready_marker.exists() and time.time() - start_time < 5:
+                time.sleep(0.05)
+            assert ready_marker.exists(), "Helper process failed to acquire lock (ready marker not created)"
 
-        # Now in the parent, try to acquire the lock in a separate thread
-        # This thread should BLOCK while the helper holds the lock
-        lock_acquired_event = threading.Event()
-        thread_trying_event = threading.Event()
+            # Now in the parent, try to acquire the lock in a separate thread
+            # This thread should BLOCK while the helper holds the lock
+            lock_acquired_event = threading.Event()
+            thread_trying_event = threading.Event()
 
-        def try_acquire():
-            """Try to acquire; set event when acquired."""
-            thread_trying_event.set()  # Signal that we're about to block
-            with acquire_close_lock(run_dir):
-                lock_acquired_event.set()
+            def try_acquire():
+                """Try to acquire; set event when acquired."""
+                thread_trying_event.set()  # Signal that we're about to block
+                with acquire_close_lock(run_dir):
+                    lock_acquired_event.set()
 
-        acq_thread = threading.Thread(target=try_acquire, daemon=True)
-        acq_thread.start()
+            acq_thread = threading.Thread(target=try_acquire, daemon=True)
+            acq_thread.start()
 
-        # Wait for thread to signal it's trying
-        acq_thread_trying = thread_trying_event.wait(timeout=1)
-        assert acq_thread_trying, "Acquire thread did not start"
+            # Wait for thread to signal it's trying
+            acq_thread_trying = thread_trying_event.wait(timeout=1)
+            assert acq_thread_trying, "Acquire thread did not start"
 
-        # Negative control: lock should NOT be acquired yet (subprocess holds it)
-        time.sleep(0.3)
-        assert not lock_acquired_event.is_set(), \
-            "Lock acquired while helper holds it — lock implementation is broken"
+            # Negative control: lock should NOT be acquired yet (subprocess holds it)
+            time.sleep(0.3)
+            assert not lock_acquired_event.is_set(), \
+                "Lock acquired while helper holds it — lock implementation is broken"
 
-        # Now terminate the helper process
-        proc.terminate()
-        proc.wait(timeout=5)
+            # Now terminate the helper process
+            proc.terminate()
+            proc.wait(timeout=5)
 
-        # After helper exits, the thread should acquire the lock (OS auto-released it)
-        acq_thread.join(timeout=5)
-        assert lock_acquired_event.is_set(), \
-            "Lock not acquired after helper process exit — OS did not auto-release"
+            # After helper exits, the thread should acquire the lock (OS auto-released it)
+            acq_thread.join(timeout=5)
+            assert lock_acquired_event.is_set(), \
+                "Lock not acquired after helper process exit — OS did not auto-release"
 
-        # Lock file should still exist (by design)
-        assert (run_dir / ".mpi" / "close.lock").exists(), \
-            "Lock file should persist after release"
+            # Lock file should still exist (by design)
+            assert (run_dir / ".mpi" / "close.lock").exists(), \
+                "Lock file should persist after release"
+        finally:
+            # Guarantee subprocess cleanup regardless of assertion outcome
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
 
     def test_lock_blocks_concurrent_acquisition(self, tmp_path):
         """Deterministic serialization test: lock primitives actually block."""
