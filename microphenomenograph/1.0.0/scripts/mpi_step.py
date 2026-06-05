@@ -1510,6 +1510,24 @@ def cmd_close(args: argparse.Namespace) -> int:
             if irr_check_rc != 0:
                 return _abort("irr_check_failed")
 
+        # --- DV focus scope guard (Phase 8, AC8.2) ---
+        # When study.dv_focuses is declared, hypothesis.evidence_extraction must
+        # only use scopes from the declared list.
+        if args.stage == "hypothesis" and args.substep == "evidence_extraction":
+            dv_focuses = manifest.get("study", {}).get("dv_focuses")
+            if dv_focuses is not None:
+                # Extract focus name from scope "dv-<focus>"
+                focus_name = args.scope[len("dv-"):] if args.scope.startswith("dv-") else args.scope
+                if focus_name not in dv_focuses:
+                    msg = (
+                        f"undeclared_dv_focus: focus '{focus_name}' is not in "
+                        f"study.dv_focuses {dv_focuses!r}. "
+                        f"Either add it to the declared list at confirm_study_config "
+                        f"or set dv_focuses to null to allow emergent focuses."
+                    )
+                    print(f"ERROR {msg}", file=sys.stderr)
+                    return _abort(msg)
+
         # --- Completeness gate check (Phase 7, AC7.2-7.5) ---
         # For cross-participant stages, verify all upstream transcripts are complete.
         # Reads study.event_groups; legacy manifests (no event_groups) warn and proceed.

@@ -126,4 +126,16 @@ All three are LLM substeps; `mpi-cross-analyst` owns persistence for all.
 ```
 The schema validator enforces this field's presence.
 
+**DV focus provenance field:** Every `hypothesis.candidate_drafting` artifact MUST also
+carry a `dv_focuses_provenance` field whose value is:
+- `"researcher_specified"` — when `study.dv_focuses` was declared at `confirm_study_config`
+- `"emergent"` — when `study.dv_focuses` is null (focuses named by the LLM from analysis)
+
+Read the provenance from `manifest["study"].get("config_provenance")` —
+specifically the nested `dv_focuses_provenance` key if present, otherwise infer:
+non-null `study.dv_focuses` → `"researcher_specified"`; null → `"emergent"`.
+
+This field is for auditability: it makes explicit whether the hypothesis was constrained
+to pre-declared DVs or emerged from the analysis.
+
 **Commit message format:** `mpi: mpi-cross-analyst hypothesis.<substep> <scope> (<N>units <K>flagged)`

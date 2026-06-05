@@ -297,6 +297,7 @@ python scripts/mpi_step.py close \
   --actor mpi-cross-analyst \
   --stage hypothesis \
   --substep evidence_extraction \
+  --participant dv-<focus> \
   --scope dv-<focus> \
   --artifact hypotheses/dv-<focus>.evidence.json \
   --artifact hypotheses/dv-<focus>.evidence.md \
@@ -307,7 +308,7 @@ python scripts/mpi_step.py close \
 ```
 
 **`hypothesis.candidate_drafting`** — same pattern; artifact names `dv-<focus>.candidates.*`.
-Scope: `dv-<focus>`. JSON must include `claims` array per candidate (see AC23.1).
+Scope: `dv-<focus>`. Include `--participant dv-<focus>`. JSON must include `claims` array per candidate (see AC23.1).
 
 **`hypothesis.weak_evidence_review`** — scope: `global`; artifact names `review_summary.*`.
 ```bash
@@ -315,6 +316,7 @@ python scripts/mpi_step.py close \
   --actor mpi-cross-analyst \
   --stage hypothesis \
   --substep weak_evidence_review \
+  --participant global \
   --scope global \
   --artifact hypotheses/review_summary.json \
   --artifact hypotheses/review_summary.md \
