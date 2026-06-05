@@ -1,6 +1,6 @@
 ---
 name: mpi-generic-diachronic
-description: Use when running /mpi generic-diachronic — aggregates per-participant diachronic outputs across score categories via mpi-cross-analyst; warns if any participant diachronic not complete
+description: Use when running /mpi generic-diachronic — aggregates per-participant diachronic outputs across score categories via mpi-cross-analyst; completeness enforced at close via event-group gate
 user-invocable: false
 ---
 # mpi-generic-diachronic

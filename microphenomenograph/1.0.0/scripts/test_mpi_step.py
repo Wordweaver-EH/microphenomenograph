@@ -4362,3 +4362,236 @@ class TestCompletenessGates:
         ])
         assert rc != 0, "event12 close should fail (p1s2 incomplete)"
         assert "completeness_gate_unsatisfied" in capsys.readouterr().err
+
+    def test_ac7_4_global_synchronic_gate_fail(self, tmp_path, capsys):
+        """AC7.4: global_synchronic fails when any event lacks generic_synchronic.isu_second_level_grouping."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event_groups but isu_second_level_grouping not done for event1
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                }
+            },
+            "participants": {
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "pending"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close global_synchronic
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": []
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "global_synchronic gate should fail without isu_second_level_grouping"
+        assert "completeness_gate_unsatisfied" in capsys.readouterr().err
+
+    def test_ac7_4_global_synchronic_gate_success(self, tmp_path):
+        """AC7.4: global_synchronic succeeds when all events have generic_synchronic.isu_second_level_grouping done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with isu_second_level_grouping done for event1
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                }
+            },
+            "participants": {
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done", "close_id": "test-id"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close global_synchronic
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": []
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "global_synchronic gate should succeed with isu_second_level_grouping done"
+
+    def test_ac7_4_generic_synchronic_gate_success(self, tmp_path):
+        """AC7.4: generic_synchronic succeeds when generic_diachronic.cross_iv_contrast is done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with cross_iv_contrast done for event3
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event3": ["p1s3"]
+                }
+            },
+            "participants": {
+                "event3-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "substeps": {
+                                "cross_iv_contrast": {"status": "done", "close_id": "test-id"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close select_generic_idus_of_interest
+        art_json = _write_artifact(run_dir, "event3-cat-low-generic_synchronic.select_generic_idus_of_interest.json")
+        art_md = _write_artifact(run_dir, "event3-cat-low-generic_synchronic.select_generic_idus_of_interest.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event3-cat-low", "generic_synchronic", "select_generic_idus_of_interest")
+        units = _write_units_json(run_dir, "units.json", {"event": "event3", "selected_generic_idus": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event3-cat-low",
+            "--stage", "generic_synchronic",
+            "--substep", "select_generic_idus_of_interest",
+            "--scope", "event3-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "generic_synchronic gate should succeed with cross_iv_contrast done"
+
+    def test_cmd_verify_detects_completeness_violation(self, tmp_path, capsys):
+        """Minor: cmd_verify detects when a cross-participant done substep has incomplete upstream."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with generic_diachronic done but upstream diachronic incomplete
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                }
+            },
+            "participants": {
+                "p1s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "pending",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "pending"}
+                            }
+                        }
+                    }
+                },
+                "event1-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "participant_row_assembly": {"status": "done", "close_id": "test-close-id"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Create audit.jsonl with the matching commit
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        audit_event = {
+            "event_id": "test-event-id",
+            "@timestamp": "2026-05-18T00:00:00Z",
+            "trace_id": "test-trace-id",
+            "span_id": "test-span-id",
+            "actor": {"kind": "orchestrator", "name": "orchestrator"},
+            "event": {"kind": "event", "action": "git_commit_succeeded", "outcome": "success"},
+            "mpi": {
+                "stage": "generic_diachronic",
+                "substep": "participant_row_assembly",
+                "scope": "event1-cat-low",
+                "close_id": "test-close-id",
+                "git_commit_sha": "abc1234567890"
+            }
+        }
+        append_jsonl(audit_path, audit_event)
+
+        # Create a fake commit object
+        subprocess.run(
+            ["git", "hash-object", "-t", "commit", "--stdin", "-w"],
+            input=b"tree 0000000000000000000000000000000000000000\n",
+            cwd=run_dir,
+            capture_output=True
+        )
+
+        # Run verify — should detect the completeness violation
+        rc = mpi_step.main([
+            "verify",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "verify should fail when completeness invariant is violated"
+        assert "completeness_invariant_violated" in capsys.readouterr().err
