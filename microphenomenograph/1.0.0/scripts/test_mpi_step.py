@@ -706,7 +706,24 @@ class TestTranscriptPrepValidators:
         }
         errors = validate_units("transcript_prep", "register_offsets", payload)
         assert len(errors) >= 1
-        assert any("offsets_path" in e.field and "must be int" in e.message for e in errors)
+        assert any("offsets_path" in e.field and "must be a non-boolean int" in e.message for e in errors)
+
+    def test_offset_bool_byte_field_rejected(self, tmp_path):
+        """Offset entry with boolean byte_start should be rejected (bool is int subclass)."""
+        bad_format = {
+            "1": {"byte_start": True, "byte_end": 42}
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(bad_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "must be a non-boolean int" in e.message for e in errors)
 
     def test_offset_non_dict_top_level_rejected(self, tmp_path):
         """Offset file with non-dict top-level should be rejected."""

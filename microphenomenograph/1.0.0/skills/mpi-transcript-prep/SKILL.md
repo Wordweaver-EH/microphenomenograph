@@ -21,7 +21,7 @@ Read transcript path from `.mpi/project.json` → `participants[pNsN].transcript
 
 **Utterances:** Each non-blank line after the header must begin with either:
 - A speaker label: `Kevin Sheldrake:` or `P<N>:` (case-insensitive: `kevin sheldrake:`, `p1:` etc.)
-- Or be a continuation of the previous utterance (lines without speaker-label prefix).
+- Or be a continuation of the previous utterance (lines without speaker-label prefix). Note: continuation handling is a parser fallback for malformed input; the `register_offsets` offset model assumes single-line utterances, so multi-line turns are out of scope for byte-range computation.
 
 **Important:** The OSF transcripts ensure that each utterance occupies exactly one physical line
 in the raw file (speaker label and utterance text on the same line; no multi-line turns).

@@ -479,10 +479,10 @@ def _validate_transcript_prep_register_offsets(payload: dict) -> list[SchemaErro
                         f"offset file entry for utterance {key!r} is missing field '{field}'"
                     ))
                     break
-                elif not isinstance(entry[field], int):
+                elif not isinstance(entry[field], int) or isinstance(entry[field], bool):
                     errors.append(SchemaError(
                         "payload.offsets_path",
-                        f"offset file entry for utterance {key!r} field '{field}' must be int, got {type(entry[field]).__name__}"
+                        f"offset file entry for utterance {key!r} field '{field}' must be a non-boolean int, got {type(entry[field]).__name__}"
                     ))
                     break
             if errors:
