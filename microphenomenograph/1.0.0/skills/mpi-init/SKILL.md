@@ -105,37 +105,38 @@ Write `RUN_DIR/.mpi/project.json`. All paths inside the manifest (`transcript_pa
 
 ## Manifest schema
 
+The init command writes `.mpi/project.json` using the v2.0 schema (same as `cmd_init`
+bootstrap output, extended by `init.confirm_study_config` close):
+
 ```json
 {
-  "version": "1.0",
-  "mode": "assisted",
-  "created_at": "<ISO 8601 timestamp>",
-  "updated_at": "<ISO 8601 timestamp>",
+  "version": "2.0",
+  "run_id": "<UUID4>",
+  "study": {
+    "run_repo_mode": "dedicated",
+    "git_remote_configured": false,
+    "calibration_transcript_ids": [],
+    "event_groups": {
+      "event1": ["p1s1", "p2s1", "p3s1"],
+      "event2": ["p1s2", "p2s2", "p3s2"]
+    },
+    "dv_focuses": null,
+    "config_provenance": "user_specified"
+  },
   "participants": {
     "p1s1": {
-      "participant": 1,
-      "suggestion": 1,
-      "score": 4,
-      "score_category": "high",
-      "transcript_path": "transcripts/p1s1.txt",
       "stages": {
-        "transcript_prep": { "status": "pending", "output_path": null },
-        "diachronic": { "status": "pending", "output_path": null },
-        "synchronic": { "status": "pending", "output_path": null }
+        "transcript_prep": { "status": "pending", "substeps": {} },
+        "diachronic":      { "status": "pending", "substeps": {} },
+        "synchronic":      { "status": "pending", "substeps": {} }
       }
     }
-  },
-  "cross_participant_stages": {
-    "generic_diachronic": { "status": "pending", "output_path": null },
-    "generic_synchronic": { "status": "pending", "output_path": null },
-    "global_synchronic": { "status": "pending", "output_path": null },
-    "hypothesis": { "status": "pending", "output_path": null }
-  },
-  "review_queue_path": ".mpi/review-queue.md",
-  "reasoning_log_path": ".mpi/reasoning.log",
-  "git_commit": false
+  }
 }
 ```
+
+`event_groups`, `dv_focuses`, and `config_provenance` are written by the
+`init.confirm_study_config` close (not by the bootstrap `cmd_init` write).
 
 Score categories:
 - 0–1 → "low"
@@ -176,8 +177,23 @@ This means running init twice never resets completed work.
    - On parse failure: print error and skip this file (do not abort entire run).
 7. Build the participant entry (new or merge with existing per idempotency rules).
 8. Write manifest directly to `.mpi/project.json` (atomic write, not via `mpi_step.py close`).
-9. Report: "Initialised N participants in `<RUN_DIR>`. M already had completed stages
-   (preserved). Run subsequent /mpi commands from `<RUN_DIR>`."
+9. **Confirm event grouping with user.** Present the auto-detected event grouping (derived from
+   suggestion numbers in `Participant N, Suggestion M (Scored K/5)` headers — suggestion M → `eventM`):
+   ```
+   Detected event groups:
+   event1: p1s1, p2s1, p3s1, p4s1, p5s1, p6s1, p7s1
+   event2: p1s2, p2s2, p3s2, p4s2, p5s2, p6s2, p7s2
+   event3: p1s3, p2s3, p3s3, p4s3, p5s3, p6s3, p7s3
+
+   Note: "event" is abstract — for this study suggestion number = event.
+   For other study designs (interoception, alcohol, etc.) the grouping
+   may differ. Please confirm or correct before proceeding.
+   ```
+   Ask the user to confirm or provide corrections. Record the confirmed grouping as `event_groups`.
+
+10. Close `init.confirm_study_config` via `mpi_step.py close`:
+    - Write `init.confirm_study_config.json` with confirmed `event_groups`, `dv_focuses` (null unless specified), and `config_provenance`.
+    - Run: `mpi_step.py close --stage init --substep confirm_study_config --participant run --units-json init.confirm_study_config.json --artifact init.confirm_study_config.json --actor <actor>`
 
 ## Output
 
@@ -202,7 +218,7 @@ when `study.config_provenance == "llm_proposed_user_confirmed"`).
 |---------|-------|-----------|-------|
 | `init.scan_transcripts` | orchestrator | `<manifest>.json` (initial write) | No prompt artifact. Records `study.transcripts[transcript_id].raw_sha256` for each transcript. |
 | `init.propose_study_config` | orchestrator (LLM optional) | `init.propose_study_config.{json,md}` + `.prompt.json` when LLM path | Skipped entirely when `study.config_provenance` is `preregistered` or `user_specified`. |
-| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` (records final IV/DV) | Records `study.config_provenance` immutably; also records `study.calibration_transcript_ids` and `study.calibration_mode`. |
+| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` | Writes `study.event_groups` (event-to-transcript-ID mapping), `study.dv_focuses` (null unless researcher-specified), and `study.config_provenance` immutably to the manifest. The `confirm_study_config.json` payload must include `event_groups` (required) and may include `dv_focuses` (list or null) and `config_provenance` (string). |
 
 **Commit message format:** `mpi: orchestrator init.<substep> (<N>transcripts scanned)` or similar.
 
