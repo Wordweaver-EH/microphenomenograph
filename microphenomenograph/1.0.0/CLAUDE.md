@@ -55,6 +55,8 @@ Hypothesis generation produces **candidate mechanism hypotheses, not causal esti
 - `global_synchronic.*`: all matching `generic_synchronic.*` must be `done`
 - `hypothesis.*`: all `generic_diachronic.*`, `generic_synchronic.*`, `global_synchronic.*` must be `done`
 
+**`transcript_prep` offset contract:** `transcripts/offsets/<id>.json` uses a flat-dict format keyed by string utterance number — `{"1": {"byte_start": N, "byte_end": N}, ...}`. The `normalize` step enforces the single-line-per-utterance invariant (each utterance on one physical line). The `register_offsets` validator rejects the old array format `{"utterances": [...]}`. Byte ranges are anchored to the **raw** transcript file (`transcripts/raw/<id>.txt`), not the normalized version.
+
 ## Data formats
 
 ### Transcript header (required)
