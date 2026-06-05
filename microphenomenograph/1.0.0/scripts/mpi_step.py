@@ -1346,6 +1346,16 @@ def cmd_close(args: argparse.Namespace) -> int:
     }
     stage_entry["status"] = _derive_stage_status(stage_entry["substeps"])
 
+    # --- Study-block mutation for init.confirm_study_config ---
+    # When the orchestrator closes confirm_study_config, the validated payload
+    # carries event_groups, dv_focuses, and config_provenance which must be
+    # written to manifest["study"] (not just to the substep entry).
+    if args.stage == "init" and args.substep == "confirm_study_config":
+        manifest.setdefault("study", {})
+        manifest["study"]["event_groups"] = units_payload.get("event_groups")
+        manifest["study"]["dv_focuses"] = units_payload.get("dv_focuses")  # may be null
+        manifest["study"]["config_provenance"] = units_payload.get("config_provenance")
+
     # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
     manifest_path = run_dir / ".mpi" / "project.json"
     manifest_backup = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "{}"

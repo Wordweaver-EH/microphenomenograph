@@ -264,6 +264,204 @@ class TestInitValidators:
         assert any("substep" in e.field for e in errors)
 
 
+class TestConfirmStudyConfigClose:
+    """Test confirm_study_config close mutation for Task 2 Phase 1."""
+
+    def _close_scan_transcripts(self, run_dir):
+        """Helper to close scan_transcripts (prerequisite for confirm_study_config)."""
+        scan_art = _write_artifact(run_dir, "init-scan_transcripts.json")
+        scan_units_payload = {
+            "transcript_ids": ["p1s1", "p1s2", "p2s1"],
+            "raw_sha256_map": {"p1s1": "abc...", "p1s2": "def...", "p2s1": "ghi..."}
+        }
+        scan_units = _write_units_json(run_dir, "scan_units.json", scan_units_payload)
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "scan_transcripts", "--scope", "run",
+            "--artifact", str(scan_art), "--units-json", str(scan_units),
+            "--reason", "transcripts scanned", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "scan_transcripts close should succeed"
+
+    def test_confirm_study_config_close_writes_to_study_block(self, tmp_path):
+        """Closing confirm_study_config writes event_groups, dv_focuses, and config_provenance to manifest["study"]."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        # Now prepare artifacts for confirm_study_config
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        # Prepare units with event_groups, dv_focuses, and config_provenance
+        units_payload = {
+            "event_groups": {
+                "event1": ["p1s1", "p2s1", "p3s1"],
+                "event2": ["p1s2", "p2s2", "p3s2"],
+            },
+            "dv_focuses": ["automaticity", "attention", "bodily_sensation"],
+            "config_provenance": "user_specified"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        # Call close for init.confirm_study_config (no prompt artifact for orchestrator)
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "run",
+            "--stage", "init",
+            "--substep", "confirm_study_config",
+            "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units),
+            "--reason", "user confirmed study config",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "Close should succeed"
+
+        # Read manifest and verify study block
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert "study" in manifest, "manifest should have study block"
+        assert manifest["study"]["event_groups"] == units_payload["event_groups"]
+        assert manifest["study"]["dv_focuses"] == units_payload["dv_focuses"]
+        assert manifest["study"]["config_provenance"] == "user_specified"
+
+    def test_confirm_study_config_close_preserves_event_groups_structure(self, tmp_path):
+        """event_groups nested structure is preserved exactly."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        # Complex event_groups with multiple events and participants
+        units_payload = {
+            "event_groups": {
+                "event_a": ["p1s1"],
+                "event_b": ["p1s2", "p2s1"],
+                "event_c": ["p1s3", "p2s2", "p3s1"],
+            },
+            "config_provenance": "preregistered"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"]["event_groups"] == units_payload["event_groups"]
+
+    def test_confirm_study_config_close_without_dv_focuses(self, tmp_path):
+        """When dv_focuses not provided, manifest["study"]["dv_focuses"] is null."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        units_payload = {
+            "event_groups": {
+                "event1": ["p1s1"],
+            },
+            # dv_focuses intentionally omitted
+            "config_provenance": "llm_proposed_user_confirmed"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        # dv_focuses should be null when not provided
+        assert manifest["study"].get("dv_focuses") is None
+
+    def test_confirm_study_config_close_with_dv_focuses_list(self, tmp_path):
+        """When dv_focuses list provided, it's written to manifest."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        dv_list = ["focus1", "focus2"]
+        units_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "dv_focuses": dv_list,
+            "config_provenance": "user_specified"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"]["dv_focuses"] == dv_list
+
+    def test_confirm_study_config_close_config_provenance_written(self, tmp_path):
+        """config_provenance field is written to manifest."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        provenance = "preregistered"
+        units_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": provenance
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"]["config_provenance"] == provenance
+
+    def test_confirm_study_config_close_substep_entry_also_written(self, tmp_path):
+        """Confirm_study_config close also writes substep entry (not just study block)."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+
+        units_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        # Check substep entry exists in manifest
+        assert "participants" in manifest
+        assert "run" in manifest["participants"]
+        assert "stages" in manifest["participants"]["run"]
+        assert "init" in manifest["participants"]["run"]["stages"]
+        assert "confirm_study_config" in manifest["participants"]["run"]["stages"]["init"]["substeps"]
+
+        substep = manifest["participants"]["run"]["stages"]["init"]["substeps"]["confirm_study_config"]
+        assert substep["status"] == "done"
+        assert "close_id" in substep
+        assert "output_paths" in substep
+
+
 # ---------------------------------------------------------------------------
 # CLI --help tests (AC2.2)
 # ---------------------------------------------------------------------------
