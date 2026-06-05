@@ -4850,3 +4850,58 @@ class TestDVFocusGate:
         ])
         assert rc != 0, "weak_evidence_review should be blocked with pending candidate_drafting"
         assert "prereq_unsatisfied" in capsys.readouterr().err
+
+    # ------------------------------------------------------------------
+    # AC8.5 — dv_focuses_provenance written to manifest at confirm_study_config
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _run_confirm_study_config(run_dir, units_payload):
+        """Close scan_transcripts then confirm_study_config with the given payload."""
+        # scan_transcripts prereq
+        scan_art = _write_artifact(run_dir, "init-scan_transcripts.json")
+        scan_units = _write_units_json(run_dir, "scan_units.json", {
+            "transcript_ids": ["p1s1"],
+            "raw_sha256_map": {"p1s1": "abc..."},
+        })
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "scan_transcripts", "--scope", "run",
+            "--artifact", str(scan_art), "--units-json", str(scan_units),
+            "--reason", "scan", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "scan_transcripts should succeed"
+
+        # confirm_study_config close
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+        return mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "confirmed", "--run-dir", str(run_dir),
+        ])
+
+    def test_ac8_5_researcher_specified_provenance_written(self, tmp_path):
+        """AC8.5: confirm_study_config with dv_focuses list writes dv_focuses_provenance=researcher_specified."""
+        run_dir = _init_run_dir(tmp_path)
+        rc = self._run_confirm_study_config(run_dir, {
+            "event_groups": {"event1": ["p1s1"]},
+            "dv_focuses": ["automaticity", "attention"],
+            "config_provenance": "user_specified",
+        })
+        assert rc == 0, "confirm_study_config close should succeed"
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"].get("dv_focuses_provenance") == "researcher_specified"
+
+    def test_ac8_5_emergent_provenance_written(self, tmp_path):
+        """AC8.5: confirm_study_config without dv_focuses writes dv_focuses_provenance=emergent."""
+        run_dir = _init_run_dir(tmp_path)
+        rc = self._run_confirm_study_config(run_dir, {
+            "event_groups": {"event1": ["p1s1"]},
+            # dv_focuses intentionally absent → null
+            "config_provenance": "llm_proposed_user_confirmed",
+        })
+        assert rc == 0, "confirm_study_config close should succeed"
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"].get("dv_focuses_provenance") == "emergent"

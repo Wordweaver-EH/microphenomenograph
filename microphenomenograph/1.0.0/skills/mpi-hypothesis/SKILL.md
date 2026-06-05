@@ -131,8 +131,8 @@ carry a `dv_focuses_provenance` field whose value is:
 - `"researcher_specified"` — when `study.dv_focuses` was declared at `confirm_study_config`
 - `"emergent"` — when `study.dv_focuses` is null (focuses named by the LLM from analysis)
 
-Read the provenance from `manifest["study"].get("config_provenance")` —
-specifically the nested `dv_focuses_provenance` key if present, otherwise infer:
+Read the provenance from `manifest["study"].get("dv_focuses_provenance")`.
+`confirm_study_config` writes this sibling field automatically:
 non-null `study.dv_focuses` → `"researcher_specified"`; null → `"emergent"`.
 
 This field is for auditability: it makes explicit whether the hypothesis was constrained

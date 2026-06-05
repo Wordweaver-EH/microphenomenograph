@@ -1623,8 +1623,13 @@ def cmd_close(args: argparse.Namespace) -> int:
         if args.stage == "init" and args.substep == "confirm_study_config":
             manifest.setdefault("study", {})
             manifest["study"]["event_groups"] = units_payload.get("event_groups")
-            manifest["study"]["dv_focuses"] = units_payload.get("dv_focuses")  # may be null
+            dv_focuses_val = units_payload.get("dv_focuses")
+            manifest["study"]["dv_focuses"] = dv_focuses_val  # may be null
             manifest["study"]["config_provenance"] = units_payload.get("config_provenance")
+            # AC8.5: record whether DV focuses were researcher-specified or emerged from analysis
+            manifest["study"]["dv_focuses_provenance"] = (
+                "researcher_specified" if dv_focuses_val is not None else "emergent"
+            )
 
         # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
         manifest_path = run_dir / ".mpi" / "project.json"
