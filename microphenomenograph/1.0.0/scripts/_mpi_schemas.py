@@ -389,6 +389,23 @@ def _validate_irr_calibration_agreement_computation(payload: dict) -> list[Schem
     return _require_keys(payload, ["stage", "participant_id", "metrics", "outcome"], "payload")
 
 
+def _validate_transcript_prep_hash_raw(payload: dict) -> list[SchemaError]:
+    """hash_raw — records SHA256 and byte size of the immutable raw transcript."""
+    return _require_keys(payload, ["transcript_id", "sha256", "byte_size"], "payload")
+
+
+def _validate_transcript_prep_normalize(payload: dict) -> list[SchemaError]:
+    """normalize — records paths of normalized transcript and diff file."""
+    return _require_keys(payload, ["transcript_id", "normalized_path", "diff_path"], "payload")
+
+
+def _validate_transcript_prep_register_offsets(payload: dict) -> list[SchemaError]:
+    """register_offsets — records path of the utterance offset file and utterance count.
+    Phase 6 adds offset format enforcement (flat-dict, byte alignment) on top of this.
+    """
+    return _require_keys(payload, ["transcript_id", "offsets_path", "utterance_count"], "payload")
+
+
 def _validate_init_scan_transcripts(payload: dict) -> list[SchemaError]:
     """scan_transcripts — records transcript IDs and their raw SHA256s."""
     return _require_keys(payload, ["transcript_ids", "raw_sha256_map"], "payload")
@@ -453,6 +470,9 @@ _VALIDATORS: dict[tuple[str, str], Any] = {
     ("irr_calibration", "independent_analyst"): _validate_irr_calibration_independent_analyst,
     ("irr_calibration", "alignment"): _validate_irr_calibration_alignment,
     ("irr_calibration", "agreement_computation"): _validate_irr_calibration_agreement_computation,
+    ("transcript_prep", "hash_raw"): _validate_transcript_prep_hash_raw,
+    ("transcript_prep", "normalize"): _validate_transcript_prep_normalize,
+    ("transcript_prep", "register_offsets"): _validate_transcript_prep_register_offsets,
 }
 
 
@@ -506,6 +526,11 @@ SUBSTEP_PREREQUISITES: dict[tuple[str, str], list[tuple[str, str]]] = {
     ("irr_calibration", "independent_analyst"): [],
     ("irr_calibration", "alignment"): [("irr_calibration", "independent_analyst")],
     ("irr_calibration", "agreement_computation"): [("irr_calibration", "alignment")],
+    ("transcript_prep", "hash_raw"): [],
+    ("transcript_prep", "normalize"): [("transcript_prep", "hash_raw")],
+    # register_offsets depends on normalize (single-line-per-utterance invariant
+    # enforced by normalize is assumed by the offset computation).
+    ("transcript_prep", "register_offsets"): [("transcript_prep", "normalize")],
 }
 
 LLM_SUBSTEPS: frozenset[tuple[str, str]] = frozenset({
