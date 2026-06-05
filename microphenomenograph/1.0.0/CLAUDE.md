@@ -72,9 +72,12 @@ Example: `Participant 1, Suggestion 2 (Scored 3/5)` → p=1, s=2, score=3
 Runtime state file. Top-level structure:
 - `version`: `"2.0"`
 - `run_id`: UUID4 string
-- `study`: `{run_repo_mode, git_remote_configured, calibration_transcript_ids: [], calibration_mode?}`
+- `study`: `{run_repo_mode, git_remote_configured, calibration_transcript_ids: [], calibration_mode?, event_groups?, dv_focuses?, config_provenance?}`
   - `calibration_transcript_ids`: list of transcript IDs selected for IRR calibration (e.g., `["p1s1", "p3s2"]` for stratified mode)
   - `calibration_mode`: optional string, either `"stratified"` (default, one per IV-level stratum) or `"smoke_test"` (first available)
+  - `event_groups`: dict mapping event IDs (e.g. `"event1"`) to lists of transcript IDs. Written at `init.confirm_study_config` close. Study-design-agnostic — any string event ID, any transcript list. Required by completeness gates (Phase 7).
+  - `dv_focuses`: optional list of researcher-declared dependent variable focus labels (e.g. `["automaticity", "attention"]`), or `null` when focuses are LLM-derived. Written at `init.confirm_study_config` close.
+  - `config_provenance`: how the study config was determined (`"preregistered"`, `"user_specified"`, `"llm_proposed_user_confirmed"`). Immutable after `confirm_study_config`.
 - `participants`: dict keyed by participant scope (e.g. `p1s1`, `p1s1-idu1`), each with:
   - `stages`: dict keyed by stage name, each with:
     - `status`: `pending | done | flagged | error`
@@ -99,5 +102,5 @@ Runtime state file. Top-level structure:
 
 ## Execution modes
 
-- **yolo** — fully automated, strictly sequential substep-level closes; one `git commit` per substep (via `mpi_step.py close`)
+- **yolo** — fully automated, parallel within-stage execution (all pending participants for a stage invoked concurrently in a single assistant turn), sequential across stages (next stage starts only after all closes for current stage complete); one `git commit` per substep (via `mpi_step.py close`). The within-stage concurrency makes the manifest write race reachable — see close lock (Issue 2).
 - **assisted** — human confirms each substep's output before proceeding
