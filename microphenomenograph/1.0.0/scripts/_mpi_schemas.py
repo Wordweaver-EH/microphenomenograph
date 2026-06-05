@@ -529,6 +529,48 @@ LLM_SUBSTEPS: frozenset[tuple[str, str]] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# Cross-scope prerequisite transforms
+# ---------------------------------------------------------------------------
+
+def _scope_strip_to_event(scope: str) -> str:
+    """
+    Extract the event ID from an event-category-gIDU scope string.
+
+    Examples:
+        "event3-cat-low-gidu1"      -> "event3"
+        "event12-cat-moderate-gidu3" -> "event12"
+
+    Safety: splits on "-cat-" which cannot appear in a valid event ID because
+    event IDs match event\\d+ (enforced by the transcript header parser).
+    If "-cat-" is not found, returns the scope unchanged (defensive fallback).
+    """
+    idx = scope.find("-cat-")
+    if idx > 0:
+        return scope[:idx]
+    return scope
+
+
+# Maps (downstream_stage, downstream_substep, prereq_stage, prereq_substep)
+# to either:
+#   - a callable(scope: str) -> str   : deterministic key derivation
+#   - the sentinel "all_match"         : all matching entries in manifest must be done
+#
+# The cmd_close prereq loop (Phase 3) consults this table when SUBSTEP_PREREQUISITES
+# lists a prereq whose scope differs from the downstream substep's scope.
+PREREQ_SCOPE_TRANSFORMS: dict[tuple[str, str, str, str], object] = {
+    # generic_synchronic.worksheet_assembly (scope: event<E>-cat-<C>-gidu<G>)
+    # depends on select_generic_idus_of_interest (scope: event<E>)
+    ("generic_synchronic", "worksheet_assembly",
+     "generic_synchronic", "select_generic_idus_of_interest"): _scope_strip_to_event,
+
+    # hypothesis.weak_evidence_review (scope: global)
+    # depends on candidate_drafting (scope: dv-<focus>, one per DV focus)
+    # Use all_match: every candidate_drafting entry in the manifest must be done.
+    ("hypothesis", "weak_evidence_review",
+     "hypothesis", "candidate_drafting"): "all_match",
+}
+
+# ---------------------------------------------------------------------------
 # Prompt artifact validator (schema_version 2)
 # ---------------------------------------------------------------------------
 
