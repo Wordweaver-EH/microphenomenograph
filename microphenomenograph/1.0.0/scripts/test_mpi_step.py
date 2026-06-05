@@ -172,6 +172,36 @@ class TestPrereqScopeResolution:
         result = _prereq_participant_key("event3-cat-low", "generic_diachronic")
         assert result == "event3-cat-low"
 
+    # New tests for expanded _prereq_participant_key with transform table
+    def test_prereq_participant_key_worksheet_assembly_transform(self):
+        """AC1.1: worksheet_assembly scope lookup uses PREREQ_SCOPE_TRANSFORMS"""
+        # worksheet_assembly scope "event3-cat-low-gidu1" should transform to "event3"
+        result = _prereq_participant_key(
+            "event3-cat-low-gidu1",
+            "generic_synchronic",
+            prereq_substep="select_generic_idus_of_interest",
+            downstream_stage="generic_synchronic",
+            downstream_substep="worksheet_assembly",
+        )
+        assert result == "event3"
+
+    def test_prereq_participant_key_all_match_sentinel(self):
+        """AC2: weak_evidence_review prereq returns 'all_match' sentinel"""
+        result = _prereq_participant_key(
+            "global",
+            "hypothesis",
+            prereq_substep="candidate_drafting",
+            downstream_stage="hypothesis",
+            downstream_substep="weak_evidence_review",
+        )
+        assert result == "all_match"
+
+    def test_prereq_participant_key_backward_compat_without_full_context(self):
+        """Backward compatibility: without downstream context, falls back to legacy logic"""
+        # Synchronic → diachronic strip still works without new params
+        result = _prereq_participant_key("p1s1-idu2", "diachronic")
+        assert result == "p1s1"
+
 
 class TestInitValidators:
     """Test init-stage validators for Phase 1 cross-scope-prereq-resolution."""

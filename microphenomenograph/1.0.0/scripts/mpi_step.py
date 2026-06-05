@@ -26,7 +26,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
-from _mpi_schemas import validate_units, validate_prompt_artifact, SUBSTEP_PREREQUISITES, LLM_SUBSTEPS
+from _mpi_schemas import (
+    validate_units, validate_prompt_artifact,
+    SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -175,18 +178,43 @@ def _save_manifest(run_dir: Path, manifest: dict) -> None:
     atomic_write(path, json.dumps(manifest, indent=2) + "\n")
 
 
-def _prereq_participant_key(participant: str, prereq_stage: str) -> str:
+def _prereq_participant_key(
+    participant: str,
+    prereq_stage: str,
+    prereq_substep: str = "",
+    downstream_stage: str = "",
+    downstream_substep: str = "",
+) -> str | None:
     """
-    Derive the participant key to use when checking a prerequisite.
+    Derive the participant key for checking a prerequisite.
 
-    Synchronic closes use idu-scoped keys (e.g. 'p1s1-idu1'), but their
-    diachronic prerequisites are recorded under the transcript-level key
-    ('p1s1'). Strip the '-iduN' suffix when looking up diachronic prereqs.
+    Returns one of:
+    - A string participant key (possibly transformed from the downstream key)
+    - None  — caller should fall through to standard same-scope lookup
+    - "all_match" sentinel — caller should use _all_candidate_draftings_done()
+
+    Checks in order:
+    1. PREREQ_SCOPE_TRANSFORMS table (new cross-participant edges)
+    2. Legacy synchronic -> diachronic strip (preserved for backward compat)
+    3. Default: return participant unchanged
     """
+    # 1. Consult PREREQ_SCOPE_TRANSFORMS when enough context is provided
+    if downstream_stage and downstream_substep and prereq_stage and prereq_substep:
+        key = (downstream_stage, downstream_substep, prereq_stage, prereq_substep)
+        transform = PREREQ_SCOPE_TRANSFORMS.get(key)
+        if transform is not None:
+            if transform == "all_match":
+                return "all_match"
+            # transform is a callable: apply it to the current participant scope
+            return transform(participant)
+
+    # 2. Legacy: synchronic -> diachronic scope strip
     if prereq_stage == "diachronic" and "-idu" in participant:
         idx = participant.rfind("-idu")
         if idx > 0:
             return participant[:idx]
+
+    # 3. Default: unchanged
     return participant
 
 
