@@ -461,6 +461,65 @@ class TestConfirmStudyConfigClose:
         assert "close_id" in substep
         assert "output_paths" in substep
 
+    def test_confirm_study_config_prereq_gate_rejects_unsatisfied(self, tmp_path):
+        """Important Issue: confirm_study_config close fails if scan_transcripts is not done."""
+        run_dir = _init_run_dir(tmp_path)
+        # Deliberately skip _close_scan_transcripts — do NOT close scan_transcripts
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+        units_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        # Try to close confirm_study_config WITHOUT closing scan_transcripts first
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        # Gate should reject this (rc != 0)
+        assert rc != 0, "confirm_study_config close should be rejected without scan_transcripts done"
+
+        # Verify manifest study block was NOT mutated
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"].get("event_groups") is None, "study.event_groups should not be set after rejection"
+
+    def test_confirm_study_config_preserves_existing_study_fields(self, tmp_path):
+        """Minor Issue 2: confirm_study_config close preserves pre-existing study block fields."""
+        run_dir = _init_run_dir(tmp_path)
+        self._close_scan_transcripts(run_dir)
+
+        # Pre-populate manifest with a sibling field in study block
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest["study"]["calibration_transcript_ids"] = ["p1s1", "p2s2"]
+        (run_dir / ".mpi" / "project.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+        units_payload = {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified"
+        }
+        units = _write_units_json(run_dir, "confirm_units.json", units_payload)
+
+        mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json),
+            "--units-json", str(units), "--reason", "test", "--run-dir", str(run_dir),
+        ])
+
+        # Verify pre-existing field survived
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["study"]["calibration_transcript_ids"] == ["p1s1", "p2s2"], \
+            "calibration_transcript_ids should be preserved after confirm_study_config close"
+        # And new fields were also written
+        assert manifest["study"]["event_groups"] == units_payload["event_groups"]
+        assert manifest["study"]["config_provenance"] == "user_specified"
+
 
 # ---------------------------------------------------------------------------
 # CLI --help tests (AC2.2)
