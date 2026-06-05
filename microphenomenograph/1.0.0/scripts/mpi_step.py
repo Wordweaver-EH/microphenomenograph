@@ -226,6 +226,56 @@ def _get_substep_status(manifest: dict, participant: str, stage: str, substep: s
     return s.get("substeps", {}).get(substep, {}).get("status", "pending")
 
 
+def _all_candidate_draftings_done(
+    manifest: dict,
+    prereq_stage: str,
+    prereq_substep: str,
+) -> bool:
+    """
+    All-match gate: every manifest entry for (prereq_stage, prereq_substep)
+    across all participant keys must have status 'done'.
+
+    Returns False if:
+    - No matching entries exist at all (nothing done yet)
+    - Any matching entry has status other than 'done'
+
+    When study.dv_focuses is non-null, additionally checks that every
+    declared focus has a matching entry (not just present-in-manifest ones).
+    This is the Phase 8 extension point; for now (Phases 1-7) dv_focuses
+    is always null, so only the manifest-scan path is needed.
+    """
+    participants = manifest.get("participants", {})
+    found_any = False
+    dv_focuses = manifest.get("study", {}).get("dv_focuses")
+
+    for pid, pdata in participants.items():
+        stages = pdata.get("stages", {})
+        stage_data = stages.get(prereq_stage, {})
+        substeps = stage_data.get("substeps", {})
+        if prereq_substep in substeps:
+            found_any = True
+            if substeps[prereq_substep].get("status") != "done":
+                return False
+
+    if not found_any:
+        return False
+
+    # Phase 8 extension: if dv_focuses is declared, check all are present
+    if dv_focuses is not None:
+        for focus in dv_focuses:
+            focus_key = f"dv-{focus}"
+            p = participants.get(focus_key, {})
+            status = (p.get("stages", {})
+                       .get(prereq_stage, {})
+                       .get("substeps", {})
+                       .get(prereq_substep, {})
+                       .get("status"))
+            if status != "done":
+                return False
+
+    return True
+
+
 def _derive_stage_status(substep_map: dict) -> str:
     """Derive stage status from substep statuses."""
     statuses = [v.get("status", "pending") for v in substep_map.values()]

@@ -203,6 +203,129 @@ class TestPrereqScopeResolution:
         assert result == "p1s1"
 
 
+class TestAllCandidateDraftingsDone:
+    """Test _all_candidate_draftings_done helper for all-match prerequisite gates."""
+
+    def test_all_candidate_draftings_done_single_done(self):
+        """AC2.1: Single done entry passes all-match gate."""
+        manifest = {
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is True
+
+    def test_all_candidate_draftings_done_multiple_done(self):
+        """AC2.1 multiple: Multiple done entries all pass."""
+        manifest = {
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "dv-attention": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "done"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is True
+
+    def test_all_candidate_draftings_done_no_entries(self):
+        """AC2.2: No matching entries at all fails."""
+        manifest = {
+            "participants": {}
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is False
+
+    def test_all_candidate_draftings_done_pending_entry(self):
+        """AC2.3: One pending entry fails."""
+        manifest = {
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "dv-attention": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "pending"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is False
+
+    def test_all_candidate_draftings_done_flagged_entry(self):
+        """AC2.4: Flagged entry fails."""
+        manifest = {
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "flagged"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is False
+
+    def test_all_candidate_draftings_done_null_dv_focuses(self):
+        """AC2.5: With dv_focuses null, only manifest scan is used."""
+        manifest = {
+            "study": {"dv_focuses": None},
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "substeps": {
+                                "candidate_drafting": {"status": "done"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        from mpi_step import _all_candidate_draftings_done
+        assert _all_candidate_draftings_done(manifest, "hypothesis", "candidate_drafting") is True
+
+
 class TestInitValidators:
     """Test init-stage validators for Phase 1 cross-scope-prereq-resolution."""
 
