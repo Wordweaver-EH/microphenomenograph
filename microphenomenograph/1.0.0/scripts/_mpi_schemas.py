@@ -1,5 +1,7 @@
 """Per-substep JSON schema registry for mpi_step.py."""
 from __future__ import annotations
+import json
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -412,9 +414,6 @@ def _validate_transcript_prep_register_offsets(payload: dict) -> list[SchemaErro
     Keys: string utterance numbers ("1", "2", ...)
     Values: dicts with "byte_start" and "byte_end" integer fields
     """
-    import json
-    import os
-
     errors = _require_keys(payload, ["transcript_id", "offsets_path", "utterance_count"], "payload")
     if errors:
         return errors  # Can't check file if required path field is missing
@@ -478,6 +477,12 @@ def _validate_transcript_prep_register_offsets(payload: dict) -> list[SchemaErro
                     errors.append(SchemaError(
                         "payload.offsets_path",
                         f"offset file entry for utterance {key!r} is missing field '{field}'"
+                    ))
+                    break
+                elif not isinstance(entry[field], int):
+                    errors.append(SchemaError(
+                        "payload.offsets_path",
+                        f"offset file entry for utterance {key!r} field '{field}' must be int, got {type(entry[field]).__name__}"
                     ))
                     break
             if errors:

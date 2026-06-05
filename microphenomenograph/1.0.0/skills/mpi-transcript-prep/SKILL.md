@@ -21,8 +21,12 @@ Read transcript path from `.mpi/project.json` → `participants[pNsN].transcript
 
 **Utterances:** Each non-blank line after the header must begin with either:
 - A speaker label: `Kevin Sheldrake:` or `P<N>:` (case-insensitive: `kevin sheldrake:`, `p1:` etc.)
-- Or be a continuation of the previous utterance (i.e., no new speaker label — treat as
-  the same utterance)
+- Or be a continuation of the previous utterance (lines without speaker-label prefix).
+
+**Important:** The OSF transcripts ensure that each utterance occupies exactly one physical line
+in the raw file (speaker label and utterance text on the same line; no multi-line turns).
+This is a precondition for the offset file format: byte ranges in `transcripts/offsets/<transcript_id>.json`
+are anchored to the raw file and assume each utterance is on exactly one line.
 
 **Utterance numbering:** The prep skill does NOT assign utterance numbers. In the OSF
 transcripts each line is a separate utterance, and utterance numbers in analyses are
@@ -72,8 +76,8 @@ The orchestrator owns all three substeps (no LLM calls, no prompt artifact for a
 | Substep | Actor | Artifacts | Notes |
 |---------|-------|-----------|-------|
 | `transcript_prep.hash_raw` | orchestrator | SHA256 entry in manifest | Marks raw file read-only. SHA recorded as `study.transcripts[transcript_id].raw_sha256`. |
-| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. Also enforces the single-line-per-utterance invariant: after normalization, each utterance must occupy exactly one physical line (identified by its speaker-label prefix). This is a precondition for `register_offsets` byte-range computation. |
-| `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Produces a flat-dict offset file mapping string utterance numbers to byte ranges in the raw transcript: `{"1": {"byte_start": N, "byte_end": N}, "2": {...}}`. `byte_start` = byte offset of the first character of the speaker label on that utterance line; `byte_end` = byte offset of the last character before the line ending. Assumes the single-line-per-utterance invariant enforced by `normalize`. SHA recorded in manifest. |
+| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. The raw file must already satisfy the single-line-per-utterance invariant (each utterance on exactly one physical line). The normalize step ensures the normalized derivative is aligned but never rewrites the raw. Precondition for `register_offsets` byte-range computation. |
+| `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Produces a flat-dict offset file mapping string utterance numbers to byte ranges in the raw transcript: `{"1": {"byte_start": N, "byte_end": N}, "2": {...}}`. `byte_start` = byte offset of the first character of the speaker label on that utterance line; `byte_end` = byte offset of the last character before the line ending. Assumes the raw file already satisfies the single-line-per-utterance invariant (each utterance on exactly one physical line). SHA recorded in manifest. |
 
 **Commit message format:** `mpi: orchestrator transcript_prep.<substep> <transcript_id>`
 
@@ -97,12 +101,13 @@ ground truth for `utterance_refs`.
 
 Keys are string utterance numbers (`"1"`, `"2"`, ...). Values are dicts with:
 - `byte_start`: byte index (0-based) of the first character of the speaker label on
-  that utterance line in the **raw** transcript file
+  that utterance line in the **raw** transcript file (`transcripts/raw/<transcript_id>.txt`)
 - `byte_end`: byte index of the last character before the newline (`\n` or `\r\n`)
 
-**Precondition:** the `normalize` step must ensure that each utterance occupies exactly
-one physical line (speaker-label prefix on the same line as the utterance text).
-Multi-line turns are not supported by this offset model.
+**Precondition:** The raw transcript file must have the single-line-per-utterance invariant:
+each utterance occupies exactly one physical line (speaker-label prefix on the same line
+as the utterance text). The OSF transcripts satisfy this. Multi-line turns are not
+supported by this offset model.
 
 **Do not** use the old array format `{"transcript_id": ..., "utterances": [...]}` — the
 `register_offsets` validator will reject it with a descriptive error.

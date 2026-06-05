@@ -691,6 +691,23 @@ class TestTranscriptPrepValidators:
         assert len(errors) >= 1
         assert any("offsets_path" in e.field and "byte_start" in e.message for e in errors)
 
+    def test_offset_non_integer_byte_field_rejected(self, tmp_path):
+        """Offset entry with non-integer byte_start should be rejected."""
+        bad_format = {
+            "1": {"byte_start": "not_an_int", "byte_end": 42}
+        }
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text(json.dumps(bad_format), encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "must be int" in e.message for e in errors)
+
     def test_offset_non_dict_top_level_rejected(self, tmp_path):
         """Offset file with non-dict top-level should be rejected."""
         bad_format = [1, 2, 3]
@@ -715,6 +732,20 @@ class TestTranscriptPrepValidators:
         }
         errors = validate_units("transcript_prep", "register_offsets", payload)
         assert errors == [], f"Expected no errors for nonexistent file, got {errors}"
+
+    def test_offset_malformed_json_rejected(self, tmp_path):
+        """Offset file with malformed JSON should be rejected."""
+        offsets_path = tmp_path / "offsets.json"
+        offsets_path.write_text("{ bad json", encoding="utf-8")
+
+        payload = {
+            "transcript_id": "p1s1",
+            "offsets_path": str(offsets_path),
+            "utterance_count": 1
+        }
+        errors = validate_units("transcript_prep", "register_offsets", payload)
+        assert len(errors) >= 1
+        assert any("offsets_path" in e.field and "could not be read" in e.message for e in errors)
 
     # DAG prerequisite enforcement tests (AC5.5)
     def test_normalize_requires_hash_raw_done(self, tmp_path):
