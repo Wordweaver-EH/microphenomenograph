@@ -3929,3 +3929,436 @@ class TestPrereqScopeResolutionClose:
             "--run-dir", str(run_dir),
         ])
         assert rc == 0, "theme_grouping_within_idu should close with backward-compat strip"
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 completeness gates tests
+# ---------------------------------------------------------------------------
+
+class TestCompletenessGates:
+    """Integration tests for cross-participant completeness gates in cmd_close."""
+
+    def test_ac7_2_generic_diachronic_fails_incomplete_diachronic(self, tmp_path, capsys):
+        """AC7.2: participant_row_assembly fails when any transcript in event lacks diachronic."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event_groups and p1s3 complete but p2s3 incomplete
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event3": ["p1s3", "p2s3"]
+                }
+            },
+            "participants": {
+                "p1s3": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "done"}
+                            }
+                        },
+                        "synchronic": {
+                            "status": "done",
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "p1s3-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "p2s3": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "pending",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "pending"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close participant_row_assembly
+        art_json = _write_artifact(run_dir, "event3-cat-low-generic_diachronic.participant_row_assembly.json")
+        units = _write_units_json(run_dir, "units.json", {"event": "event3", "rows": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event3-cat-low",
+            "--stage", "generic_diachronic",
+            "--substep", "participant_row_assembly",
+            "--scope", "event3-cat-low",
+            "--artifact", str(art_json),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "participant_row_assembly should fail completeness gate"
+        assert "completeness_gate_unsatisfied" in capsys.readouterr().err
+
+    def test_ac7_3_generic_diachronic_succeeds_complete_event(self, tmp_path):
+        """AC7.3: participant_row_assembly succeeds when all transcripts in event complete."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event_groups and both p1s3, p2s3 complete
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event3": ["p1s3", "p2s3"]
+                }
+            },
+            "participants": {
+                "p1s3": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "done", "close_id": "id1"}
+                            }
+                        },
+                        "synchronic": {
+                            "status": "done",
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done", "close_id": "id2"}
+                            }
+                        }
+                    }
+                },
+                "p1s3-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "p2s3": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "done", "close_id": "id3"}
+                            }
+                        },
+                        "synchronic": {
+                            "status": "done",
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done", "close_id": "id4"}
+                            }
+                        }
+                    }
+                },
+                "p2s3-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close participant_row_assembly
+        art_json = _write_artifact(run_dir, "event3-cat-low-generic_diachronic.participant_row_assembly.json")
+        units = _write_units_json(run_dir, "units.json", {"event": "event3", "rows": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event3-cat-low",
+            "--stage", "generic_diachronic",
+            "--substep", "participant_row_assembly",
+            "--scope", "event3-cat-low",
+            "--artifact", str(art_json),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "participant_row_assembly should succeed when event complete"
+
+    def test_ac7_5_legacy_manifest_no_event_groups(self, tmp_path, capsys):
+        """AC7.5: legacy manifest (no event_groups) warns but proceeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest WITHOUT event_groups
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {},
+            "participants": {}
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close participant_row_assembly (should warn but proceed)
+        art_json = _write_artifact(run_dir, "event3-cat-low-generic_diachronic.participant_row_assembly.json")
+        units = _write_units_json(run_dir, "units.json", {"event": "event3", "rows": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event3-cat-low",
+            "--stage", "generic_diachronic",
+            "--substep", "participant_row_assembly",
+            "--scope", "event3-cat-low",
+            "--artifact", str(art_json),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "Should proceed despite missing event_groups (legacy manifest)"
+        assert "completeness_gate_skipped" in capsys.readouterr().err
+
+    def test_ac7_4_generic_synchronic_gate(self, tmp_path, capsys):
+        """AC7.4 (generic_synchronic chain): select_generic_idus_of_interest fails without generic_diachronic.cross_iv_contrast done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event_groups but cross_iv_contrast not done
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event3": ["p1s3"]
+                }
+            },
+            "participants": {
+                "event3-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "substeps": {
+                                "cross_iv_contrast": {"status": "pending"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close select_generic_idus_of_interest (first substep of generic_synchronic, no DAG prereqs)
+        art_json = _write_artifact(run_dir, "event3-cat-low-generic_synchronic.select_generic_idus_of_interest.json")
+        art_md = _write_artifact(run_dir, "event3-cat-low-generic_synchronic.select_generic_idus_of_interest.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event3-cat-low", "generic_synchronic", "select_generic_idus_of_interest")
+        units = _write_units_json(run_dir, "units.json", {"event": "event3", "selected_generic_idus": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event3-cat-low",
+            "--stage", "generic_synchronic",
+            "--substep", "select_generic_idus_of_interest",
+            "--scope", "event3-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "generic_synchronic gate should fail without cross_iv_contrast"
+        assert "completeness_gate_unsatisfied" in capsys.readouterr().err
+
+    def test_ac7_4_hypothesis_gidu_gate_fails(self, tmp_path, capsys):
+        """AC7.4 (hypothesis critical): evidence_extraction fails when no gidu*.global_synchronic done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with no gidu entries having global_synchronic done
+        # Note: event_groups must be present (non-empty dict) for completeness gate to run
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {"event1": ["p1s1"]}  # event_groups present but no gidu entries
+            },
+            "participants": {}
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close evidence_extraction
+        art_json = _write_artifact(run_dir, "dv-attention-hypothesis.evidence_extraction.json")
+        art_md = _write_artifact(run_dir, "dv-attention-hypothesis.evidence_extraction.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "dv-attention", "hypothesis", "evidence_extraction")
+        units = _write_units_json(run_dir, "units.json", {"dv_focus": "attention", "evidence_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "dv-attention",
+            "--stage", "hypothesis",
+            "--substep", "evidence_extraction",
+            "--scope", "dv-attention",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "hypothesis gate should fail without gidu.global_synchronic done"
+        assert "completeness_gate_unsatisfied" in capsys.readouterr().err
+
+    def test_ac7_4_hypothesis_gidu_gate_succeeds(self, tmp_path):
+        """AC7.4 (hypothesis critical): evidence_extraction succeeds after gidu1-cat-low.global_synchronic done."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with gidu1-cat-low having global_synchronic done
+        # Note: event_groups must be present (non-empty dict) for completeness gate to run
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {"event1": ["p1s1"]}  # event_groups present
+            },
+            "participants": {
+                "gidu1-cat-low": {
+                    "stages": {
+                        "global_synchronic": {
+                            "substeps": {
+                                "global_synchronic": {"status": "done", "close_id": "test-id"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close evidence_extraction
+        art_json = _write_artifact(run_dir, "dv-attention-hypothesis.evidence_extraction.json")
+        art_md = _write_artifact(run_dir, "dv-attention-hypothesis.evidence_extraction.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "dv-attention", "hypothesis", "evidence_extraction")
+        units = _write_units_json(run_dir, "units.json", {"dv_focus": "attention", "evidence_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "dv-attention",
+            "--stage", "hypothesis",
+            "--substep", "evidence_extraction",
+            "--scope", "dv-attention",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "hypothesis gate should succeed with gidu.global_synchronic done"
+
+    def test_ac7_4_event_boundary_match_non_collision(self, tmp_path, capsys):
+        """AC7.4 (event prefix): event1 and event12 don't collide with boundary match."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with event1 and event12, but only event1 transcripts complete
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"],
+                    "event12": ["p1s2"]
+                }
+            },
+            "participants": {
+                "p1s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "done"}
+                            }
+                        },
+                        "synchronic": {
+                            "status": "done",
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "p1s1-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {"status": "done"}
+                            }
+                        }
+                    }
+                },
+                "p1s2": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "pending",
+                            "substeps": {
+                                "idu_naming_ordering": {"status": "pending"}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close generic_diachronic for event1 — should succeed (event12 not checked)
+        art_json = _write_artifact(run_dir, "event1-cat-low-generic_diachronic.participant_row_assembly.json")
+        units = _write_units_json(run_dir, "units.json", {"event": "event1", "rows": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event1-cat-low",
+            "--stage", "generic_diachronic",
+            "--substep", "participant_row_assembly",
+            "--scope", "event1-cat-low",
+            "--artifact", str(art_json),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "event1 close should succeed (event12 not checked)"
+
+        # Now try event12 — should fail (p1s2 incomplete)
+        art_json_e12 = _write_artifact(run_dir, "event12-cat-low-generic_diachronic.participant_row_assembly.json")
+        units_e12 = _write_units_json(run_dir, "units_e12.json", {"event": "event12", "rows": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "orchestrator",
+            "--participant", "event12-cat-low",
+            "--stage", "generic_diachronic",
+            "--substep", "participant_row_assembly",
+            "--scope", "event12-cat-low",
+            "--artifact", str(art_json_e12),
+            "--units-json", str(units_e12),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc != 0, "event12 close should fail (p1s2 incomplete)"
+        assert "completeness_gate_unsatisfied" in capsys.readouterr().err

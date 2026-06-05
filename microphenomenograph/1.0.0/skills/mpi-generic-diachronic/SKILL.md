@@ -8,22 +8,13 @@ user-invocable: false
 Run cross-participant generic diachronic aggregation. Requires ALL participants to have
 `diachronic: done` in the manifest.
 
-## Completeness check
+## Pre-flight note
 
-Before invoking the cross-analyst, check manifest for any participants with
-`diachronic.status != "done"`. If any exist:
+Before invoking the cross-analyst, `mpi_step.py close` will enforce completeness: all
+transcripts in the event must have `diachronic.*` and `synchronic.*` done. If any are
+missing, the close will fail with `completeness_gate_unsatisfied`.
 
-Print warning:
-```
-WARNING: Generic diachronic requires all per-participant diachronic analyses to be complete.
-The following participants are not yet complete: p2s1, p3s2, ...
-Run /mpi diachronic to complete them, then re-run /mpi generic-diachronic.
-```
-
-Do NOT abort — ask the user if they want to proceed with the available participants or
-wait for the rest. If user says proceed, continue with available `done` outputs.
-
-**Verifies:** microphenomenograph.AC5.3
+You can check current status with `/mpi status` before proceeding.
 
 ## Invoking mpi-cross-analyst
 

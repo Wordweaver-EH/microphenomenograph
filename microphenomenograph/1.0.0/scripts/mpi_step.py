@@ -1932,6 +1932,32 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 if r.stdout.strip() != "commit":
                     failures.append(f"{participant}/{stage}/{substep}: commit sha {sha} not found in git")
 
+    # Completeness invariant: cross-participant done substeps should not have
+    # incomplete upstream entries.
+    event_groups = manifest.get("study", {}).get("event_groups")
+    if event_groups:
+        for stage, gate in COMPLETENESS_GATES.items():
+            # Find all done substeps for this stage in the manifest
+            for pid, pdata in manifest.get("participants", {}).items():
+                for substep_name, substep_data in (
+                    pdata.get("stages", {}).get(stage, {}).get("substeps", {}).items()
+                ):
+                    if substep_data.get("status") == "done":
+                        # Re-run completeness check for this scope
+                        # Note: passing pid as the scope is safe because _check_completeness_gate
+                        # only reads args.stage, args.substep, args.scope from the gate table,
+                        # never reads args.participant or other verify-specific fields.
+                        rc = _check_completeness_gate(
+                            run_dir, manifest, stage, pid, args, audit_path
+                        )
+                        if rc != 0:
+                            failures.append(  # cmd_verify uses `failures`, not `issues` (line 1954)
+                                f"completeness_invariant_violated: {stage} "
+                                f"{substep_name} is done under {pid} but upstream "
+                                f"transcripts are incomplete"
+                            )
+                            break
+
     if failures:
         for f in failures:
             print(f"FAIL {f}", file=sys.stderr)
