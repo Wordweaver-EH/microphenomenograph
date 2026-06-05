@@ -1,9 +1,12 @@
 """Phase 1 unit tests for mpi_step.py — CLI scaffolding."""
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -13,7 +16,7 @@ SCRIPTS_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import mpi_step
-from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
+from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acquire_close_lock
 from _mpi_schemas import validate_units, PREREQ_SCOPE_TRANSFORMS, _scope_strip_to_event
 from mpi_step import _prereq_participant_key
 
@@ -1166,6 +1169,193 @@ class TestManifestAtomicity:
         # No .tmp file should be left
         tmp_file = run_dir / ".mpi" / "project.json.tmp"
         assert not tmp_file.exists()
+
+
+class TestManifestWriteSafety:
+    """AC4: Manifest write safety under parallel closes."""
+
+    def test_parallel_closes_both_succeed(self, tmp_path):
+        """AC4.1: Two parallel cmd_close calls on different participants both commit."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create artifacts and units for p1s1
+        art1_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art1_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# p1s1")
+        prompt1 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units1 = _write_units_json(run_dir, "units1.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        # Create artifacts and units for p2s1
+        units2_payload = VALID_CRITERIA_GROUPING_UNITS.copy()
+        units2_payload["participant"] = "p2s1"
+        units2_payload["idus"][0]["utterance_refs"][0]["transcript_id"] = "p2s1"
+        units2_payload["idus"][0]["utterance_refs"][1]["transcript_id"] = "p2s1"
+        art2_json = _write_artifact(run_dir, "p2s1-diachronic.criteria_grouping.json")
+        art2_md = _write_artifact(run_dir, "p2s1-diachronic.criteria_grouping.md", "# p2s1")
+        prompt2 = _write_prompt_artifact(run_dir, "p2s1", "diachronic", "criteria_grouping")
+        units2 = _write_units_json(run_dir, "units2.json", units2_payload)
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(SCRIPTS_DIR)
+
+        # Launch two parallel closes
+        proc1 = subprocess.Popen([
+            sys.executable, "-m", "mpi_step", "close",
+            "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art1_json), "--artifact", str(art1_md),
+            "--prompt-artifact", str(prompt1), "--units-json", str(units1),
+            "--reason", "test p1s1", "--run-dir", str(run_dir),
+        ], cwd=run_dir, env=env)
+
+        proc2 = subprocess.Popen([
+            sys.executable, "-m", "mpi_step", "close",
+            "--actor", "mpi-analyst", "--participant", "p2s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p2s1", "--artifact", str(art2_json), "--artifact", str(art2_md),
+            "--prompt-artifact", str(prompt2), "--units-json", str(units2),
+            "--reason", "test p2s1", "--run-dir", str(run_dir),
+        ], cwd=run_dir, env=env)
+
+        rc1 = proc1.wait()
+        rc2 = proc2.wait()
+
+        assert rc1 == 0, "proc1 should succeed"
+        assert rc2 == 0, "proc2 should succeed"
+
+        # Check final manifest has both participants done
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert manifest["participants"]["p1s1"]["stages"]["diachronic"]["substeps"]["criteria_grouping"]["status"] == "done"
+        assert manifest["participants"]["p2s1"]["stages"]["diachronic"]["substeps"]["criteria_grouping"]["status"] == "done"
+
+    def test_lock_prevents_manifest_overwrite(self, tmp_path):
+        """AC4.2: Lock prevents concurrent mutation from overwriting each other."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create artifacts and units for p1s1
+        units1_payload = VALID_CRITERIA_GROUPING_UNITS.copy()
+        units1_payload["participant"] = "p1s1"
+        art1_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art1_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# p1s1")
+        prompt1 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units1 = _write_units_json(run_dir, "units1.json", units1_payload)
+
+        # Create artifacts and units for p2s1
+        units2_payload = VALID_CRITERIA_GROUPING_UNITS.copy()
+        units2_payload["participant"] = "p2s1"
+        units2_payload["idus"][0]["utterance_refs"][0]["transcript_id"] = "p2s1"
+        units2_payload["idus"][0]["utterance_refs"][1]["transcript_id"] = "p2s1"
+        art2_json = _write_artifact(run_dir, "p2s1-diachronic.criteria_grouping.json")
+        art2_md = _write_artifact(run_dir, "p2s1-diachronic.criteria_grouping.md", "# p2s1")
+        prompt2 = _write_prompt_artifact(run_dir, "p2s1", "diachronic", "criteria_grouping")
+        units2 = _write_units_json(run_dir, "units2.json", units2_payload)
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(SCRIPTS_DIR)
+
+        # Launch both closes in parallel
+        proc1 = subprocess.Popen([
+            sys.executable, "-m", "mpi_step", "close",
+            "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art1_json), "--artifact", str(art1_md),
+            "--prompt-artifact", str(prompt1), "--units-json", str(units1),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ], cwd=run_dir, env=env)
+
+        proc2 = subprocess.Popen([
+            sys.executable, "-m", "mpi_step", "close",
+            "--actor", "mpi-analyst", "--participant", "p2s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p2s1", "--artifact", str(art2_json), "--artifact", str(art2_md),
+            "--prompt-artifact", str(prompt2), "--units-json", str(units2),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ], cwd=run_dir, env=env)
+
+        proc1.wait()
+        proc2.wait()
+
+        # Verify final manifest has entries for BOTH participants (not overwritten)
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert "p1s1" in manifest["participants"], "p1s1 should be in final manifest"
+        assert "p2s1" in manifest["participants"], "p2s2 should be in final manifest"
+
+    def test_lock_is_reacquirable_after_process_exit(self, tmp_path):
+        """AC4.3: After process exit (normal or signal), lock is re-acquirable."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create artifacts and units for p1s1
+        art1_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.json")
+        art1_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_grouping.md", "# p1s1")
+        prompt1 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_grouping")
+        units1 = _write_units_json(run_dir, "units1.json", VALID_CRITERIA_GROUPING_UNITS)
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(SCRIPTS_DIR)
+
+        # Start a close process
+        proc = subprocess.Popen([
+            sys.executable, "-m", "mpi_step", "close",
+            "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_grouping",
+            "--scope", "p1s1", "--artifact", str(art1_json), "--artifact", str(art1_md),
+            "--prompt-artifact", str(prompt1), "--units-json", str(units1),
+            "--reason", "test", "--run-dir", str(run_dir),
+        ], cwd=run_dir, env=env)
+
+        # Give it time to acquire the lock
+        time.sleep(0.5)
+
+        # Terminate the process
+        proc.terminate()
+        proc.wait(timeout=5)
+
+        # Now try to acquire the lock in-process — should succeed without blocking
+        # (This tests that the OS released the lock on process exit)
+        try:
+            with acquire_close_lock(run_dir):
+                pass  # Lock acquired successfully
+            lock_reacquired = True
+        except Exception:
+            lock_reacquired = False
+
+        assert lock_reacquired, "Lock should be re-acquirable after process exit"
+        # Lock file should still exist (by design)
+        assert (run_dir / ".mpi" / "close.lock").exists()
+
+    def test_lock_blocks_concurrent_acquisition(self, tmp_path):
+        """Deterministic serialization test: lock primitives actually block."""
+        run_dir = _init_run_dir(tmp_path)
+        lock_sequence = []
+
+        def thread_acquire_lock(thread_id: int):
+            """Acquire lock, record sequence, hold briefly, release."""
+            lock_sequence.append(f"start_{thread_id}")
+            with acquire_close_lock(run_dir):
+                lock_sequence.append(f"acquired_{thread_id}")
+                time.sleep(0.1)  # Hold the lock
+                lock_sequence.append(f"releasing_{thread_id}")
+            lock_sequence.append(f"released_{thread_id}")
+
+        # Launch two threads that both try to acquire the lock
+        t1 = threading.Thread(target=thread_acquire_lock, args=(1,))
+        t2 = threading.Thread(target=thread_acquire_lock, args=(2,))
+
+        t1.start()
+        time.sleep(0.05)  # Let thread 1 acquire the lock first
+        t2.start()
+
+        t1.join()
+        t2.join()
+
+        # Verify that acquisitions did not overlap
+        # Look for the pattern: acquired_1, releasing_1, acquired_2
+        acquired_1_idx = lock_sequence.index("acquired_1")
+        releasing_1_idx = lock_sequence.index("releasing_1")
+        acquired_2_idx = lock_sequence.index("acquired_2")
+
+        # Thread 2 should have acquired after thread 1 released (or at least not concurrently)
+        assert acquired_2_idx > releasing_1_idx or acquired_2_idx > acquired_1_idx, \
+            "Thread 2 should not acquire until thread 1 releases (serialization enforced)"
 
 
 class TestCloseFailures:

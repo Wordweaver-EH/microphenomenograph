@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id
+from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acquire_close_lock
 from _mpi_schemas import (
     validate_units, validate_prompt_artifact,
     SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS,
@@ -1325,306 +1325,312 @@ def cmd_close(args: argparse.Namespace) -> int:
             append_jsonl(audit_path, e_span_fail)
             return _abort(f"span_validation_failed: {span_errors[0]}")
 
-    # Check substep DAG prerequisites
-    prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
-    for prereq_stage, prereq_substep in prereqs:
-        prereq_participant = _prereq_participant_key(
-            args.participant,
-            prereq_stage,
-            prereq_substep=prereq_substep,
-            downstream_stage=args.stage,
-            downstream_substep=args.substep,
+    # Acquire close lock — wraps manifest re-read → prereq check → mutate → write → commit.
+    # The initial manifest read above was used for span validation only.
+    # A fresh read inside the lock guarantees we see any mutations made by concurrent closes.
+    with acquire_close_lock(run_dir):
+        manifest = _load_manifest(run_dir)
+
+        # Check substep DAG prerequisites
+        prereqs = SUBSTEP_PREREQUISITES.get((args.stage, args.substep), [])
+        for prereq_stage, prereq_substep in prereqs:
+            prereq_participant = _prereq_participant_key(
+                args.participant,
+                prereq_stage,
+                prereq_substep=prereq_substep,
+                downstream_stage=args.stage,
+                downstream_substep=args.substep,
+            )
+            if prereq_participant == "all_match":
+                if not _all_candidate_draftings_done(manifest, prereq_stage, prereq_substep):
+                    msg = (f"prereq_unsatisfied: all ({prereq_stage}, {prereq_substep}) "
+                           f"entries must be 'done' before closing ({args.stage}, {args.substep})")
+                    print(f"ERROR {msg}", file=sys.stderr)
+                    return _abort(msg)
+            else:
+                status = _get_substep_status(manifest, prereq_participant, prereq_stage, prereq_substep)
+                if status != "done":
+                    msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
+                           f"must be 'done' before closing ({args.stage}, {args.substep}); "
+                           f"current status: {status}")
+                    print(f"ERROR {msg}", file=sys.stderr)
+                    return _abort(msg)
+
+        # --- IRR gate check (Phase 13, AC13.8-13.9) ---
+        # For cross-participant stages, check IRR calibration outcome
+        cross_participant_stages = {"generic_diachronic", "generic_synchronic", "global_synchronic", "hypothesis"}
+        if args.stage in cross_participant_stages:
+            irr_check_rc = _check_irr_gate(run_dir, args.stage, args.substep, args.scope, args, audit_path)
+            if irr_check_rc != 0:
+                return _abort("irr_check_failed")
+
+        # --- Task 4: Acquire substep reservation (AC20.7) ---
+        reservation_rc = _acquire_substep_reservation(
+            run_dir, args.stage, args.substep, args.scope, close_id,
+            list(artifacts),
         )
-        if prereq_participant == "all_match":
-            if not _all_candidate_draftings_done(manifest, prereq_stage, prereq_substep):
-                msg = (f"prereq_unsatisfied: all ({prereq_stage}, {prereq_substep}) "
-                       f"entries must be 'done' before closing ({args.stage}, {args.substep})")
-                print(f"ERROR {msg}", file=sys.stderr)
-                return _abort(msg)
-        else:
-            status = _get_substep_status(manifest, prereq_participant, prereq_stage, prereq_substep)
-            if status != "done":
-                msg = (f"prereq_unsatisfied: ({prereq_stage}, {prereq_substep}) "
-                       f"must be 'done' before closing ({args.stage}, {args.substep}); "
-                       f"current status: {status}")
-                print(f"ERROR {msg}", file=sys.stderr)
-                return _abort(msg)
+        if reservation_rc != 0:
+            return _abort("substep_reservation_held")
 
-    # --- IRR gate check (Phase 13, AC13.8-13.9) ---
-    # For cross-participant stages, check IRR calibration outcome
-    cross_participant_stages = {"generic_diachronic", "generic_synchronic", "global_synchronic", "hypothesis"}
-    if args.stage in cross_participant_stages:
-        irr_check_rc = _check_irr_gate(run_dir, args.stage, args.substep, args.scope, args, audit_path)
-        if irr_check_rc != 0:
-            return _abort("irr_check_failed")
+        def _abort_with_release(reason: str) -> int:
+            """Abort and release the substep reservation."""
+            _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+            return _abort(reason)
 
-    # --- Task 4: Acquire substep reservation (AC20.7) ---
-    reservation_rc = _acquire_substep_reservation(
-        run_dir, args.stage, args.substep, args.scope, close_id,
-        list(artifacts),
-    )
-    if reservation_rc != 0:
-        return _abort("substep_reservation_held")
+        # Compute artifact SHAs
+        artifact_shas = {}
+        for art_path in artifacts:
+            artifact_shas[art_path] = _sha256_file(Path(art_path))
+        if getattr(args, "prompt_artifact", None):
+            pa_path = str(args.prompt_artifact)
+            artifact_shas[pa_path] = _sha256_file(Path(pa_path))
 
-    def _abort_with_release(reason: str) -> int:
-        """Abort and release the substep reservation."""
-        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
-        return _abort(reason)
-
-    # Compute artifact SHAs
-    artifact_shas = {}
-    for art_path in artifacts:
-        artifact_shas[art_path] = _sha256_file(Path(art_path))
-    if getattr(args, "prompt_artifact", None):
-        pa_path = str(args.prompt_artifact)
-        artifact_shas[pa_path] = _sha256_file(Path(pa_path))
-
-    e_validated = _build_audit_event(
-        action="artifacts_validated",
-        run_dir=run_dir,
-        close_id=close_id,
-        actor=args.actor,
-        actor_kind=getattr(args, "actor_kind", "subagent"),
-        participant=args.participant,
-        stage=args.stage,
-        substep=args.substep,
-        scope=args.scope,
-        reason=args.reason,
-        extra={"artifact_sha256": artifact_shas},
-    )
-    append_jsonl(audit_path, e_validated)
-
-    # --- Phase 3: audit_appended ---
-    # Write per-unit events
-    units = _extract_units(units_payload)
-    e_audit = _build_audit_event(
-        action="audit_appended",
-        run_dir=run_dir,
-        close_id=close_id,
-        actor=args.actor,
-        actor_kind=getattr(args, "actor_kind", "subagent"),
-        participant=args.participant,
-        stage=args.stage,
-        substep=args.substep,
-        scope=args.scope,
-        reason=args.reason,
-        extra={
-            "artifact_paths": artifacts,
-            "prompt_artifact_path": getattr(args, "prompt_artifact", None),
-            "n_units": len(units) if isinstance(units, list) else 0,
-            "n_flagged": sum(1 for u in (units if isinstance(units, list) else []) if isinstance(u, dict) and u.get("flag_for_review")),
-        },
-    )
-    append_jsonl(audit_path, e_audit)
-
-    # --- Phase 4: manifest_replaced ---
-    # Build new manifest — preserve existing structure, update substep entry
-    manifest.setdefault("participants", {})
-    manifest["participants"].setdefault(args.participant, {"stages": {}})
-    manifest["participants"][args.participant].setdefault("stages", {})
-    manifest["participants"][args.participant]["stages"].setdefault(args.stage, {"substeps": {}})
-    stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
-    stage_entry.setdefault("substeps", {})
-
-    stage_entry["substeps"][args.substep] = {
-        "status": args.status,
-        "output_paths": artifacts,
-        "close_id": close_id,
-        "parent_head_sha": parent_head_sha,
-        "artifact_shas": artifact_shas,
-        "expected_action": "git_commit_succeeded",
-    }
-    stage_entry["status"] = _derive_stage_status(stage_entry["substeps"])
-
-    # --- Study-block mutation for init.confirm_study_config ---
-    # When the orchestrator closes confirm_study_config, the validated payload
-    # carries event_groups, dv_focuses, and config_provenance which must be
-    # written to manifest["study"] (not just to the substep entry).
-    if args.stage == "init" and args.substep == "confirm_study_config":
-        manifest.setdefault("study", {})
-        manifest["study"]["event_groups"] = units_payload.get("event_groups")
-        manifest["study"]["dv_focuses"] = units_payload.get("dv_focuses")  # may be null
-        manifest["study"]["config_provenance"] = units_payload.get("config_provenance")
-
-    # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
-    manifest_path = run_dir / ".mpi" / "project.json"
-    manifest_backup = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "{}"
-
-    try:
-        _save_manifest(run_dir, manifest)
-    except OSError as e:
-        print(f"ERROR manifest_write_failed: {e}", file=sys.stderr)
-        return _abort(f"manifest_write_failed: {e}")
-
-    e_manifest = _build_audit_event(
-        action="manifest_replaced",
-        run_dir=run_dir,
-        close_id=close_id,
-        actor=args.actor,
-        actor_kind=getattr(args, "actor_kind", "subagent"),
-        participant=args.participant,
-        stage=args.stage,
-        substep=args.substep,
-        scope=args.scope,
-        reason=args.reason,
-    )
-    append_jsonl(audit_path, e_manifest)
-
-    # --- Phase 5: git_commit_succeeded / git_commit_failed ---
-    add_paths = list(artifacts) + [str(manifest_path), str(audit_path)]
-    if getattr(args, "prompt_artifact", None):
-        add_paths.append(str(args.prompt_artifact))
-
-    n_units = len(units) if isinstance(units, list) else 0
-    n_flagged = sum(1 for u in (units if isinstance(units, list) else []) if u.get("flag_for_review"))
-    commit_msg = f"mpi: {args.actor} {args.stage}.{args.substep} {args.scope} ({n_units}units {n_flagged}flagged)"
-
-    r_add = _git(["add"] + add_paths, cwd=run_dir, check=False)
-    if r_add.returncode != 0:
-        print(f"ERROR git_add_failed: {r_add.stderr}", file=sys.stderr)
-        # rollback manifest
-        atomic_write(manifest_path, manifest_backup)
-        e_rolled = _build_audit_event(
-            action="manifest_rolled_back",
-            outcome="failure",
-            run_dir=run_dir, close_id=close_id, actor=args.actor,
-            actor_kind=getattr(args, "actor_kind", "subagent"),
-            participant=args.participant, stage=args.stage, substep=args.substep,
-            scope=args.scope, reason="git add failed",
-        )
-        append_jsonl(audit_path, e_rolled)
-        # Task 4: Release substep reservation on rollback
-        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
-        return 1
-
-    r_commit = _git(["commit", "-m", commit_msg], cwd=run_dir, check=False)
-    if r_commit.returncode != 0:
-        print(f"ERROR git_commit_failed: {r_commit.stderr}", file=sys.stderr)
-        # rollback manifest
-        atomic_write(manifest_path, manifest_backup)
-        e_failed = _build_audit_event(
-            action="git_commit_failed",
-            outcome="failure",
-            run_dir=run_dir, close_id=close_id, actor=args.actor,
-            actor_kind=getattr(args, "actor_kind", "subagent"),
-            participant=args.participant, stage=args.stage, substep=args.substep,
-            scope=args.scope, reason=r_commit.stderr.strip(),
-        )
-        append_jsonl(audit_path, e_failed)
-        e_rolled = _build_audit_event(
-            action="manifest_rolled_back",
-            outcome="failure",
-            run_dir=run_dir, close_id=close_id, actor=args.actor,
-            actor_kind=getattr(args, "actor_kind", "subagent"),
-            participant=args.participant, stage=args.stage, substep=args.substep,
-            scope=args.scope, reason="git commit failed",
-        )
-        append_jsonl(audit_path, e_rolled)
-        # Task 4: Release substep reservation on rollback
-        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
-        return 1
-
-    commit_sha = _git_head_sha(run_dir)
-    e_success = _build_audit_event(
-        action="git_commit_succeeded",
-        run_dir=run_dir,
-        close_id=close_id,
-        actor=args.actor,
-        actor_kind=getattr(args, "actor_kind", "subagent"),
-        participant=args.participant,
-        stage=args.stage,
-        substep=args.substep,
-        scope=args.scope,
-        reason=args.reason,
-        extra={"git_commit_sha": commit_sha, "artifact_sha256": artifact_shas},
-    )
-    append_jsonl(audit_path, e_success)
-
-    # Task 4: Release substep reservation on success
-    _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
-
-    # --- Phase 13: IRR calibration auto-trigger (AC13.2) ---
-    reload_manifest = _load_manifest(run_dir)
-    _maybe_trigger_irr_calibration(
-        run_dir=run_dir,
-        stage=args.stage,
-        substep=args.substep,
-        scope=args.scope,
-        manifest=reload_manifest,
-        close_id=close_id,
-        audit_path=audit_path,
-    )
-
-    # --- Phase 13: IRR alignment auto-accept in yolo mode (AC13.3) ---
-    if args.stage == "irr_calibration" and args.substep == "alignment":
-        # Emit irr_alignment_auto_accepted event on successful alignment close
-        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
-        auto_accept_event = {
-            "event_id": str(uuid.uuid4()),
-            "@timestamp": datetime.now(timezone.utc).isoformat(),
-            "trace_id": run_id,
-            "span_id": str(uuid.uuid4()),
-            "actor": {"kind": getattr(args, "actor_kind", "subagent"), "name": args.actor},
-            "event": {"kind": "event", "action": "irr_alignment_auto_accepted", "outcome": "success"},
-            "mpi": {
-                "stage": "irr_calibration",
-                "substep": "alignment",
-                "scope": args.scope,
-                "close_id": close_id,
-            },
-            "reason": "IRR calibration alignment auto-accepted on successful close",
-        }
-        append_jsonl(audit_path, auto_accept_event)
-
-    # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
-    if args.stage == "diachronic" and args.substep == "criteria_revision":
-        # Check if any downstream substeps are 'done' — if so, cascade reset them.
-        # Re-load the just-committed manifest (contains the criteria_revision status=done).
-        reload_manifest = _load_manifest(run_dir)
-        superseded_before = len(list(
-            (run_dir / "analyses" / "_superseded").iterdir()
-        )) if (run_dir / "analyses" / "_superseded").exists() else 0
-
-        updated_manifest = _cascade_reset(
+        e_validated = _build_audit_event(
+            action="artifacts_validated",
             run_dir=run_dir,
-            scope=args.scope,
-            revision_close_id=close_id,
-            manifest=reload_manifest,
-            audit_path=audit_path,
+            close_id=close_id,
             actor=args.actor,
             actor_kind=getattr(args, "actor_kind", "subagent"),
+            participant=args.participant,
+            stage=args.stage,
+            substep=args.substep,
+            scope=args.scope,
+            reason=args.reason,
+            extra={"artifact_sha256": artifact_shas},
+        )
+        append_jsonl(audit_path, e_validated)
+
+        # --- Phase 3: audit_appended ---
+        # Write per-unit events
+        units = _extract_units(units_payload)
+        e_audit = _build_audit_event(
+            action="audit_appended",
+            run_dir=run_dir,
+            close_id=close_id,
+            actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
+            participant=args.participant,
+            stage=args.stage,
+            substep=args.substep,
+            scope=args.scope,
+            reason=args.reason,
+            extra={
+                "artifact_paths": artifacts,
+                "prompt_artifact_path": getattr(args, "prompt_artifact", None),
+                "n_units": len(units) if isinstance(units, list) else 0,
+                "n_flagged": sum(1 for u in (units if isinstance(units, list) else []) if isinstance(u, dict) and u.get("flag_for_review")),
+            },
+        )
+        append_jsonl(audit_path, e_audit)
+
+        # --- Phase 4: manifest_replaced ---
+        # Build new manifest — preserve existing structure, update substep entry
+        manifest.setdefault("participants", {})
+        manifest["participants"].setdefault(args.participant, {"stages": {}})
+        manifest["participants"][args.participant].setdefault("stages", {})
+        manifest["participants"][args.participant]["stages"].setdefault(args.stage, {"substeps": {}})
+        stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
+        stage_entry.setdefault("substeps", {})
+
+        stage_entry["substeps"][args.substep] = {
+            "status": args.status,
+            "output_paths": artifacts,
+            "close_id": close_id,
+            "parent_head_sha": parent_head_sha,
+            "artifact_shas": artifact_shas,
+            "expected_action": "git_commit_succeeded",
+        }
+        stage_entry["status"] = _derive_stage_status(stage_entry["substeps"])
+
+        # --- Study-block mutation for init.confirm_study_config ---
+        # When the orchestrator closes confirm_study_config, the validated payload
+        # carries event_groups, dv_focuses, and config_provenance which must be
+        # written to manifest["study"] (not just to the substep entry).
+        if args.stage == "init" and args.substep == "confirm_study_config":
+            manifest.setdefault("study", {})
+            manifest["study"]["event_groups"] = units_payload.get("event_groups")
+            manifest["study"]["dv_focuses"] = units_payload.get("dv_focuses")  # may be null
+            manifest["study"]["config_provenance"] = units_payload.get("config_provenance")
+
+        # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_backup = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else "{}"
+
+        try:
+            _save_manifest(run_dir, manifest)
+        except OSError as e:
+            print(f"ERROR manifest_write_failed: {e}", file=sys.stderr)
+            return _abort(f"manifest_write_failed: {e}")
+
+        e_manifest = _build_audit_event(
+            action="manifest_replaced",
+            run_dir=run_dir,
+            close_id=close_id,
+            actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
+            participant=args.participant,
+            stage=args.stage,
+            substep=args.substep,
+            scope=args.scope,
+            reason=args.reason,
+        )
+        append_jsonl(audit_path, e_manifest)
+
+        # --- Phase 5: git_commit_succeeded / git_commit_failed ---
+        add_paths = list(artifacts) + [str(manifest_path), str(audit_path)]
+        if getattr(args, "prompt_artifact", None):
+            add_paths.append(str(args.prompt_artifact))
+
+        n_units = len(units) if isinstance(units, list) else 0
+        n_flagged = sum(1 for u in (units if isinstance(units, list) else []) if u.get("flag_for_review"))
+        commit_msg = f"mpi: {args.actor} {args.stage}.{args.substep} {args.scope} ({n_units}units {n_flagged}flagged)"
+
+        r_add = _git(["add"] + add_paths, cwd=run_dir, check=False)
+        if r_add.returncode != 0:
+            print(f"ERROR git_add_failed: {r_add.stderr}", file=sys.stderr)
+            # rollback manifest
+            atomic_write(manifest_path, manifest_backup)
+            e_rolled = _build_audit_event(
+                action="manifest_rolled_back",
+                outcome="failure",
+                run_dir=run_dir, close_id=close_id, actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+                participant=args.participant, stage=args.stage, substep=args.substep,
+                scope=args.scope, reason="git add failed",
+            )
+            append_jsonl(audit_path, e_rolled)
+            # Task 4: Release substep reservation on rollback
+            _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+            return 1
+
+        r_commit = _git(["commit", "-m", commit_msg], cwd=run_dir, check=False)
+        if r_commit.returncode != 0:
+            print(f"ERROR git_commit_failed: {r_commit.stderr}", file=sys.stderr)
+            # rollback manifest
+            atomic_write(manifest_path, manifest_backup)
+            e_failed = _build_audit_event(
+                action="git_commit_failed",
+                outcome="failure",
+                run_dir=run_dir, close_id=close_id, actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+                participant=args.participant, stage=args.stage, substep=args.substep,
+                scope=args.scope, reason=r_commit.stderr.strip(),
+            )
+            append_jsonl(audit_path, e_failed)
+            e_rolled = _build_audit_event(
+                action="manifest_rolled_back",
+                outcome="failure",
+                run_dir=run_dir, close_id=close_id, actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+                participant=args.participant, stage=args.stage, substep=args.substep,
+                scope=args.scope, reason="git commit failed",
+            )
+            append_jsonl(audit_path, e_rolled)
+            # Task 4: Release substep reservation on rollback
+            _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+            return 1
+
+        commit_sha = _git_head_sha(run_dir)
+        e_success = _build_audit_event(
+            action="git_commit_succeeded",
+            run_dir=run_dir,
+            close_id=close_id,
+            actor=args.actor,
+            actor_kind=getattr(args, "actor_kind", "subagent"),
+            participant=args.participant,
+            stage=args.stage,
+            substep=args.substep,
+            scope=args.scope,
+            reason=args.reason,
+            extra={"git_commit_sha": commit_sha, "artifact_sha256": artifact_shas},
+        )
+        append_jsonl(audit_path, e_success)
+
+        # Task 4: Release substep reservation on success
+        _release_substep_reservation(run_dir, args.stage, args.substep, args.scope)
+
+        # --- Phase 13: IRR calibration auto-trigger (AC13.2) ---
+        reload_manifest = _load_manifest(run_dir)
+        _maybe_trigger_irr_calibration(
+            run_dir=run_dir,
+            stage=args.stage,
+            substep=args.substep,
+            scope=args.scope,
+            manifest=reload_manifest,
+            close_id=close_id,
+            audit_path=audit_path,
         )
 
-        # Check if cascade actually reset anything (new _superseded dir created)
-        superseded_after = len(list(
-            (run_dir / "analyses" / "_superseded").iterdir()
-        )) if (run_dir / "analyses" / "_superseded").exists() else 0
+        # --- Phase 13: IRR alignment auto-accept in yolo mode (AC13.3) ---
+        if args.stage == "irr_calibration" and args.substep == "alignment":
+            # Emit irr_alignment_auto_accepted event on successful alignment close
+            run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+            auto_accept_event = {
+                "event_id": str(uuid.uuid4()),
+                "@timestamp": datetime.now(timezone.utc).isoformat(),
+                "trace_id": run_id,
+                "span_id": str(uuid.uuid4()),
+                "actor": {"kind": getattr(args, "actor_kind", "subagent"), "name": args.actor},
+                "event": {"kind": "event", "action": "irr_alignment_auto_accepted", "outcome": "success"},
+                "mpi": {
+                    "stage": "irr_calibration",
+                    "substep": "alignment",
+                    "scope": args.scope,
+                    "close_id": close_id,
+                },
+                "reason": "IRR calibration alignment auto-accepted on successful close",
+            }
+            append_jsonl(audit_path, auto_accept_event)
 
-        if superseded_after > superseded_before:
-            # Cascade produced changes — save manifest and commit
-            _save_manifest(run_dir, updated_manifest)
-            # Stage the _superseded directory tree and manifest explicitly
-            cascade_add_paths = [
-                str(manifest_path),
-                str(audit_path),
-                str(run_dir / "analyses" / "_superseded" / close_id),
-            ]
-            r_cascade_add = _git(
-                ["add"] + cascade_add_paths,
-                cwd=run_dir, check=False,
+        # --- Task 3: Cascade reset after criteria_revision re-close (AC16.1, AC16.2, AC30.1-30.3) ---
+        if args.stage == "diachronic" and args.substep == "criteria_revision":
+            # Check if any downstream substeps are 'done' — if so, cascade reset them.
+            # Re-load the just-committed manifest (contains the criteria_revision status=done).
+            reload_manifest = _load_manifest(run_dir)
+            superseded_before = len(list(
+                (run_dir / "analyses" / "_superseded").iterdir()
+            )) if (run_dir / "analyses" / "_superseded").exists() else 0
+
+            updated_manifest = _cascade_reset(
+                run_dir=run_dir,
+                scope=args.scope,
+                revision_close_id=close_id,
+                manifest=reload_manifest,
+                audit_path=audit_path,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
             )
-            if r_cascade_add.returncode == 0:
-                # Also stage all deletions in analyses/ (original artifact paths)
-                _git(
-                    ["add", "-u", "analyses/"],
+
+            # Check if cascade actually reset anything (new _superseded dir created)
+            superseded_after = len(list(
+                (run_dir / "analyses" / "_superseded").iterdir()
+            )) if (run_dir / "analyses" / "_superseded").exists() else 0
+
+            if superseded_after > superseded_before:
+                # Cascade produced changes — save manifest and commit
+                _save_manifest(run_dir, updated_manifest)
+                # Stage the _superseded directory tree and manifest explicitly
+                cascade_add_paths = [
+                    str(manifest_path),
+                    str(audit_path),
+                    str(run_dir / "analyses" / "_superseded" / close_id),
+                ]
+                r_cascade_add = _git(
+                    ["add"] + cascade_add_paths,
                     cwd=run_dir, check=False,
                 )
-                _git(
-                    ["commit", "-m",
-                     f"mpi: cascade reset after criteria_revision re-close {close_id[:7]}"],
-                    cwd=run_dir, check=False,
-                )
-                # Non-fatal: if nothing to commit (--allow-empty not needed), continue
+                if r_cascade_add.returncode == 0:
+                    # Also stage all deletions in analyses/ (original artifact paths)
+                    _git(
+                        ["add", "-u", "analyses/"],
+                        cwd=run_dir, check=False,
+                    )
+                    _git(
+                        ["commit", "-m",
+                         f"mpi: cascade reset after criteria_revision re-close {close_id[:7]}"],
+                        cwd=run_dir, check=False,
+                    )
+                    # Non-fatal: if nothing to commit (--allow-empty not needed), continue
 
     print(f"OK {args.scope} {args.stage}.{args.substep} commit={commit_sha[:7] if commit_sha else 'none'}")
     return 0
