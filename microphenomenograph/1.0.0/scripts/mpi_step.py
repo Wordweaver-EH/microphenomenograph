@@ -28,7 +28,7 @@ from pathlib import Path
 from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acquire_close_lock
 from _mpi_schemas import (
     validate_units, validate_prompt_artifact,
-    SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS,
+    SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS, COMPLETENESS_GATES,
 )
 
 
@@ -1160,6 +1160,152 @@ def _check_irr_gate(
     return 0
 
 
+def _check_completeness_gate(
+    run_dir: Path,
+    manifest: dict,
+    stage: str,
+    scope: str,
+    args,
+    audit_path: Path,
+) -> int:
+    """
+    For cross-participant stages, verify that all required upstream substeps are done
+    for all relevant transcripts in the event group.
+
+    Reads study.event_groups from the manifest. If absent (legacy manifest), emits a
+    completeness_gate_skipped warning and returns 0.
+
+    Returns 0 to proceed, 1 to block.
+    """
+    gate = COMPLETENESS_GATES.get(stage)
+    if gate is None:
+        return 0  # Stage has no completeness gate
+
+    study = manifest.get("study", {})
+    event_groups = study.get("event_groups")
+
+    if not event_groups:
+        # Legacy manifest without event_groups — warn and proceed
+        run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+        warn_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": datetime.now(timezone.utc).isoformat(),  # datetime/timezone already imported
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "orchestrator", "name": "orchestrator"},
+            "event": {"kind": "event", "action": "completeness_gate_skipped",
+                      "outcome": "warning"},
+            "mpi": {"stage": stage, "scope": scope},
+            "reason": "completeness_gate_skipped: event_groups_missing in study block",
+        }
+        append_jsonl(audit_path, warn_event)
+        print(
+            f"WARNING completeness_gate_skipped: event_groups not in manifest; "
+            f"completeness gate for {stage} bypassed",
+            file=sys.stderr,
+        )
+        return 0
+
+    # Determine which events to check
+    scope_to_event_fn = gate.get("scope_to_event")
+    event_id = scope_to_event_fn(scope) if scope_to_event_fn else None
+
+    if event_id is not None:
+        events_to_check = {event_id: event_groups.get(event_id, [])}
+    else:
+        events_to_check = event_groups  # all events
+
+    participants = manifest.get("participants", {})
+    required_per_transcript = gate.get("required_per_transcript", [])
+    required_cross_participant = gate.get("required_cross_participant", [])
+
+    for evt_id, transcript_ids in events_to_check.items():
+        # Check per-transcript requirements
+        for transcript_id in transcript_ids:
+            for req_stage, req_substep in required_per_transcript:
+                if req_stage == "synchronic":
+                    # Synchronic is IDU-scoped: check all pNsN-iduK keys for this transcript
+                    idu_prefix = f"{transcript_id}-idu"
+                    found_any_idu = False
+                    for pid, pdata in participants.items():
+                        if not pid.startswith(idu_prefix):
+                            continue
+                        found_any_idu = True
+                        status = (pdata.get("stages", {})
+                                       .get(req_stage, {})
+                                       .get("substeps", {})
+                                       .get(req_substep, {})
+                                       .get("status"))
+                        if status != "done":
+                            print(
+                                f"ERROR completeness_gate_unsatisfied: "
+                                f"{transcript_id} {req_stage}.{req_substep} "
+                                f"status={status!r} (event {evt_id})",
+                                file=sys.stderr,
+                            )
+                            return 1
+                    if not found_any_idu:
+                        print(
+                            f"ERROR completeness_gate_unsatisfied: "
+                            f"no IDU scopes found for {transcript_id} "
+                            f"— {req_stage}.{req_substep} not done (event {evt_id})",
+                            file=sys.stderr,
+                        )
+                        return 1
+                else:
+                    # Transcript-scoped: look up directly by transcript_id
+                    status = (participants.get(transcript_id, {})
+                                         .get("stages", {})
+                                         .get(req_stage, {})
+                                         .get("substeps", {})
+                                         .get(req_substep, {})
+                                         .get("status"))
+                    if status != "done":
+                        print(
+                            f"ERROR completeness_gate_unsatisfied: "
+                            f"{transcript_id} {req_stage}.{req_substep} "
+                            f"status={status!r} (event {evt_id})",
+                            file=sys.stderr,
+                        )
+                        return 1
+
+        # Check cross-participant requirements for this event
+        # Each entry is a 3-tuple: (key_prefix, req_stage, req_substep)
+        # key_prefix=None → match participant keys for this specific event:
+        #   pid == evt_id OR pid.startswith(evt_id + "-")
+        #   (the "+"-" boundary prevents event1 from matching event12, event13 etc.)
+        # key_prefix=str  → match pids that startswith that literal string
+        for key_prefix, req_stage, req_substep in required_cross_participant:
+            found_done = False
+            for pid, pdata in participants.items():
+                if key_prefix is None:
+                    # Event-ID boundary match: exact equality OR evt_id + "-" prefix
+                    if not (pid == evt_id or pid.startswith(evt_id + "-")):
+                        continue
+                else:
+                    if not pid.startswith(key_prefix):
+                        continue
+                status = (pdata.get("stages", {})
+                               .get(req_stage, {})
+                               .get("substeps", {})
+                               .get(req_substep, {})
+                               .get("status"))
+                if status == "done":
+                    found_done = True
+                    break
+            if not found_done:
+                eff = f"{evt_id}(-)" if key_prefix is None else key_prefix
+                print(
+                    f"ERROR completeness_gate_unsatisfied: "
+                    f"no {req_stage}.{req_substep} done "
+                    f"(prefix={eff!r}, event={evt_id})",
+                    file=sys.stderr,
+                )
+                return 1
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # close subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
@@ -1363,6 +1509,16 @@ def cmd_close(args: argparse.Namespace) -> int:
             irr_check_rc = _check_irr_gate(run_dir, args.stage, args.substep, args.scope, args, audit_path)
             if irr_check_rc != 0:
                 return _abort("irr_check_failed")
+
+        # --- Completeness gate check (Phase 7, AC7.2-7.5) ---
+        # For cross-participant stages, verify all upstream transcripts are complete.
+        # Reads study.event_groups; legacy manifests (no event_groups) warn and proceed.
+        if args.stage in cross_participant_stages:
+            completeness_rc = _check_completeness_gate(
+                run_dir, manifest, args.stage, args.scope, args, audit_path
+            )
+            if completeness_rc != 0:
+                return _abort("completeness_gate_unsatisfied")
 
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
