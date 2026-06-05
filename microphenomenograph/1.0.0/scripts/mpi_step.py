@@ -184,13 +184,12 @@ def _prereq_participant_key(
     prereq_substep: str = "",
     downstream_stage: str = "",
     downstream_substep: str = "",
-) -> str | None:
+) -> str:
     """
     Derive the participant key for checking a prerequisite.
 
     Returns one of:
     - A string participant key (possibly transformed from the downstream key)
-    - None  — caller should fall through to standard same-scope lookup
     - "all_match" sentinel — caller should use _all_candidate_draftings_done()
 
     Checks in order:

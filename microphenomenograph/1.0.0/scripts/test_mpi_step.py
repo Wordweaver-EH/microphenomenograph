@@ -2895,7 +2895,7 @@ class TestPrereqScopeResolutionClose:
         ])
         assert rc == 0, "worksheet_assembly should close successfully"
 
-    def test_ac1_2_worksheet_assembly_fails_without_prereq(self, tmp_path):
+    def test_ac1_2_worksheet_assembly_fails_without_prereq(self, tmp_path, capsys):
         """AC1.2: worksheet_assembly fails when select_generic_idus_of_interest missing."""
         run_dir = _init_run_dir(tmp_path)
 
@@ -2928,6 +2928,7 @@ class TestPrereqScopeResolutionClose:
             "--run-dir", str(run_dir),
         ])
         assert rc != 0, "worksheet_assembly should fail prereq check"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
 
     def test_ac2_1_weak_evidence_review_all_candidate_draftings_done(self, tmp_path):
         """AC2.1: weak_evidence_review closes when all candidate_drafting entries done."""
@@ -2996,7 +2997,7 @@ class TestPrereqScopeResolutionClose:
         ])
         assert rc == 0, "weak_evidence_review should close when all candidate_drafting done"
 
-    def test_ac2_2_weak_evidence_review_fails_no_candidate_draftings(self, tmp_path):
+    def test_ac2_2_weak_evidence_review_fails_no_candidate_draftings(self, tmp_path, capsys):
         """AC2.2: weak_evidence_review fails when no candidate_drafting entries exist."""
         run_dir = _init_run_dir(tmp_path)
 
@@ -3026,8 +3027,9 @@ class TestPrereqScopeResolutionClose:
             "--run-dir", str(run_dir),
         ])
         assert rc != 0, "weak_evidence_review should fail when no candidate_drafting entries"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
 
-    def test_ac2_3_weak_evidence_review_fails_one_pending(self, tmp_path):
+    def test_ac2_3_weak_evidence_review_fails_one_pending(self, tmp_path, capsys):
         """AC2.3: weak_evidence_review fails when one candidate_drafting is pending."""
         run_dir = _init_run_dir(tmp_path)
 
@@ -3090,8 +3092,9 @@ class TestPrereqScopeResolutionClose:
             "--run-dir", str(run_dir),
         ])
         assert rc != 0, "weak_evidence_review should fail when one candidate_drafting is pending"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
 
-    def test_ac2_4_weak_evidence_review_fails_flagged(self, tmp_path):
+    def test_ac2_4_weak_evidence_review_fails_flagged(self, tmp_path, capsys):
         """AC2.4: weak_evidence_review fails when a candidate_drafting is flagged."""
         run_dir = _init_run_dir(tmp_path)
 
@@ -3139,6 +3142,74 @@ class TestPrereqScopeResolutionClose:
             "--run-dir", str(run_dir),
         ])
         assert rc != 0, "weak_evidence_review should fail when candidate_drafting is flagged"
+        assert "prereq_unsatisfied" in capsys.readouterr().err
+
+    def test_ac2_5_null_dv_focuses_uses_manifest_scan(self, tmp_path):
+        """AC2.5: With dv_focuses null/absent, all-match uses manifest scan."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Create manifest with 2 candidate_drafting entries both done, dv_focuses=None
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"dv_focuses": None},
+            "participants": {
+                "dv-automaticity": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "done",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done",
+                                    "close_id": "test-id-1",
+                                    "output_path": "analyses/dv-automaticity-hypothesis.candidate_drafting.json",
+                                    "artifact_shas": {},
+                                }
+                            }
+                        }
+                    }
+                },
+                "dv-attention": {
+                    "stages": {
+                        "hypothesis": {
+                            "status": "done",
+                            "substeps": {
+                                "candidate_drafting": {
+                                    "status": "done",
+                                    "close_id": "test-id-2",
+                                    "output_path": "analyses/dv-attention-hypothesis.candidate_drafting.json",
+                                    "artifact_shas": {},
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Try to close weak_evidence_review with null dv_focuses
+        art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
+        art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
+        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "global",
+            "--stage", "hypothesis",
+            "--substep", "weak_evidence_review",
+            "--scope", "global",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "weak_evidence_review should close when dv_focuses is null and all candidate_drafting entries done"
 
     def test_ac3_1_backward_compat_sync_to_diachronic(self, tmp_path):
         """AC3.1: Synchronic→diachronic scope stripping still works."""
