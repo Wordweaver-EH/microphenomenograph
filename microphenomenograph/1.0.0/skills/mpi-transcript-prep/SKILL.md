@@ -72,8 +72,8 @@ The orchestrator owns all three substeps (no LLM calls, no prompt artifact for a
 | Substep | Actor | Artifacts | Notes |
 |---------|-------|-----------|-------|
 | `transcript_prep.hash_raw` | orchestrator | SHA256 entry in manifest | Marks raw file read-only. SHA recorded as `study.transcripts[transcript_id].raw_sha256`. |
-| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. |
-| `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Maps normalized line numbers to raw byte ranges. SHA recorded in manifest. |
+| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. Also enforces the single-line-per-utterance invariant: after normalization, each utterance must occupy exactly one physical line (identified by its speaker-label prefix). This is a precondition for `register_offsets` byte-range computation. |
+| `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Produces a flat-dict offset file mapping string utterance numbers to byte ranges in the raw transcript: `{"1": {"byte_start": N, "byte_end": N}, "2": {...}}`. `byte_start` = byte offset of the first character of the speaker label on that utterance line; `byte_end` = byte offset of the last character before the line ending. Assumes the single-line-per-utterance invariant enforced by `normalize`. SHA recorded in manifest. |
 
 **Commit message format:** `mpi: orchestrator transcript_prep.<substep> <transcript_id>`
 
@@ -82,6 +82,30 @@ never overwritten. `hash_raw` makes it read-only (`chmod 0444` on POSIX; read-on
 on Windows). Any subsequent close that detects SHA mismatch on the raw file exits with
 `raw_transcript_mutated`. The normalised file is a derived artifact; only the raw is the
 ground truth for `utterance_refs`.
+
+## Offset file format
+
+`transcripts/offsets/<transcript_id>.json` uses the flat-dict format:
+
+```json
+{
+  "1": {"byte_start": 0, "byte_end": 42},
+  "2": {"byte_start": 44, "byte_end": 91},
+  ...
+}
+```
+
+Keys are string utterance numbers (`"1"`, `"2"`, ...). Values are dicts with:
+- `byte_start`: byte index (0-based) of the first character of the speaker label on
+  that utterance line in the **raw** transcript file
+- `byte_end`: byte index of the last character before the newline (`\n` or `\r\n`)
+
+**Precondition:** the `normalize` step must ensure that each utterance occupies exactly
+one physical line (speaker-label prefix on the same line as the utterance text).
+Multi-line turns are not supported by this offset model.
+
+**Do not** use the old array format `{"transcript_id": ..., "utterances": [...]}` — the
+`register_offsets` validator will reject it with a descriptive error.
 
 **Note (divergence from pre-Plan-1 behaviour):** The pre-existing SKILL.md above specifies
 "Write cleaned transcript back to the same path (overwrite)." This is superseded by the
