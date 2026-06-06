@@ -227,3 +227,79 @@ class TestAC4_1_ReplicationRecommendation:
         }
         errors = validate_units("hypothesis", "candidate_drafting", payload)
         assert not errors, f"Expected no errors with replication_recommendation present; got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: AC2.1, AC2.2, AC2.3, AC4.2 — Agent causal instructions + SKILL.md
+# ---------------------------------------------------------------------------
+
+class TestAC2_AgentInstructions:
+    """AC2: mpi-cross-analyst.md carries full causal instruction content."""
+
+    AGENT_FILE = PLUGIN_ROOT / "agents" / "mpi-cross-analyst.md"
+    SKILL_FILE = PLUGIN_ROOT / "skills" / "mpi-hypothesis" / "SKILL.md"
+
+    def _agent_content(self) -> str:
+        return self.AGENT_FILE.read_text(encoding="utf-8")
+
+    def _skill_content(self) -> str:
+        return self.SKILL_FILE.read_text(encoding="utf-8")
+
+    def test_AC2_1_cross_analyst_md_has_cmv_instruction(self):
+        """AC2.1 Success: agent doc names CMV, latent, and common cause."""
+        content = self._agent_content()
+        assert "common_method_variance" in content or "common-method-variance" in content, (
+            "mpi-cross-analyst.md must name the common-method-variance confounder"
+        )
+        assert "latent" in content, (
+            "mpi-cross-analyst.md must include 'latent' (latent node instruction)"
+        )
+        assert "common cause" in content or "common-method" in content or "CMV" in content, (
+            "mpi-cross-analyst.md must describe CMV as a common cause"
+        )
+
+    def test_AC2_2_cross_analyst_md_has_dagitty_notation(self):
+        """AC2.2 Success: agent doc contains DAGitty conditional-independence notation."""
+        content = self._agent_content()
+        assert "_||_" in content, (
+            "mpi-cross-analyst.md must contain DAGitty notation '_||_' for testable_implications"
+        )
+
+    def test_AC2_3_cross_analyst_md_has_dag_conventions(self):
+        """AC2.3 Success: agent doc describes mermaid DAG with latent node conventions."""
+        content = self._agent_content()
+        assert "mermaid" in content, (
+            "mpi-cross-analyst.md must describe the mermaid DAG format"
+        )
+        # No bidirected edge / two directed arrows
+        assert "<->" not in content or "no" in content.lower() or "two directed arrows" in content, (
+            "mpi-cross-analyst.md must prohibit bidirected edges or describe two directed arrows"
+        )
+        assert (
+            "classDef latent" in content
+            or ":::latent" in content
+            or "latent" in content
+        ), (
+            "mpi-cross-analyst.md must document latent class naming convention"
+        )
+
+    def test_AC4_2_hypothesis_skill_has_replication_recommendation_template(self):
+        """AC4.2 Success: SKILL.md output format includes replication_recommendation."""
+        content = self._skill_content()
+        assert "replication_recommendation" in content, (
+            "mpi-hypothesis/SKILL.md must include replication_recommendation in output format"
+        )
+        assert (
+            "second participant set" in content
+            or "second independent" in content
+            or "second set" in content
+        ), (
+            "mpi-hypothesis/SKILL.md must frame replication_recommendation in terms of a second participant set"
+        )
+
+    def test_AC4_2_hypothesis_skill_has_dag_section(self):
+        """AC4.2 Success: SKILL.md output format includes a DAG/mermaid block."""
+        content = self._skill_content()
+        assert "mermaid" in content or "Causal DAG" in content, (
+            "mpi-hypothesis/SKILL.md must include a mermaid DAG block or 'Causal DAG' in output format"
+        )

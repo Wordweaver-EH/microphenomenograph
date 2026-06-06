@@ -102,6 +102,18 @@ Generated from global synchronic analysis of N participants.
 - p4s3: <IDU/ISU name>
 ...
 
+**Replication recommendation** (`replication_recommendation`): A second participant set would need to show [X] to corroborate this mechanism.
+
+**Causal DAG:**
+```mermaid
+graph LR
+  IV[Suggestibility score] --> M[Mechanism component]
+  M --> DV[DV focus]
+  CMV[Common-method variance]:::latent --> IV
+  CMV --> DV
+  classDef latent fill:#f5f5f5,stroke:#999,stroke-dasharray:5 5
+```
+
 ---
 [Repeat for each hypothesis]
 ```

@@ -150,6 +150,41 @@ that appears across multiple participants in the same score category:
    - Rung 1 (Association): "Participants who score high are more likely to report X"
    - Rung 2 (Intervention): "If we intervene to change X, Y would change"
    - Rung 3 (Counterfactual): "Had the participant not received the suggestion, they would not have experienced X"
+
+   **Rung guard:** If rung ≥ 2, `assumptions` must be a non-empty list of strings stating the
+   causal assumptions that license the higher-rung framing (DoWhy identify-discipline analogue).
+   At rung 1, `assumptions` may be empty `[]`.
+
+   **Confounders** (always required, non-empty list of `{variable, mechanism}` objects): Enumerate
+   all plausible common causes of the IV and DV. ALWAYS include the common-method-variance (CMV)
+   latent factor — the IV score and DV experience description are both self-reports from the same
+   participant in the same interview session. CMV is a latent common cause of both. Write the
+   mechanism with participant-specific wording (e.g., "P3's automaticity rating and their description
+   of hand movement were both produced in the same interview session"). Include CMV even when you
+   believe it is unlikely to confound.
+
+   **Testable implications** (non-empty list of strings): State each in DAGitty
+   conditional-independence notation: `X _||_ Y | Z` ("X is independent of Y given Z").
+   Example: `"suggestibility _||_ session_fatigue | automaticity"`.
+
+   **Per-hypothesis mermaid DAG** (required in the markdown artifact): Draw a mermaid `graph LR`
+   DAG showing IV → mechanism components → DV focus. Add confounder nodes (including CMV) as
+   explicit latent nodes with two directed arrows — one into the IV node and one into the DV node.
+   Do NOT use `<->` (mermaid has no bidirected edge syntax — two directed arrows stand in for the
+   bidirected edge that DAGitty would use). Mark latent nodes with a distinct mermaid class using
+   `classDef latent` and either `:::latent` or `class <NodeName> latent`. One DAG per candidate
+   hypothesis, immediately after the claims table.
+
+   Example DAG structure:
+   ```mermaid
+   graph LR
+     IV[Suggestibility score] --> M[Mechanism component]
+     M --> DV[DV focus]
+     CMV[Common-method variance]:::latent --> IV
+     CMV --> DV
+     classDef latent fill:#f5f5f5,stroke:#999,stroke-dasharray:5 5
+   ```
+
 5. Assign confidence 1–5
 6. List source IDUs/ISUs (participant + IDU/ISU name)
 7. Suggest a quantitative follow-up test
@@ -195,7 +230,16 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
       "n_transcripts": "<int>",
       "n_iv_levels_covered": "<int>",
       "uncertainty_language": "associated with|tends to|may|...",
-      "negative_cases": [{"transcript_id": "...", "note": "..."}]
+      "negative_cases": [{"transcript_id": "...", "note": "..."}],
+      "rung": 1,
+      "assumptions": [],
+      "confounders": [
+        {
+          "variable": "common_method_variance",
+          "mechanism": "IV score and DV experience description both self-reported by participant in same session — shared method creates spurious correlation"
+        }
+      ],
+      "testable_implications": ["DV _||_ session_order | IV"]
     }
   ],
   "sample_summary": {
@@ -216,6 +260,11 @@ Every hypothesis output MUST carry this verbatim disclaimer as a top-level field
 "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."
 ```
 
+Every hypothesis output MUST also carry a top-level `replication_recommendation` field:
+```json
+"replication_recommendation": "A second independent participant set would need to show the same direction of association between [IV] and [DV] to support this mechanism."
+```
+
 ### Weak evidence review
 
 For `hypothesis.weak_evidence_review` (scope: `global`), you receive all
@@ -234,8 +283,15 @@ For `hypothesis.weak_evidence_review` (scope: `global`), you receive all
    "leads to", "produces", "results in". Interview findings are observational (Pearl rung 1:
    association); causal verbs imply intervention or counterfactual framing.
 
-   **rung_appropriateness** — Stub: record whether the claim's rung label is consistent
-   with its evidence type. Mark `"stub": true` for now; plan 5 gives this teeth.
+   **rung_appropriateness** — Flag if the claim's `rung` value is inconsistent with its
+   evidence type. Qualitative cross-participant pattern data is observational (rung 1 —
+   association); a claim coded as rung 2 (intervention) or rung 3 (counterfactual) over
+   such evidence is structurally mislabelled. Rule: if `rung >= 2` AND all evidence in
+   `supports`/`contradicts`/`ambiguous` comes from observational interview transcripts
+   (i.e., no experimental manipulation is described), flag as
+   `rung_appropriateness: {"flagged": true, "reason": "<explanation>"}`.
+   If rung 1 or genuinely experimental evidence, pass as
+   `rung_appropriateness: {"flagged": false}`. Do NOT set `"stub": true`.
 
 3. Determine `outcome`: `"flagged"` if ANY check fired; `"pass"` otherwise.
 4. If flagged, note the analyst's rationale in `notes`. If an analyst has acknowledged
@@ -252,7 +308,7 @@ Your JSON output (`hypotheses/review_summary.json`) MUST carry:
         "thin_support": true,
         "single_iv_level": false,
         "causal_language": false,
-        "rung_appropriateness": {"stub": true}
+        "rung_appropriateness": {"flagged": false}
       },
       "outcome": "flagged",
       "notes": "<rationale>",
