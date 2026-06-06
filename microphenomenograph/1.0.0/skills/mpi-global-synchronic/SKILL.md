@@ -20,7 +20,7 @@ Pass the resolved `event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_
 Every row in the output MUST reference source participant and suggestion. Each ISU MUST include a `source_event` field naming which event (e.g. `"event1"`) the ISU came from.
 **Verifies:** microphenomenograph.AC5.2
 
-Write `analyses/global-synchronic.md`.
+Write `analyses/gidu<G>-cat-<C>-global_synchronic.{json,md,prompt.json}` for the current scope (one artifact set per (generic-IDU × IV category) case — see the Closure table below).
 
 ## Anti-fabrication rule
 

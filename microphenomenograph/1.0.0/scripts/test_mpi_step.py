@@ -5985,7 +5985,8 @@ class TestSingleEventGate:
         )
 
     def test_single_event_scope_strict_blocks(self, tmp_path, capsys):
-        """AC3.2: --strict-single-event-global-synchronic aborts close when < 2 events."""
+        """AC3.2 + AC1.2: --strict-single-event-global-synchronic aborts close when < 2
+        events, and the abort happens BEFORE manifest mutation (manifest unchanged)."""
         run_dir = _init_run_dir(tmp_path)
 
         self._make_global_sync_manifest(
@@ -5993,6 +5994,8 @@ class TestSingleEventGate:
             event_groups={"event1": ["p1s1"]},
             done_scopes=["event1-cat-low-gidu1"],
         )
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_before = manifest_path.read_text()
 
         art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
         art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
@@ -6025,6 +6028,11 @@ class TestSingleEventGate:
         stderr_out = capsys.readouterr().err
         assert "single_event_global_synchronic" in stderr_out, (
             f"Expected 'single_event_global_synchronic' in stderr; got: {stderr_out}"
+        )
+        # AC1.2: strict abort precedes manifest mutation — manifest byte-identical
+        assert manifest_path.read_text() == manifest_before, (
+            "Manifest was mutated despite strict-gate abort; "
+            "abort must happen before the manifest-write block"
         )
 
     def test_two_event_scope_closes_clean(self, tmp_path):

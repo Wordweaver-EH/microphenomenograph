@@ -2454,12 +2454,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--strict-undeclared-input", action="store_true",
                          dest="strict_undeclared_input",
                          help="Block close when inputs_consumed is not a subset of resolved inputs.")
-    p_close.add_argument("--strict-convergence-pending", action="store_true",
-                         dest="strict_convergence_pending",
-                         help="Block close when criteria_revision has more_revision_needed.")
-    p_close.add_argument("--strict-temporal-order-pending", action="store_true",
-                         dest="strict_temporal_order_pending",
-                         help="Block close when theme_grouping_within_idu has temporal_order_within_idu=true.")
+    # NOTE: convergence_pending and temporal_order_pending are downgrade-posture gates:
+    # _compute_effective_status always downgrades the close to 'flagged', which blocks
+    # downstream substeps unconditionally. They take no --strict-* flag — downgrade is
+    # already stronger than warn, and aborting would break the close_id audit chain the
+    # design requires (close succeeds, substep flagged).
 
     # render
     p_render = sub.add_parser("render", help="Regenerate reasoning.log from audit.jsonl.")
