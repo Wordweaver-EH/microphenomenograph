@@ -5465,6 +5465,103 @@ class TestInputsVerb:
         sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
         assert sha_map.get("analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json") == "sha_e1_gs"
 
+    def test_inputs_generic_synchronic_resolves_cross_iv_contrast_artifacts(self, tmp_path):
+        """AC2.1: generic_synchronic scope resolves generic_diachronic.cross_iv_contrast artifacts."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with generic_diachronic.cross_iv_contrast done at event1-cat-low
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                }
+            },
+            "participants": {
+                "event1-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "substeps": {
+                                "cross_iv_contrast": {
+                                    "status": "done",
+                                    "close_id": "cid20",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json",
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json": "sha_gdia_json",
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md": "sha_gdia_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="event1-cat-low-gidu1",
+            stage="generic_synchronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        assert "resolved" in result, f"Output missing 'resolved' key: {result}"
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # Must include cross_iv_contrast artifacts from the generic_diachronic stage
+        assert "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json" in resolved_paths
+        assert "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md" in resolved_paths
+
+        # SHAs must be populated correctly
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map["analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"] == "sha_gdia_json"
+        assert sha_map["analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md"] == "sha_gdia_md"
+
+    def test_inputs_cli_smoke_via_main(self, tmp_path):
+        """AC2.1 CLI smoke: `mpi_step.py inputs --stage --scope` wired through main() dispatch."""
+        from mpi_step import main
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Minimal manifest — empty participants is fine; generic_diachronic with no event_groups returns []
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"event_groups": {}},
+            "participants": {}
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = main(["inputs", "--stage", "generic_diachronic", "--scope", "event1-cat-low",
+                       "--run-dir", str(run_dir)])
+
+        assert rc == 0, f"main inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        # Empty participants → empty resolved list, but JSON structure must be correct
+        assert "resolved" in result
+        assert isinstance(result["resolved"], list)
+
     def test_inputs_unknown_stage_returns_nonzero(self, tmp_path):
         """AC2.1 guard: unknown stage returns non-zero exit code."""
         from mpi_step import cmd_inputs
