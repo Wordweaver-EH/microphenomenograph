@@ -21,6 +21,10 @@ from irr import (
     adjusted_rand_index,
     bootstrap_ci,
     compute_irr,
+    RATER_KIND_INTRA,
+    RATER_KIND_HETERO,
+    CAVEAT_INTRA_MODEL,
+    CAVEAT_HETEROGENEOUS_MODEL,
 )
 
 
@@ -410,6 +414,70 @@ def test_alignment_partial_keeps_unaligned_distinct():
     print(f"[PASS] test_alignment_partial_keeps_unaligned_distinct: categories={sorted_categories}")
 
 
+def test_rater_kind_intra_model():
+    """AC2.1: Absent or equal alternate_model produces rater_kind=='intra_model' with correct caveat."""
+    primary = {"1": "A", "2": "A", "3": "B", "4": "B"}
+    alternate = {"1": "A", "2": "A", "3": "B", "4": "B"}
+
+    # Case 1: alternate_model is empty string
+    record1 = compute_irr(
+        primary, alternate, [], [], [],
+        n_utterances=4, n_bootstrap=100, bootstrap_seed=42,
+        primary_model="claude-sonnet-4-5", alternate_model=""
+    )
+    assert record1["rater_kind"] == "intra_model", (
+        f"Case 1: empty alternate_model should yield rater_kind=='intra_model', got {record1['rater_kind']!r}"
+    )
+    assert record1["caveat"] == CAVEAT_INTRA_MODEL, (
+        f"Case 1: caveat should equal CAVEAT_INTRA_MODEL"
+    )
+
+    # Case 2: alternate_model equals primary_model
+    record2 = compute_irr(
+        primary, alternate, [], [], [],
+        n_utterances=4, n_bootstrap=100, bootstrap_seed=42,
+        primary_model="claude-sonnet-4-5", alternate_model="claude-sonnet-4-5"
+    )
+    assert record2["rater_kind"] == "intra_model", (
+        f"Case 2: equal models should yield rater_kind=='intra_model', got {record2['rater_kind']!r}"
+    )
+    assert record2["caveat"] == CAVEAT_INTRA_MODEL, (
+        f"Case 2: caveat should equal CAVEAT_INTRA_MODEL"
+    )
+
+    # Case 3: both empty
+    record3 = compute_irr(
+        primary, alternate, [], [], [],
+        n_utterances=4, n_bootstrap=100, bootstrap_seed=42,
+        primary_model="", alternate_model=""
+    )
+    assert record3["rater_kind"] == "intra_model", (
+        f"Case 3: both empty models should yield rater_kind=='intra_model', got {record3['rater_kind']!r}"
+    )
+
+    print("[PASS] test_rater_kind_intra_model: all three intra-model cases correct")
+
+
+def test_rater_kind_heterogeneous_model():
+    """AC2.2: Differing alternate_model produces rater_kind=='heterogeneous_model' with correct caveat."""
+    primary = {"1": "A", "2": "A", "3": "B", "4": "B"}
+    alternate = {"1": "A", "2": "A", "3": "B", "4": "B"}
+
+    record = compute_irr(
+        primary, alternate, [], [], [],
+        n_utterances=4, n_bootstrap=100, bootstrap_seed=42,
+        primary_model="claude-sonnet-4-5", alternate_model="claude-opus-4"
+    )
+    assert record["rater_kind"] == "heterogeneous_model", (
+        f"Differing models should yield rater_kind=='heterogeneous_model', got {record['rater_kind']!r}"
+    )
+    assert record["caveat"] == CAVEAT_HETEROGENEOUS_MODEL, (
+        f"caveat should equal CAVEAT_HETEROGENEOUS_MODEL (equality check only)"
+    )
+
+    print("[PASS] test_rater_kind_heterogeneous_model: heterogeneous model case correct")
+
+
 if __name__ == "__main__":
     tests = [
         test_identical_inputs,
@@ -422,6 +490,8 @@ if __name__ == "__main__":
         test_utt_sort_key_numeric_ordering,
         test_alignment_disjoint_labels_full_agreement,
         test_alignment_partial_keeps_unaligned_distinct,
+        test_rater_kind_intra_model,
+        test_rater_kind_heterogeneous_model,
     ]
 
     failed = 0

@@ -388,7 +388,11 @@ def _validate_irr_calibration_alignment(payload: dict) -> list[SchemaError]:
 
 
 def _validate_irr_calibration_agreement_computation(payload: dict) -> list[SchemaError]:
-    return _require_keys(payload, ["stage", "participant_id", "metrics", "outcome"], "payload")
+    return _require_keys(
+        payload,
+        ["stage", "participant_id", "metrics", "outcome", "rater_kind", "caveat"],
+        "payload"
+    )
 
 
 def _validate_transcript_prep_hash_raw(payload: dict) -> list[SchemaError]:

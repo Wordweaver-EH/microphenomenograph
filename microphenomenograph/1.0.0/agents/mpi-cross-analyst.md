@@ -332,6 +332,10 @@ python scripts/mpi_step.py close \
 (e.g., `p1s1` for diachronic; `p1s1-idu1` for synchronic). Artifacts written to
 `analyses/independent/<scope>-<stage>.<substep>.{json,md,prompt.json}`.
 
+**Isolation requirement:** Before producing the alternate analysis, do NOT read any files
+under `analyses/` (primary analyst outputs). The prompt artifact for this substep MUST
+include an `isolation_statement` field confirming no primary-analyst artifacts were read.
+
 **`irr_calibration.alignment`** — scope: `global`; artifact `analyses/irr_calibration.alignment.*`.
 
 ### Span grounding requirement

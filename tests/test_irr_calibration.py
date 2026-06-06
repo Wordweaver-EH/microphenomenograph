@@ -55,7 +55,8 @@ def test_irr_jsonl_schema():
     required_fields = [
         "stage", "participant_id", "transcript_id", "primary_model", "alternate_model",
         "n_utterances", "n_bootstrap", "bootstrap_seed",
-        "alignment", "metrics", "bootstrap", "outcome", "notes"
+        "alignment", "metrics", "bootstrap", "outcome", "notes",
+        "rater_kind", "caveat",
     ]
     for field in required_fields:
         assert field in record, f"Missing required field: {field}"
@@ -432,6 +433,53 @@ def test_compute_irr_with_disjoint_alignment():
     print(f"[PASS] test_compute_irr_with_disjoint_alignment: alpha_aligned={alpha_point:.4f}, alpha_unaligned={alpha_no_align:.4f}")
 
 
+def test_agreement_computation_schema_rejects_missing_rater_kind():
+    """AC2.3: Schema validator rejects agreement_computation record missing rater_kind or caveat."""
+    from _mpi_schemas import validate_units
+
+    # Valid payload missing rater_kind
+    payload_no_rk = {
+        "stage": "diachronic",
+        "participant_id": "p1s1",
+        "metrics": {"alpha": {"point": 0.8}},
+        "outcome": "passed",
+        "caveat": "some caveat",
+        # rater_kind deliberately omitted
+    }
+    errors = validate_units("irr_calibration", "agreement_computation", payload_no_rk)
+    assert any("rater_kind" in str(e) for e in errors), (
+        f"Expected schema error for missing rater_kind, got: {errors}"
+    )
+
+    # Valid payload missing caveat
+    payload_no_caveat = {
+        "stage": "diachronic",
+        "participant_id": "p1s1",
+        "metrics": {"alpha": {"point": 0.8}},
+        "outcome": "passed",
+        "rater_kind": "intra_model",
+        # caveat deliberately omitted
+    }
+    errors2 = validate_units("irr_calibration", "agreement_computation", payload_no_caveat)
+    assert any("caveat" in str(e) for e in errors2), (
+        f"Expected schema error for missing caveat, got: {errors2}"
+    )
+
+    # Full valid payload (both fields present) passes
+    payload_valid = {
+        "stage": "diachronic",
+        "participant_id": "p1s1",
+        "metrics": {"alpha": {"point": 0.8}},
+        "outcome": "passed",
+        "rater_kind": "intra_model",
+        "caveat": "some caveat text",
+    }
+    errors3 = validate_units("irr_calibration", "agreement_computation", payload_valid)
+    assert errors3 == [], f"Valid payload should have no errors, got: {errors3}"
+
+    print("[PASS] agreement_computation schema rejects missing rater_kind/caveat")
+
+
 if __name__ == "__main__":
     tests = [
         test_irr_jsonl_schema,
@@ -443,6 +491,7 @@ if __name__ == "__main__":
         test_default_calibration_mode,
         test_compute_irr_alpha_u_ordering,
         test_compute_irr_with_disjoint_alignment,
+        test_agreement_computation_schema_rejects_missing_rater_kind,
     ]
 
     failed = 0
