@@ -1,0 +1,172 @@
+{
+ "C1-irr-alignment": [
+  {
+   "title": "Alignment map is keyed on primary labels but tested against alternate labels \u2014 the reconciliation step is a no-op",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/irr.py",
+   "impl_detail": "In compute_coincidence (lines 217\u2013222), alignment_map is built as alignment_map[primary_cat] = alternate_cat \u2014 keyed by primary label. The lookup at line 244 tests 'if cat_b in alignment_map', where cat_b is an alternate label. Because alternate labels never appear as keys in a primary-keyed dict, the branch at line 245 never fires; cat_b_aligned always equals the original cat_b. The same inversio",
+   "suggested_fix": "In compute_coincidence (line 222), swap key/value: alignment_map[alternate_cat] = primary_cat. In compute_irr (line 705), swap: alignment_map[entry.get('alternate')] = entry.get('primary'). This ensures that when cat_b (an alternate label) is looked up, it is remapped to its corresponding primary label before coincidence counting."
+  }
+ ],
+ "C2-irr-independence": [
+  {
+   "title": "Independent researcher is same model and system prompt in a different session \u2014 correlated by construction",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-irr/SKILL.md",
+   "impl_detail": "SKILL.md lines 47\u201349: 'The alternate agent is a fresh subagent invocation \u2014 same agent file (mpi-analyst for per-transcript stages), different session context. It should produce its analysis independently, without seeing the primary analysis.' Independence rests solely on session isolation. Same model weights, same system prompt, same zero-shot strategy are used for both raters. compute_irr (irr.p",
+   "suggested_fix": "Either (a) require a different model for the alternate agent and enforce this via a manifest check; or (b) prominently caveat in SKILL.md and the IRR record output that the independence guarantee is session-context only (intra-model consistency, not inter-rater reliability). Structural isolation blocking the alternate agent from reading analyses/ would strengthen the session-isolation claim."
+  }
+ ],
+ "C3-global-synchronic-wiring": [
+  {
+   "title": "Multiple-events precondition not enforced \u2014 global synchronic runs vacuously on single-event generic IDUs",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+   "impl_detail": "The COMPLETENESS_GATES entry for `global_synchronic` (lines 735\u2013743) uses `_scope_to_event_all` and checks only that `generic_synchronic.isu_second_level_grouping` is done for each event. No gate verifies that the generic IDU named by `gidu<G>` in the scope `gidu<G>-cat-<C>` appears in \u22652 events. The close for any `gidu<G>-cat-<C>` scope will succeed even when that generic IDU exists in only one e",
+   "suggested_fix": "Add a per-close check in `_check_completeness_gate` (or a dedicated pre-check in `cmd_close`) for stage `global_synchronic`: extract `gidu<G>` from the scope, count how many distinct event IDs in `study.event_groups` have a done `generic_synchronic.isu_second_level_grouping` artifact for that gidu, and block if the count is < 2. Surface a named error `global_synchronic_precondition_unsatisfied: gi"
+  },
+  {
+   "title": "Global synchronic input layer cites a non-existent file (`generic-synchronic.md`)",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-global-synchronic/SKILL.md",
+   "impl_detail": "SKILL.md line 13 instructs the agent to pass `analyses/generic-synchronic.md` as input. mpi-cross-analyst.md line 104 likewise says 'Read all `pNsN-synchronic.md` outputs AND `generic-synchronic.md`'. Neither file exists in the pipeline: the generic synchronic stage produces per-scope artifacts named `event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.{json,md}` (mpi-generic-syn",
+   "suggested_fix": "Update SKILL.md line 13 to reference the actual artifact pattern: `analyses/event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.md` for all events/categories relevant to the current `gidu<G>-cat-<C>` scope. Update mpi-cross-analyst.md lines 103-104 to match. The orchestrator should resolve the correct per-scope file paths and pass them explicitly when invoking mpi-cross-analyst."
+  },
+  {
+   "title": "Singular `global-synchronic.md` output path in SKILL.md body contradicts per-scope closure table",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-global-synchronic/SKILL.md",
+   "impl_detail": "SKILL.md line 18 says 'Write `analyses/global-synchronic.md`' (a single file). The closure table at line 33 of the same file shows artifact names are `gidu<G>-cat-<C>-global_synchronic.{json,md}` \u2014 one artifact per (generic-IDU \u00d7 IV category) scope. mpi-cross-analyst.md lines 271-286 also specify `analyses/gidu<G>-cat-<C>-global_synchronic.{json,md,prompt.json}` as the actual artifact paths.",
+   "suggested_fix": "Replace SKILL.md line 18 'Write `analyses/global-synchronic.md`.' with the per-scope form: 'Write `analyses/gidu<G>-cat-<C>-global_synchronic.{json,md,prompt.json}` for the current scope.' This aligns the task description with the closure table and the agent persistence contract."
+  },
+  {
+   "title": "JSON schema for `global_synchronic` does not enforce an `event` field on ISUs \u2014 Event column label is convention-only",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+   "impl_detail": "`_validate_global_synchronic` (lines 274\u2013283) requires only `[\"generic_idu\", \"iv_category\", \"isus\"]` at the payload level. `_validate_isu` (lines 122\u2013129) requires `[\"isu_name\", \"criteria\", \"confidence\", \"flag_for_review\", \"utterance_refs\", \"isu_second_level_of_abstraction\"]`. Neither payload nor ISU object includes a required `event` or `source_event` field. The mpi-cross-analyst output markdown ",
+   "suggested_fix": "Add `source_event` (or `event`) as a required field on each ISU object in `_validate_global_synchronic` (analogous to how `_validate_generic_synchronic_isu_second_level` requires `event` at the payload level). This would make event attribution machine-enforceable and auditable without a join."
+  }
+ ],
+ "C4-close-enforcement": [
+  {
+   "title": "Iterate-until-convergence loop (criteria_revision re-dispatch) is unimplemented \u2014 pipeline can proceed to idu_naming_ordering on a non-converged grouping",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-diachronic/SKILL.md",
+   "impl_detail": "SKILL.md line 130 states: 'JSON must include convergence: {decision, reason}; orchestrator re-dispatches while decision == \"more_revision_needed\", capped at 5 passes.' However, grep for 'more_revision_needed' in mpi_step.py returns zero hits. mpi.md (the command file) contains no re-dispatch loop. SUBSTEP_PREREQUISITES in _mpi_schemas.py (line 596) has idu_naming_ordering depend on criteria_revisi",
+   "suggested_fix": "Implement the re-dispatch loop in the mpi-diachronic SKILL.md orchestration section: after criteria_revision closes with decision=='more_revision_needed', re-invoke mpi-analyst for another criteria_revision pass before proceeding. Gate idu_naming_ordering on convergence==true in the manifest. Cap at 5 passes and force convergence at cap. Alternatively, add a mpi_step.py guard that rejects idu_nami"
+  },
+  {
+   "title": "temporal_order_within_idu flag does not block isu_naming from proceeding \u2014 enforcement gap between SKILL description and mpi_step.py implementation",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/mpi_step.py",
+   "impl_detail": "The SUBSTEP_PREREQUISITES in _mpi_schemas.py (line 598) lists `synchronic.isu_naming` as requiring only `synchronic.theme_grouping_within_idu` done. There is no check in cmd_close (lines 1487\u20131510) or in SUBSTEP_PREREQUISITES for 'theme_grouping_within_idu did NOT set temporal_order_within_idu: true'. The completeness gate for generic_diachronic (COMPLETENESS_GATES, lines 714\u2013725) only checks that",
+   "suggested_fix": "In SUBSTEP_PREREQUISITES, add a check that prevents synchronic.isu_naming from proceeding when theme_grouping_within_idu has temporal_order_within_idu: true. Or implement an explicit flag-check in cmd_close that reads the theme_grouping artifact, inspects temporal_order_within_idu, and aborts with prereq_unsatisfied if true without a corresponding diachronic re-close. Also emit the idu_split_after"
+  },
+  {
+   "title": "idu_split_after_synchronic audit event described in SKILL.md never emitted by mpi_step.py",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-synchronic/SKILL.md",
+   "impl_detail": "SKILL.md line 91 states: 'Manifest records `idu_split_after_synchronic` audit event linking both span_ids.' A grep for 'idu_split_after_synchronic' across the entire implementation directory finds only this single SKILL.md line \u2014 no occurrence in mpi_step.py or any other script.",
+   "suggested_fix": "In cmd_close, when closing diachronic.criteria_revision and the cascade_reset tombstone references a synchronic trigger, emit the idu_split_after_synchronic audit event with both span_ids."
+  },
+  {
+   "title": "Agent instructions describe flag_for_review but not temporal_order_within_idu as the split signal \u2014 ambiguity between two flag mechanisms",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/agents/mpi-analyst.md",
+   "impl_detail": "Synchronic analysis rule 4 (lines 69\u201370) tells the analyst: 'Flag this with `flag_for_review: true` and note it in reasoning.' The schema in _mpi_schemas.py (line 175) supports a distinct field `temporal_order_within_idu` for the split signal. The SKILL.md (line 85) describes the orchestrator acting on `temporal_order_within_idu: true`, not on `flag_for_review: true`. The agent is instructed to us",
+   "suggested_fix": "In mpi-analyst.md synchronic rule 4, instruct the analyst to set BOTH flag_for_review: true AND temporal_order_within_idu: true when temporal order is detected within an IDU, so both the review queue and the orchestrator's split logic are triggered."
+  },
+  {
+   "title": "SKILL.md prerequisite gate description mentions no-pending-flags condition not directly enforced by the completeness gate code",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-generic-diachronic/SKILL.md",
+   "impl_detail": "SKILL.md line 53: 'Prerequisite gate: generic_diachronic.* is blocked until all transcripts for the event have diachronic.* and synchronic.* all done with no pending temporal_order_within_idu or concurrent_with_adjacent_idu flags.' In mpi_step.py the completeness gate at lines 1229-1277 checks `status != 'done'` for each required substep \u2014 this implicitly blocks `flagged` status (since `flagged !=",
+   "suggested_fix": "Ensure that the close command, when processing a `theme_grouping_within_idu` artifact with `temporal_order_within_idu: true`, automatically sets the substep status to `flagged` rather than `done`. Add a test that verifies a transcript with an unresolved `temporal_order_within_idu` flag blocks the generic_diachronic completeness gate."
+  }
+ ],
+ "C5-generic-diachronic-patterns": [
+  {
+   "title": "Pattern rows do not enforce the common/optional element distinction required by the manual",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+   "impl_detail": "_mpi_schemas.py lines 221-230: `_validate_generic_diachronic_pattern_identification` only requires keys `['event', 'patterns']` and checks `utterance_refs` per pattern object. No fields for `common_elements`, `optional_elements`, or any analogous distinction are required or validated. The schema does not enforce the structural pattern rows described in the manual. mpi-cross-analyst.md lines 62-66 ",
+   "suggested_fix": "Add `common_idus` (list, required) and `optional_idus` (list, required, may be empty) fields to the `pattern_identification` schema validator. Update mpi-cross-analyst.md generic diachronic instructions to explicitly state that each pattern must enumerate common elements (present in all covered participants) and optional elements (present in some), referencing the manual requirement. The schema va"
+  },
+  {
+   "title": "The agent instruction for generic diachronic lists only common pattern identification \u2014 the 'optimum small set' and 'none overly complex' constraints are absent",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+   "impl_detail": "mpi-cross-analyst.md lines 62-66 (generic diachronic section): '1. List all IDUs across participants in that category 2. Identify common IDU patterns (similar names/criteria appearing in \u22652 participants) 3. Group common IDUs together 4. Note which participants and suggestions contribute to each group'. No instruction to seek a small optimum set, no guidance against combining dissimilar processes i",
+   "suggested_fix": "Add to the mpi-cross-analyst.md generic diachronic instructions: a step requiring the agent to evaluate whether patterns can be merged (reducing count) without combining notably dissimilar processes, and a step requiring explicit justification when the pattern count exceeds a threshold (e.g., >5 patterns per category). The Reasoning section requirement partially compensates but does not enforce th"
+  }
+ ],
+ "C6-generic-synchronic-grouping": [
+  {
+   "title": "ISU grouping flattens across generic IDU boundaries \u2014 contradicts manual's within-IDU grouping rule",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+   "impl_detail": "Lines 93\u2013100: 'ISUs are grouped by experiential similarity regardless of which IDU group they came from. Synchronic outputs nest ISUs inside isu_groups (one group per IDU); when comparing across participants, flatten all ISUs from all IDU groups and group them by semantic similarity.' The instruction explicitly dissolves the generic-IDU grouping boundary the manual requires.",
+   "suggested_fix": "Revise the 'ISU grouping rule' in mpi-cross-analyst.md to direct the LLM to group ISUs strictly within the target generic IDU, not across all IDU groups. The correct cross-IDU synthesis step is Global Synchronic Analysis, not Generic Synchronic Analysis."
+  }
+ ],
+ "C7-hypothesis-evidence": [
+  {
+   "title": "Replication-with-second-set recommendation entirely absent",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-hypothesis/SKILL.md",
+   "impl_detail": "The SKILL.md contains no instruction to surface, recommend, or note the need to repeat the analysis with a second participant set. The output format template (lines 77\u2013100) has no field for this recommendation. The mpi-cross-analyst.md `### Hypothesis generation` section (lines 121\u2013147) likewise contains no mention of replication.",
+   "suggested_fix": "Add a mandatory `replication_recommendation` top-level field to the `hypothesis.candidate_drafting` output schema and instruct the LLM to include the verbatim recommendation: 'Repeat the analysis with a second set of participants to assess whether the same patterns emerge before treating these patterns as robust.' Include it in the markdown output template."
+  },
+  {
+   "title": "hypothesis.evidence_extraction reads only global_synchronic; manual requires all three cross-participant analyses",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-hypothesis/SKILL.md",
+   "impl_detail": "Lines 13\u201316 list prerequisites: `global_synchronic.status == 'done'` and `analyses/global-synchronic.md` must exist. Line 22 lists context documents as only '1. `analyses/global-synchronic.md`'. The prerequisite gate at line 121 states: 'blocked until `generic_diachronic.*`, `generic_synchronic.*`, AND `global_synchronic.*` are all `done`' \u2014 but only the global_synchronic artifact is passed as inp",
+   "suggested_fix": "Either explicitly pass `analyses/generic-diachronic.md` and `analyses/generic-synchronic.md` as additional context documents in the SKILL.md Prerequisites and Context documents sections, or add a documented rationale that global_synchronic already synthesizes all three analyses and direct upstream reading is intentionally omitted."
+  },
+  {
+   "title": "weak_evidence_review substep has no LLM instructions \u2014 schema only requires review_items array",
+   "severity": "major",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+   "impl_detail": "Line 377\u2013378: `def _validate_hypothesis_weak_evidence_review(payload: dict): return _require_keys(payload, [\"review_items\"], \"payload\")`. The schema enforces only that `review_items` is present. The mpi-cross-analyst.md `### Hypothesis generation` section (lines 121\u2013191) contains no instructions for what the LLM should do during the `weak_evidence_review` substep \u2014 the substep is defined only in t",
+   "suggested_fix": "Add a `### Weak evidence review` section to mpi-cross-analyst.md instructing the LLM to: (1) flag any claim where n_transcripts < 3 or n_iv_levels_covered == 1, (2) flag any claim where uncertainty_language contains causal verbs ('causes', 'leads to', 'produces'), and (3) check that rung-1 framing is used for all claims derived from observational data. Add schema constraints requiring non-empty `r"
+  }
+ ],
+ "C8-small-fidelity": [
+  {
+   "title": "Out-of-range IV score accepted silently by header regex",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-init/SKILL.md",
+   "impl_detail": "Line 89: `^Participant (\\d+),?\\s+Suggestion (\\d+)(?:\\s+\\w+)*\\s*\\(Scored (\\d+)/5\\)` \u2014 the score capture group is `(\\d+)` which accepts any non-negative integer. No downstream validation enforces score \u2208 {0,1,2,3,4,5}. _mpi_schemas.py contains no score-range check. A header `Participant 1, Suggestion 1 (Scored 7/5)` would be parsed without error; the score 7 falls outside all defined category bounda",
+   "suggested_fix": "After parsing the score integer, add a validation step: if score < 0 or score > 5, emit `ERROR: <filename>: score out of range. Expected 0\u20135, got <score>` and skip the file (consistent with the existing invalid-header error pattern in SKILL.md lines 97-99)."
+  },
+  {
+   "title": "No warning when participant count falls outside the manual's 6-12 adequacy guidance",
+   "severity": "note",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-init/SKILL.md",
+   "impl_detail": "Lines 169-228 (the full Steps section): init scans all transcripts, builds participant entries, and reports the result table (lines 200-208), but at no point checks whether the total participant count per event falls within the 6-12 range or emits any advisory message. The schema in _mpi_schemas.py also has no participant-count validation.",
+   "suggested_fix": "At the end of init (after building the participant table), emit a one-line advisory if any event_group has fewer than 6 or more than 12 participant transcripts, e.g.: 'Advisory: event1 has 4 participants; Guest et al. (2006) suggest 6-12 for adequate data saturation.'"
+  },
+  {
+   "title": "Question removal not implemented in normalize step",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/skills/mpi-transcript-prep/SKILL.md",
+   "impl_detail": "The normalize step (lines 36\u201344) lists only: strip BOM, validate header, normalise whitespace, normalise speaker label capitalisation, remove CRLF. No question-removal logic exists. The Validation rules section (lines 19\u201344) and the Steps section (lines 62\u201369) contain no instruction to remove interviewer questions whose answers stand alone.",
+   "suggested_fix": "Add a content-editing step to the normalize substep (or as a separate sub-substep) that identifies interviewer utterances (Kevin Sheldrake: lines) where the immediately following participant utterance is self-sufficient without the question, flags them for removal or human review, and optionally removes them with a diff recorded in transcripts/diff/."
+  },
+  {
+   "title": "IDU naming and experienced-order numbering required from first substep, not after convergence",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+   "impl_detail": "_IDU_REQUIRED (line 86\u201387) lists 'idu_number', 'idu_name', and 'moment' as required fields. _validate_diachronic_criteria_grouping (lines 136\u2013145) applies _validate_idu to every IDU in the first substep payload, enforcing all three. _validate_diachronic_idu_naming_ordering (lines 167\u2013168) returns _validate_diachronic_criteria_grouping verbatim \u2014 identical schema. The three substeps are nominally d",
+   "suggested_fix": "For criteria_grouping, make idu_name and moment optional (or accept a placeholder like 'TBD'). Only enforce idu_name/moment as required fields in the idu_naming_ordering validator. This would make the schema progression reflect the manual's intended sequencing."
+  },
+  {
+   "title": "Temporal linkage phrase boundary-detection mechanism absent from diachronic analysis rules",
+   "severity": "minor",
+   "impl_file": "C:/microphenomenograph/microphenomenograph/1.0.0/agents/mpi-analyst.md",
+   "impl_detail": "mpi-analyst.md diachronic rules (lines 25\u201355) contain no mention of temporal linkage phrases or the instruction that utterances before/after a linking phrase should receive different criteria. Rule 2 (lines 26\u201329) directs grouping by 'shared experiential content' with criteria following 'The utterances talk about [X].' Rule 4 (lines 32\u201333) states 'When uncertain, prefer fewer IDUs' \u2014 which pushes ",
+   "suggested_fix": "Add a step to mpi-analyst.md diachronic rules instructing the analyst to scan for temporal linkage phrases as boundary signals, and to assign different criteria to utterances before versus after each such phrase."
+  }
+ ]
+}

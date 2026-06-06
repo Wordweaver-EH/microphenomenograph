@@ -1,0 +1,785 @@
+[
+ {
+  "cluster": "C1-irr-alignment",
+  "current_state_notes": "Two confirmed inversion sites in `microphenomenograph/1.0.0/scripts/irr.py`:\n\n**Site 1 \u2014 `compute_coincidence` (lines 217-222 + 244):**\n```python\nalignment_map[primary_cat] = alternate_cat   # line 222 \u2014 INVERTED\n...\nif cat_b in alignment_map:                   # line 244 \u2014 cat_b is alternate label\n    cat_b_aligned = alignment_map[cat_b]\n```\n`cat_b` comes from `alternate_assignments.get(utt_id, \"\")` (line 241). The map is keyed by primary labels, so `cat_b` (an alternate label) is never found. Alignment is silently discarded.\n\n**Site 2 \u2014 `compute_irr` (lines 703-710):**\n```python\nalignment_map[entry.get(\"primary\")] = entry.get(\"alternate\")   # line 705 \u2014 INVERTED\n...\nfor label in labels_alternate:\n    if label in alignment_map:               # line 709 \u2014 label is alternate, map keyed by primary\n        labels_alternate_aligned.append(alignment_map[label])\n```\nSame inversion. `labels_alternate` elements (alternate labels) are never found in the primary-keyed map.\n\n**Empirically confirmed:** Running the current code with `primary={'1':'A','2':'A','3':'B','4':'B'}`, `alternate={'1':'X','2':'X','3':'Y','4':'Y'}`, full alignment `[{primary:'A',alternate:'X'},{primary:'B',alternate:'Y'}]` produces `alpha = -1.0` (worst possible) instead of 1.0. Off-diagonal matrix cells `(A,X)` and `(B,Y)` contain the counts \u2014 confirming the alignment was not applied.\n\n**In-flight runs:** `runs/phase1-2026-05-17/` has stages `diachronic`, `synchronic`, `transcript_prep` but no `irr_calibration` stage \u2014 no existing IRR records are invalidated by this fix.\n\n**Existing tests:** All tests in `test_irr.py` and `test_irr_calibration.py` use either empty `alignment=[]` or alignments where primary and alternate labels are identical strings. No test exercises a disjoint-label alignment, so none would catch this bug or its regression.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/scripts/irr.py",
+    "change_summary": "Fix alignment map inversion at two sites. Site 1 (compute_coincidence, line 222): change `alignment_map[primary_cat] = alternate_cat` to `alignment_map[alternate_cat] = primary_cat`. Site 2 (compute_irr, line 705): change `alignment_map[entry.get('primary')] = entry.get('alternate')` to `alignment_map[entry.get('alternate')] = entry.get('primary')`. Both lookups (lines 244 and 709) remain unchanged \u2014 they already look up by alternate label (`cat_b` and `label` from `labels_alternate`), which is correct once the map direction is fixed. Update the inline comment at line 216 from 'primary category \u2192 alternate category' to 'alternate category \u2192 primary category'. No other logic changes.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/test_irr.py",
+    "change_summary": "Add regression test `test_alignment_disjoint_labels_full_agreement`: primary uses labels {'A','B'}, alternate uses disjoint labels {'X','Y'}, full alignment [{primary:'A',alternate:'X'},{primary:'B',alternate:'Y'}], all utterances perfectly matched conceptually. Assert alpha == 1.0 (within 0.001) after alignment is applied, and assert alpha << 1.0 without alignment to confirm the test distinguishes the two states. Also add the test to the `if __name__ == '__main__'` runner list.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_irr_calibration.py",
+    "change_summary": "Add integration-level test `test_compute_irr_with_disjoint_alignment` that calls `compute_irr` (not just `compute_coincidence`) with disjoint primary/alternate labels and a full alignment, asserting the returned `record['metrics']['alpha']['point']` is close to 1.0 and `record['outcome'] == 'passed'`. This exercises the Site 2 fix path in compute_irr end-to-end through the full bootstrap pipeline.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "microphenomenograph/1.0.0/scripts/test_irr.py \u2014 all tests pass today (none exercise disjoint alignment); the regression test added here would have caught the bug",
+    "tests/test_irr_calibration.py \u2014 all tests pass today (use empty alignment or identical-label alignment); new integration test added here",
+    "tests/test_mpi_orchestration.py \u2014 calls compute_irr indirectly via mpi_step.py agreement_computation substep; verify it still passes after fix (no expected values pinned to the buggy alpha)"
+   ],
+   "contracts": [
+    "microphenomenograph/1.0.0/CLAUDE.md: IRR calibration section describes alpha CI lower bound gating \u2014 semantics unchanged, but post-fix alpha values will be materially higher for real calibration runs with LLM-generated labels (this is the intended behaviour)",
+    "microphenomenograph/1.0.0/CLAUDE.md: no manifest field names change; no close protocol fields change; no substep DAG changes",
+    "docs/design-plans/2026-05-17-doc-as-done.md: no contract change \u2014 the fix makes the implementation match the documented intent"
+   ],
+   "other": "In-flight run runs/phase1-2026-05-17/ has no irr_calibration substep records \u2014 no invalidation. Any future IRR records created after the fix will have materially different (higher) alpha values than records created before; if a run produces irr_calibration records before and after the fix lands, the two records are not comparable and the operator should be advised to re-run IRR on any transcript calibrated before the fix. No version bump required \u2014 this is a bug fix, not a contract change."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C1",
+    "why": "Self-contained \u2014 the bug and fix are entirely within irr.py. No dependency on other clusters.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "S",
+  "open_design_questions": [],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "This cluster is a two-line code fix plus two regression tests and stands fully alone \u2014 it requires no shared design decisions with other clusters. It should ship as its own minimal implementation plan (or even a direct fix commit) before any other cluster, because the review's priority order ranks it #1 and every calibration run that executes before this lands produces meaningless IRR metrics. Bundling it with other clusters (e.g. C6 IRR independence labelling, which touches the same SKILL.md and irr.py conceptually) would delay a two-line fix that should land in hours, not days."
+ },
+ {
+  "cluster": "C2-irr-independence",
+  "current_state_notes": "Review section 1.6 (lines 94-96) identifies that the alternate analyst is described in SKILL.md lines 47-49 as \"a fresh subagent invocation \u2014 same agent file (mpi-analyst for per-transcript stages), different session context\" that \"should produce its analysis independently, without seeing the primary analysis.\" The review confirms this is documented but overclaims: two sessions of identical weights with the same system prompt share every prior, so agreement inflation from systematic model bias is undetectable in principle.\n\nirr.py `compute_irr` (lines 641-885) accepts `primary_model` and `alternate_model` as optional metadata strings (line 836 in the returned record) but does not record a `rater_kind` field distinguishing same-model vs heterogeneous-model runs, nor does it include any caveat in the record about what the metric measures.\n\nThe `_validate_irr_calibration_agreement_computation` in `_mpi_schemas.py` (line 390-391) requires only `[\"stage\", \"participant_id\", \"metrics\", \"outcome\"]` \u2014 no `rater_kind`.\n\nThe SKILL.md \"Literature thresholds\" section (lines 111-114) does carry the caveat \"Thresholds below are calibrated for human analysts after training, not LLM raters. Transfer to LLM-as-rater is by analogy \u2014 treat as convention, not evidence.\" \u2014 but does not label the metric as \"intra-model consistency\" nor describe it as unable to detect systematic model bias.\n\nThe in-flight run at `runs/phase1-2026-05-17/.mpi/` contains no `irr_calibration.jsonl` (only `project.json`, `reasoning.log`, `review-queue.md`), so no existing IRR records would be invalidated by a schema addition.\n\nNote: The alignment inversion bug (section 1.1, lines 216-222 and 703-705 of irr.py) means the primary metric being labeled is currently broken regardless of the honesty framing \u2014 the alignment map is built `primary\u2192alternate` but looked up with alternate labels as keys. C1 must land before C2's relabeled metric is scientifically meaningful, though the design plans can proceed in parallel.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-irr/SKILL.md",
+    "change_summary": "Step 1 description: add explicit structural isolation requirement \u2014 alternate agent MUST NOT have access to analyses/ directory. Rename metric from 'inter-rater reliability' to 'intra-model consistency' in the Overview and all metric tables, with a clearly labelled caveat block explaining that same-model sessions share priors and systematic model bias is undetectable. Add optional 'heterogeneous model' workflow note: if alternate_model differs from primary_model, the metric qualifies as inter-model IRR and the caveat does not apply. Update the 'Literature thresholds' section to note that thresholds are calibrated for independent human raters and are not validated for same-model sessions."
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "In the 'IRR calibration substeps' section (around line 329-334): add explicit instruction that the alternate analyst must not read any file under analyses/ before producing its output \u2014 only the raw transcript and offset files are permitted inputs. This makes the isolation requirement structurally enforceable by the anti-fabrication read-guard already present in the agent."
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/irr.py",
+    "change_summary": "Add optional parameter `rater_kind: str = 'intra_model_consistency'` to `compute_irr()` (accepted values: 'intra_model_consistency', 'inter_model_irr'). Include `rater_kind` in the returned record dict alongside the existing metadata fields. Add a `notes` prefix in the record: when rater_kind is 'intra_model_consistency', prepend a machine-readable caveat string to the `notes` field (e.g. 'INTRA_MODEL: agreement may be inflated by shared model priors; systematic bias undetectable'). No changes to metric computation logic \u2014 that is C1 scope.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Update `_validate_irr_calibration_agreement_computation` (line 390) to require 'rater_kind' in the payload. Add an enum check: rater_kind must be 'intra_model_consistency' or 'inter_model_irr'. This makes the field mandatory from the first close after this design lands, creating a hard schema contract.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/CLAUDE.md",
+    "change_summary": "Update the IRR calibration paragraph: add a sentence noting that same-model alternate sessions measure intra-model consistency (not inter-rater reliability in the psychometric sense), and that true IRR requires a human or heterogeneous-model rater. Keep the existing alpha/kappa/CI documentation intact.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_irr_calibration.py",
+    "change_summary": "Add test_rater_kind_field: verify that compute_irr returns 'rater_kind' in the record, default value is 'intra_model_consistency', and that passing rater_kind='inter_model_irr' propagates correctly. Add test_rater_kind_notes_caveat: verify that when rater_kind='intra_model_consistency', the record's 'notes' field contains the machine-readable caveat string. Add test_rater_kind_invalid_raises: verify that an invalid rater_kind value raises ValueError.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "microphenomenograph/1.0.0/scripts/test_irr.py \u2014 test_compute_irr_stage_field_propagates and test_compute_irr_invalid_stage_raises both call compute_irr() and check record fields; adding rater_kind won't break them but tests should be updated to assert rater_kind presence",
+    "tests/test_irr_calibration.py \u2014 all compute_irr-calling tests will now need rater_kind in the record; test_irr_jsonl_schema must add 'rater_kind' to required_fields list",
+    "New tests needed: test_rater_kind_field, test_rater_kind_notes_caveat, test_rater_kind_invalid_raises (all in tests/test_irr_calibration.py)"
+   ],
+   "contracts": [
+    "plugin CLAUDE.md IRR calibration paragraph \u2014 metric naming and caveat language",
+    "mpi-irr/SKILL.md Overview and Step 1 description \u2014 rater independence claim",
+    "_mpi_schemas.py _validate_irr_calibration_agreement_computation required fields \u2014 adding 'rater_kind' is a close-protocol schema change; any run that closed irr_calibration.agreement_computation before this lands would have records without rater_kind (no in-flight run has such records, confirmed)",
+    "compute_irr() function signature \u2014 adding optional parameter with default preserves backward compatibility for all existing callers",
+    "irr_calibration.jsonl record schema \u2014 rater_kind field addition is additive, but _mpi_schemas.py will enforce it on future closes"
+   ],
+   "other": "No in-flight run has any irr_calibration.jsonl records (confirmed: runs/phase1-2026-05-17/.mpi/ contains only project.json, reasoning.log, review-queue.md). The schema change to require rater_kind therefore invalidates no existing data. The metric computation logic in irr.py is NOT touched by C2 (that is C1 scope \u2014 alignment inversion fix). Version bump: the _mpi_schemas.py change makes rater_kind mandatory at close time; this is a breaking schema change for any downstream consumer of irr_calibration.jsonl, but since the pipeline is local-only with no external consumers documented, a version bump to 1.0.1 is worth discussing but not strictly required within the current version-pinning convention."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C1",
+    "why": "The alignment inversion bug (C1, irr.py lines 216-222 and 703-705) means the metric being relabeled is currently broken \u2014 both primary and alternate labels are treated as surface strings regardless of alignment. Relabeling a broken metric as 'intra-model consistency' is still meaningful (the relabel is correct regardless of the bug), but the resulting metric value is not interpretable until C1 lands. The design plans can proceed in parallel but C1 must be implemented first.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "S",
+  "open_design_questions": [
+   {
+    "question": "Should the alternate analyst be structurally blocked from reading analyses/ (enforced at the agent/schema level), or is a prose instruction in SKILL.md sufficient?",
+    "options": [
+     "Prose-only: add 'do not read analyses/' to SKILL.md and mpi-cross-analyst.md; rely on anti-fabrication read-guard already in agent",
+     "Schema enforcement: add an 'isolation_verified' field to the irr_calibration.independent_analyst artifact schema, requiring the agent to explicitly declare it did not read primary analyses",
+     "Orchestrator enforcement: have mpi_step.py cmd_close verify that no file under analyses/ (excluding independent/) appears in the prompt artifact's read_files list before accepting the independent_analyst close"
+    ],
+    "recommendation": "Prose-only is the minimum viable fix; schema enforcement (option 2) is the most proportionate addition without requiring mpi_step.py changes \u2014 it makes the isolation claim auditable at close time without adding orchestrator complexity. Option 3 requires prompt-artifact replay infrastructure not yet implemented (AC11.3 deferred). Recommend option 2."
+   },
+   {
+    "question": "Should the plugin support a heterogeneous-model alternate analyst workflow, and if so, should it be required or optional?",
+    "options": [
+     "Optional and documented: keep same-model as default; document how to pass alternate_model metadata and set rater_kind='inter_model_irr'; no enforcement",
+     "Encouraged with init-time prompt: at /mpi init, ask whether user wants to configure a different model family for the alternate analyst; store alternate_model_id in study manifest",
+     "Required for strict-irr: make --strict-irr additionally require rater_kind='inter_model_irr', forcing heterogeneous-model use before blocking cross-participant stages"
+    ],
+    "recommendation": "Optional and documented (option 1) for now. Requiring heterogeneous-model use (option 3) would block the pipeline on infra the plugin does not control (the user must have access to a second model API). Option 2 (init-time prompt) is a reasonable medium-term addition but out of scope for a relabeling fix. The immediate goal is honest labeling, not enforcing a methodology the toolchain cannot guarantee."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C2 can stand alone as a small design plan (S-sized, hours of work). The changes are confined to documentation (SKILL.md, agent prompt, CLAUDE.md), one optional parameter addition to compute_irr(), one schema field addition to _mpi_schemas.py, and a handful of new tests. Grouping with C1 (alignment inversion fix) is natural since both touch irr.py and irr-related tests, and C1 must land before C2's metric is interpretable \u2014 but C2 changes are purely additive relative to C1 and do not conflict. If implementation bandwidth allows, bundle C1 + C2 into a single IRR-correctness design plan for a cleaner commit history and to avoid two separate schema migrations to irr_calibration.jsonl. Do not group with C3-C9 (those clusters touch different files and methodological concerns)."
+ },
+ {
+  "cluster": "C3-global-synchronic-wiring",
+  "current_state_notes": "Four confirmed issues, verified by direct file inspection:\n\n**Issue 1 \u2014 Broken input wiring (MAJOR):** `skills/mpi-global-synchronic/SKILL.md` line 13 instructs the agent to read `analyses/generic-synchronic.md`, and `agents/mpi-cross-analyst.md` line 104 (Global synchronic task section) references the same `generic-synchronic.md`. Neither file exists anywhere in the repo (`glob analyses/generic-synchronic.md` \u2192 zero hits). The actual produced artifacts are per-scope files: `event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.{json,md}` (confirmed from `mpi-cross-analyst.md` Persistence section, line 264-265, and the Closure table in `mpi-global-synchronic/SKILL.md` line 33). Under the anti-fabrication rule in both files, the agent must abort on missing input, making global_synchronic completely unrunnable as currently documented.\n\n**Issue 2 \u2014 Output path contradiction (MINOR):** `mpi-global-synchronic/SKILL.md` line 18 says \"Write `analyses/global-synchronic.md`\" (singular, monolithic), but the Closure table on lines 29-33 of the same file correctly describes per-scope artifacts `gidu<G>-cat-<C>-global_synchronic.{json,md,prompt.json}`. The Persistence section of `mpi-cross-analyst.md` lines 269-285 is internally consistent with the per-scope format. The introduction prose contradicts the closure table \u2014 two sources of truth in the same SKILL.md.\n\n**Issue 3 \u2014 >=2 events gate absent (MAJOR):** `_mpi_schemas.py` `_validate_global_synchronic` (line 274) only requires `[\"generic_idu\", \"iv_category\", \"isus\"]` \u2014 no count of distinct upstream events. `COMPLETENESS_GATES[\"global_synchronic\"]` (lines 735-743) uses `_scope_to_event_all` (returns None \u2192 check all events) and requires `(None, \"generic_synchronic\", \"isu_second_level_grouping\")` \u2014 but `_check_completeness_gate` in `mpi_step.py` at lines 1285-1311 breaks on the first `found_done = True`, meaning it passes if ANY event has a done generic_synchronic for this gidu, not if >=2 events do. A study with only one event's generic_synchronic done for the gidu-cat scope can close global_synchronic successfully, producing analytically meaningless output.\n\n**Issue 4 \u2014 `source_event` field not required (MINOR):** `_validate_global_synchronic` (line 274-283) validates ISUs using `_validate_isu(..., require_second_level=True)` which checks for `isu_second_level_of_abstraction` but not for `source_event`. The review (\u00a71.5 table) flags that event provenance is markdown-convention only, not machine-checked. The scoped artifact name encodes gidu and cat but not event provenance of each ISU.\n\n**In-flight run check:** `runs/phase1-2026-05-17/.mpi/project.json` shows zero `global_synchronic` substeps with status `done`, so no in-flight run data will be invalidated by these fixes.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-global-synchronic/SKILL.md",
+    "change_summary": "Fix two contradictions: (1) Line 13: replace 'All analyses/pNsN-synchronic.md files' and 'analyses/generic-synchronic.md' with explicit instruction to read per-scope generic_synchronic artifacts (event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.json/md for the scoped gidu); the orchestrator must resolve and pass these paths. (2) Line 18: replace singular 'Write analyses/global-synchronic.md' with per-scope 'Write analyses/gidu<G>-cat-<C>-global_synchronic.{json,md}' matching the Closure table already present. Remove the self-contradiction.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Global synchronic task section (around line 104): replace 'Read all pNsN-synchronic.md outputs AND generic-synchronic.md' with correct input description \u2014 the orchestrator passes explicit per-scope paths for the target gidu (event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.json/md files, one per event that has that gidu done). Do NOT read a monolithic generic-synchronic.md.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Two changes: (1) `_validate_global_synchronic` (line 274): add `source_event` as a required field on each ISU object (either add to `_ISU_FULL_REQUIRED` for global-sync context, or validate it explicitly inside the per-isu loop). (2) `COMPLETENESS_GATES['global_synchronic']` entry (lines 735-743): add or replace the cross-participant requirement with a new callable or sentinel that enforces 'isu_second_level_grouping done in >=2 distinct events for the scoped gidu-cat' rather than just 'any done'. This may require a new helper function `_count_events_done_for_gidu` and a new sentinel mechanism in COMPLETENESS_GATES, or moving the >=2 check to a dedicated validation path in `_check_completeness_gate`.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/mpi_step.py",
+    "change_summary": "Extend `_check_completeness_gate` to support a new 'min_count' threshold on required_cross_participant entries, or add a dedicated global_synchronic >=2-events check branch. The current loop (lines 1285-1311) exits on first `found_done = True`; the fix must count distinct events that have `generic_synchronic.isu_second_level_grouping` done for the scoped gidu-cat, and block if count < 2. The close protocol audit chain (close_id, completeness_gate_unsatisfied event) must remain intact.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/CLAUDE.md",
+    "change_summary": "Update the Substep DAG table's global_synchronic row and Prerequisite gates section to reflect that (a) input is per-scope generic_synchronic artifacts resolved by the orchestrator, not a monolithic file; (b) the >=2-events gate is enforced at close; (c) each global-sync ISU carries source_event. Keep the 'per (generic-IDU x IV category)' scope description.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_cross_participant_analysis.py",
+    "change_summary": "Add test cases: (1) test_global_synchronic_rejects_single_event_gidu \u2014 constructs a manifest where only one event has generic_synchronic done for the target gidu-cat, calls cmd_close for global_synchronic, expects completeness_gate_unsatisfied. (2) test_global_synchronic_allows_two_event_gidu \u2014 same but two events done, expects close to proceed. (3) test_global_synchronic_isu_requires_source_event \u2014 validates that _validate_global_synchronic rejects an ISU payload missing source_event.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_mpi_cross_analyst_contract.py",
+    "change_summary": "Add test: verify mpi-cross-analyst.md Global synchronic section does NOT mention 'generic-synchronic.md' (the broken monolithic path) \u2014 regression guard against re-introduction of the bad filename.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_cross_participant_analysis.py \u2014 existing test_global_synchronic_source_references (line 241) passes mock data; new tests for >=2-events gate and source_event field needed",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 existing AC10.5 substep enumeration test (line 161); new no-bad-filename regression guard needed",
+    "tests/test_e2e_pipeline.py \u2014 if any E2E scenario closes global_synchronic, it must now provide >=2-event setup",
+    "tests/test_mpi_orchestration.py \u2014 global_synchronic appears in cascade-reset DAG tests (lines 39,50,59,68); these are status-tracking tests, not close-gate tests; no change needed but verify they still pass",
+    "NEW: test for >=2-events completeness gate enforcement (in test_cross_participant_analysis.py or a dedicated test_global_synchronic_gate.py)",
+    "NEW: regression test for source_event schema validation in _validate_global_synchronic"
+   ],
+   "contracts": [
+    "plugin CLAUDE.md: Substep DAG row for global_synchronic and Prerequisite gates section \u2014 must document orchestrator-resolved inputs and >=2-events gate",
+    "microphenomenograph/1.0.0/CLAUDE.md: same sections (it is the plugin-internal contract file)",
+    "COMPLETENESS_GATES dict in _mpi_schemas.py \u2014 structural extension to support min-count threshold; this is a close-protocol invariant change",
+    "mpi-global-synchronic/SKILL.md Closure table \u2014 artifact names are contract (already correct); Introduction and input list need correction",
+    "mpi-cross-analyst.md Global synchronic task section \u2014 corrected input description is an agent-prompt contract change; anti-fabrication rule still applies",
+    "close_id audit chain: completeness_gate_unsatisfied abort path already emits close_aborted with correct close_id; no change to audit chain needed beyond ensuring the new >=2-events check uses the same _abort() call path"
+   ],
+   "other": "No in-flight global_synchronic closes in runs/phase1-2026-05-17 (all status=pending). The source_event schema addition is a hard schema change \u2014 any in-flight run that had global_synchronic artifacts without source_event would fail re-close; since none are done, this is zero risk currently. The >=2-events gate is a new enforcement that could break existing manifests with single-event studies, but the existing run has no generic_synchronic done either. Version bump: the source_event required field addition is technically a contract-breaking schema change for any existing global_synchronic artifact; worth noting in the design plan as a 1.0.0 \u2192 1.1.0 candidate if external consumers exist."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C2",
+    "why": "The review's C3 input-wiring issue (SKILL.md references generic-synchronic.md) is part of the same file-name drift family as C4 (hypothesis.evidence_extraction reads only global synchronic). If C2 covers generic_synchronic ISU grouping rule rewrites, it may touch mpi-cross-analyst.md's Generic synchronic section in the same edit window, creating same-file churn. Soft dependency \u2014 not a code blocker.",
+    "hard_or_soft": "soft"
+   },
+   {
+    "cluster": "C1",
+    "why": "C1 (IRR alignment inversion) is the highest-priority fix but has no code overlap with global_synchronic wiring. C3 can proceed independently.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "M",
+  "open_design_questions": [
+   {
+    "question": "Should the >=2-events gate be a hard block (abort close) or a warning with opt-in bypass flag (e.g., --allow-single-event-global-sync)?",
+    "options": [
+     "Hard block: close fails with completeness_gate_unsatisfied if fewer than 2 events have generic_synchronic done for the scoped gidu-cat. No bypass. Consistent with existing completeness gate philosophy.",
+     "Warning + bypass: emit a completeness_gate_warning audit event and continue by default; add --require-multi-event flag to harden. Allows small pilot studies with a single event to still use the global synchronic stage.",
+     "Hard block with --allow-single-event-global-sync override, mirroring the --allow-active-repo-nested pattern in cmd_init."
+    ],
+    "recommendation": "Hard block (option 1). The stage exists analytically only when synthesizing across events; a single-event global synchronic produces outputs that overstate generalization. The warning path trains users to ignore gates. If single-event pilot runs are a real need, that is a study-design gap that should be surfaced explicitly, not silently accepted."
+   },
+   {
+    "question": "Should source_event be a required field on every global_synchronic ISU in the JSON schema, or is it sufficient to require it only in the markdown table (current behavior)?",
+    "options": [
+     "Required JSON field: add source_event to _validate_global_synchronic's per-ISU validation. Machine-checkable, consistent with utterance_refs anti-fabrication approach.",
+     "Markdown convention only: document in SKILL.md that source participant and suggestion must appear in the table. No schema change. Lower implementation cost but not machine-verified.",
+     "Required JSON field with a transition period: add it as a schema warning (not error) in this fix, promote to hard error in a follow-on phase."
+    ],
+    "recommendation": "Required JSON field (option 1). The project's anti-fabrication philosophy is to make provenance machine-checkable. Markdown conventions rely on LLM compliance; a schema requirement is enforced at close time. The field name source_event is consistent with the scoped artifact name and does not require new infrastructure."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C3 can stand alone as a design plan. The four issues (input wiring, output path contradiction, >=2-events gate, source_event field) are all scoped to global_synchronic and share a natural implementation sequence: fix SKILL.md and agent prose first (no code), then add source_event to schema, then extend COMPLETENESS_GATES and _check_completeness_gate for the >=2-events enforcement. Optional grouping: bundle C3 with C2 (generic synchronic ISU grouping rule rewrite) since both touch mpi-cross-analyst.md's cross-participant task sections and _mpi_schemas.py in the same edit pass, reducing review friction. Do not bundle with C1 (IRR inversion) \u2014 different files, different urgency, and C1 is a two-line code fix that should ship immediately."
+ },
+ {
+  "cluster": "C4-close-enforcement",
+  "current_state_notes": "All four C4 findings from the adversarial review (section 1.2, lines 31\u201347) are confirmed present. Section 1.5 (line 87) is subsumed by Finding 2.\n\n**Finding 1 \u2014 Convergence loop (MAJOR):** `mpi_step.py cmd_close` (lines 1320\u20131822) has zero references to `convergence`, `more_revision_needed`, or decision-field inspection. Schema validation in `_mpi_schemas.py _validate_diachronic_criteria_revision()` (lines 148\u2013164) confirms the payload has `decision` in `{more_revision_needed, converged}` but does not reject or downgrade the close. The status written at line 1616 comes directly from `args.status` \u2014 any caller may pass `--status done` even when `convergence.decision == \"more_revision_needed\"`. `test_mpi_step.py VALID_CRITERIA_REVISION_PAYLOAD` (line 2220) uses `\"decision\": \"converged\"` only; no test covers a `more_revision_needed` close attempt reaching `cmd_close`. The cascade-reset block (lines 1771\u20131819) already fires on `criteria_revision` re-close but this is unrelated to convergence enforcement.\n\n**Finding 2 \u2014 temporal_order blocking (MAJOR):** `mpi_step.py cmd_close` never reads `temporal_order_within_idu` from the `theme_grouping_within_idu` units payload. `_mpi_schemas.py _validate_synchronic_theme_grouping()` (lines 171\u2013184) type-checks it as boolean (lines 175\u2013177) but does not force a status override. `isu_naming` has `theme_grouping_within_idu` as a prerequisite and checks `status != done` \u2014 so forcing `flagged` on the `theme_grouping_within_idu` close when `temporal_order_within_idu: true` is detected would automatically block `isu_naming` with no new gate code needed. `VALID_SYNCHRONIC_PAYLOAD` (line 2234) has no `temporal_order_within_idu` field; zero tests cover this close path. The `mpi-generic-diachronic` completeness gate (plugin CLAUDE.md line 55: \"no pending split/merge flags\") depends on this fix.\n\n**Finding 3 \u2014 Flag unification (MAJOR):** `mpi-analyst.md` synchronic rules (line 70) instruct only `flag_for_review: true`; the synchronic output schema shown to the agent (lines 128\u2013143) has no `temporal_order_within_idu` field. The SKILL.md carries a \"Schema alignment note\" (line 224 of mpi-analyst.md) acknowledging drift between the agent schema and the SKILL.md shape \u2014 adding `temporal_order_within_idu` to the agent schema is part of that reconciliation. No cross-validation between `temporal_order_within_idu: true` and `flag_for_review` exists in `_validate_synchronic_theme_grouping`.\n\n**Finding 4 \u2014 idu_split_after_synchronic audit event (MINOR):** `mpi-synchronic/SKILL.md` (line 91) states \"Manifest records `idu_split_after_synchronic` audit event linking both span_ids.\" Confirmed by grep: zero hits for `idu_split_after_synchronic` anywhere in `mpi_step.py`. The event emission point is the same code region as Finding 2's status override (inside `cmd_close` for `synchronic.theme_grouping_within_idu`, after schema validation, before the manifest entry at line 1616). It should be wired alongside the `flagged` override, keeping the shared `close_id` on both the status entry and the audit event.\n\n**Finding 5 \u2014 flagged-status gate (MINOR):** Automatically closed by Finding 2. The `COMPLETENESS_GATES` check in `_mpi_schemas.py` (lines 714\u2013758) already reads `status != done`; once Finding 2 forces `flagged` on temporal-order closes, this gate works correctly for `generic_diachronic` without new gate code.\n\n**runs/ directory:** Empty. No in-flight run state would be invalidated by the new enforcement.\n\n**test_mpi_step.py:** The `criteria_revision`-as-`done` fixture at lines 3206\u20133210 (manifest fixture for completeness gate tests) will need updating if convergence enforcement causes a `more_revision_needed` close to produce `flagged` status instead of `done`. The schema test `test_criteria_revision_valid` (line 2247) tests the validator path only and is not inverted. No existing test encodes the permissive `more_revision_needed \u2192 done` behavior in an end-to-end close (so no direct inversions, but new tests are needed for both rejection paths).",
+  "files_to_change": [
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\scripts\\mpi_step.py",
+    "change_summary": "In cmd_close, after schema validation, add two enforcement blocks before the manifest entry (line ~1616): (1) For diachronic.criteria_revision: read units_payload[\"convergence\"][\"decision\"]; if \"more_revision_needed\", override args.status to \"flagged\" (preferred) or raise a rejection error \u2014 see open design question 1. (2) For synchronic.theme_grouping_within_idu: read units_payload.get(\"temporal_order_within_idu\"); if True, override args.status to \"flagged\" and emit an idu_split_after_synchronic audit event (with the current close_id and span_id) into audit.jsonl before the manifest write. Both changes must occur after validate_prompt_artifact/validate_units pass and before the manifest dict is built, keeping the close_id audit chain intact. The cascade_reset block (lines 1771\u20131819) needs no modification \u2014 it already fires on criteria_revision re-close.",
+    "new_file": false
+   },
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\scripts\\_mpi_schemas.py",
+    "change_summary": "In _validate_synchronic_theme_grouping (lines 171\u2013184): add cross-validation logic \u2014 if temporal_order_within_idu is True, at least one ISU in the payload must have flag_for_review: True (see open design question 3 for exact coupling rule). This catches agent output that sets one field but not the other. No change needed to the convergence validator \u2014 the enforcement moves to mpi_step.py cmd_close.",
+    "new_file": false
+   },
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\agents\\mpi-analyst.md",
+    "change_summary": "In the synchronic output schema section (lines 128\u2013143): add temporal_order_within_idu boolean field to the theme_grouping_within_idu payload schema shown to the agent. In the synchronic rules section (lines 68\u201370): instruct the agent to set temporal_order_within_idu: true (in addition to flag_for_review: true) when temporal ordering is detected within an IDU. In the Persistence section for synchronic (lines 222\u2013243): add a --status flagged override path note so the agent knows the orchestrator will flag the close when temporal_order_within_idu: true.",
+    "new_file": false
+   },
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\skills\\mpi-synchronic\\SKILL.md",
+    "change_summary": "Line 85 (table Notes column) and line 91 (IDU-split-after-synchronic return edge): these are currently prose-only. After the mpi_step.py fix lands, update these lines to reflect that the idu_split_after_synchronic audit event is now emitted by mpi_step.py cmd_close (not by the orchestrator separately), so the SKILL does not need to emit it manually.",
+    "new_file": false
+   },
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\CLAUDE.md",
+    "change_summary": "Update Substep DAG 'Prerequisite gates' section (line 55): the existing prose 'no pending split/merge flags' is now enforced by code, not just documented. Add a note that criteria_revision closes with more_revision_needed produce flagged status (not done), and that temporal_order_within_idu: true on theme_grouping_within_idu produces flagged status plus idu_split_after_synchronic audit event. Flag for version-bump discussion: changing close semantics so previously-valid closes now produce flagged instead of done is a behavioral change to the documented close protocol.",
+    "new_file": false
+   },
+   {
+    "path": "C:\\microphenomenograph\\microphenomenograph\\1.0.0\\scripts\\test_mpi_step.py",
+    "change_summary": "Add new test class TestConvergenceEnforcement covering: (a) criteria_revision with more_revision_needed produces flagged status (not done); (b) criteria_revision with converged continues to produce done; (c) re-close of criteria_revision with converged after flagged correctly updates status. Add new test class TestTemporalOrderEnforcement covering: (a) theme_grouping_within_idu with temporal_order_within_idu: true produces flagged status; (b) idu_split_after_synchronic audit event is emitted on flagged temporal_order close; (c) isu_naming close is rejected when theme_grouping_within_idu is flagged (prereq gate). Update manifest fixtures at lines 3206\u20133210 and 3292 where criteria_revision is hardcoded as status done \u2014 some of these may need a parallel fixture where criteria_revision is flagged to test the completeness gate correctly.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "microphenomenograph/1.0.0/scripts/test_mpi_step.py \u2014 primary test file for close protocol; needs new TestConvergenceEnforcement and TestTemporalOrderEnforcement classes; manifest fixtures at lines 3206\u20133210 and 3292 (criteria_revision done fixtures) must be reviewed for correctness under new flagged behavior",
+    "tests/test_mpi_synchronic_logic.py \u2014 synchronic schema tests; cross-validation addition in _validate_synchronic_theme_grouping may require updates to existing happy-path tests that pass temporal_order_within_idu without flag_for_review",
+    "tests/test_e2e_fail_fast.py \u2014 natural home for new rejection-path integration tests; existing tests reference flag_for_review: False on theme_grouping payloads and may need extension to cover the flag-unification coupling rule",
+    "tests/test_mpi_orchestration.py \u2014 E2E pipeline tests; yolo mode tests that drive diachronic+synchronic end-to-end may need to cover the convergence-loop flagged case",
+    "tests/test_mpi_analyst_contract.py \u2014 analyst contract tests; adding temporal_order_within_idu to the agent schema in mpi-analyst.md may require contract test updates"
+   ],
+   "contracts": [
+    "microphenomenograph/1.0.0/CLAUDE.md \u2014 Substep DAG 'Prerequisite gates' section (line 55): enforcement of 'no pending split/merge flags' is now code-enforced; Documentation-as-Done contract close protocol: status can now be forced to flagged by cmd_close logic independently of --status CLI arg",
+    "microphenomenograph/1.0.0/CLAUDE.md manifest schema section (line 91): substep status field \u2014 behavioral change: criteria_revision and theme_grouping_within_idu closes may now produce flagged where they previously produced done for the same inputs",
+    "docs/design-plans/2026-06-05-cross-scope-prereq-resolution.md \u2014 COMPLETENESS_GATES contract: the 'no pending flags' invariant documented there is now enforced end-to-end; no schema change needed but the design doc should note enforcement is now complete",
+    "mpi-synchronic/SKILL.md line 91 \u2014 idu_split_after_synchronic audit event contract: moves from prose-only to code-enforced; SKILL.md must be updated to not imply the orchestrator emits this event"
+   ],
+   "other": "Version-bump discussion required: forcing cmd_close to produce flagged status when the payload indicates more_revision_needed or temporal_order_within_idu: true is a behavioral breaking change to the close protocol (valid inputs that previously closed as done now close as flagged). Existing run manifests are unaffected (runs/ is empty). The change is localized to one ~80-line region of cmd_close. Same-file churn risk: mpi-analyst.md and _mpi_schemas.py are both edited by C4; check if any other cluster (e.g. analyst schema rewrites) touches the same synchronic schema section to avoid merge conflicts."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C1",
+    "why": "If C1 covers analyst prompt / schema alignment (the mpi-analyst.md shape drift noted in the SKILL.md Schema alignment note), C4's flag-unification change to mpi-analyst.md synchronic output schema (adding temporal_order_within_idu) may conflict. Soft dependency \u2014 coordinate to avoid same-section edits.",
+    "hard_or_soft": "soft"
+   },
+   {
+    "cluster": "C3",
+    "why": "If C3 covers the COMPLETENESS_GATES or prereq-gate enforcement region in mpi_step.py, C4's new enforcement blocks in cmd_close touch the same ~1480\u20131620 line range. Soft dependency \u2014 no logical dependency but high merge-conflict risk in mpi_step.py.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "M",
+  "open_design_questions": [
+   {
+    "question": "Convergence enforcement policy: when criteria_revision closes with more_revision_needed, should mpi_step.py (a) auto-downgrade the close to flagged status (close succeeds, substep is flagged, downstream is blocked), or (b) reject the close outright with an error (caller must re-invoke with explicit --force-converge to override)?",
+    "options": [
+     "Auto-downgrade to flagged: keeps the close protocol intact, audit chain remains clean, downstream prereq gate blocks naturally, re-close with converged decision promotes to done",
+     "Reject outright: caller must pass --force-converge to skip enforcement (e.g. after 5 convergence passes); simpler error surface but breaks the existing convention that valid schemas always produce a close"
+    ],
+    "recommendation": "Auto-downgrade to flagged is preferred. It reuses the existing flagged-status machinery, keeps the close_id audit chain intact, and allows the orchestrator to re-dispatch without needing a special override flag. The 5-pass cap can be tracked by the orchestrator counting flagged criteria_revision closes before invoking with --force-converge."
+   },
+   {
+    "question": "Temporal order flag coupling rule: the schema enforces temporal_order_within_idu as a boolean on the payload, while flag_for_review is per-ISU. What is the required coupling between them?",
+    "options": [
+     "Require co-presence: if temporal_order_within_idu: true then at least one ISU must have flag_for_review: true (and vice versa)",
+     "One-way: if temporal_order_within_idu: true, no ISU-level requirement (the payload flag is sufficient signal); flag_for_review is orthogonal",
+     "Strict bidirectional: any ISU with flag_for_review: true in a temporal context must also have temporal_order_within_idu: true on the payload"
+    ],
+    "recommendation": "Co-presence (option 1): if temporal_order_within_idu: true, require at least one ISU flagged for review. This gives the reviewer a precise ISU-level pointer. The reverse (flag_for_review without temporal_order) should remain valid \u2014 ISUs can be flagged for other reasons."
+   },
+   {
+    "question": "Pass-count cap ownership: the mpi-diachronic SKILL.md documents a 5-pass cap on the convergence loop. Should the cap be enforced in mpi_step.py (counting criteria_revision flagged closes in the manifest), in the orchestrator/SKILL (prose loop), or left as orchestrator-side convention only?",
+    "options": [
+     "mpi_step.py enforces the cap: counts criteria_revision flagged entries in the manifest; at count >= 5, requires --force-converge to close as done",
+     "SKILL/orchestrator convention only: mpi_step.py never enforces count; the 5-pass cap is a guideline for the orchestrator to decide when to override",
+     "Hybrid: mpi_step.py enforces cap at >= 5 flagged closes but emits a warning audit event rather than a hard rejection"
+    ],
+    "recommendation": "SKILL/orchestrator convention only for the initial implementation. Adding count-enforcement to mpi_step.py requires reading historical manifest state, complicates the cmd_close logic, and the 5-pass cap is a methodology guideline rather than a data-integrity invariant. The auto-flagged status already gives the orchestrator the signal it needs to decide when to invoke --force-converge."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C4 is self-contained and can be its own design plan. If any other cluster (e.g. C3) also modifies the cmd_close enforcement region of mpi_step.py (lines ~1480\u20131620), bundle them into one plan to avoid merge churn in that file. Otherwise, stand alone. The mpi-analyst.md edits have a soft conflict risk with any cluster rewriting the analyst synchronic schema \u2014 check C1 scope before scheduling."
+ },
+ {
+  "cluster": "C5-generic-diachronic-patterns",
+  "current_state_notes": "Verified in current codebase:\n\n1. `_mpi_schemas.py` lines 221\u2013230: `_validate_generic_diachronic_pattern_identification` only requires `[\"event\", \"patterns\"]` at the payload level. Per-pattern validation calls only `_check_utterance_refs` \u2014 no structural check on pattern shape, no `common_idus`, no `optional_idus`, no coverage justification field. The schema treats each pattern as an opaque dict that just needs utterance_refs.\n\n2. `agents/mpi-cross-analyst.md` lines 62\u201366: The Generic Diachronic task describes four steps: list IDUs per category, identify common patterns (\u22652 participants), group them, and cite sources. Output format is a flat markdown table (Participant | IDU Name | Criteria). No mention of common-vs-optional element distinction, no \"optimum small set\" instruction, no merge-evaluation step, no coverage coverage semantics. The agent instructions produce flat IDU lists, not structured patterns with coverage semantics.\n\n3. `skills/mpi-generic-diachronic/SKILL.md`: The Closure table references `pattern_identification` substep but does not add any instruction about the common/optional structure (lines 46\u201355). The SKILL.md is an orchestrator-facing wrapper; the substantive analytical instruction lives in the agent.\n\n4. `tests/test_cross_participant_analysis.py`: Tests cover AC5.1 (score grouping, source traceability), AC5.2 (global synchronic source refs), AC5.3 (completeness warning), pattern commonality threshold (\u22652), ISU flattening, and hinge exclusion. None test the `pattern_identification` JSON payload for `common_idus` / `optional_idus` keys or validate the \"optimum small set\" justification field.\n\nManual reference (manual_kev.md lines 79): \"group these together by specifying the common elements, and also the optional elements. Ensure each pattern row (through combinations of optional generic IDUs) describes well a set of participant rows. Try to find an optimum set of patterns where all processes can be described by a relatively small set, but where none of the patterns are overly complex to combine notably dissimilar processes.\"",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Rewrite `_validate_generic_diachronic_pattern_identification` (lines 221\u2013230). Each pattern object must now carry: `common_idus` (non-empty list of generic IDU labels always present in participant rows covered by this pattern), `optional_idus` (list, may be empty, of generic IDU labels present in some but not all covered rows), `covered_participant_keys` (non-empty list of pNsN keys this pattern describes), and `coverage_justification` (non-empty string explaining why this set is optimum \u2014 not overly complex, covers its participant rows well). The existing `utterance_refs` check is retained. Add a check that `common_idus` is a non-empty list of strings and `optional_idus` is a list of strings (may be empty). Reject patterns where `covered_participant_keys` is empty. No new top-level payload keys needed beyond `event` and `patterns`.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Rewrite the Generic Diachronic section (currently lines 54\u201386) to: (1) describe the `idu_similarity_grouping` step as colour-coding IDU cells by semantic group, (2) describe `pattern_identification` as constructing pattern rows each with `common_idus` (IDU groups always present) and `optional_idus` (IDU groups present in some covered rows), (3) add explicit instruction to evaluate coverage \u2014 each pattern must describe its covered participant rows well, through common + optional combinations, (4) add the optimum-small-set instruction: seek the fewest patterns that together cover all participant rows without any single pattern combining notably dissimilar processes, (5) add a `coverage_justification` field requirement in the JSON output, (6) update the output format example to show the new pattern structure (common_idus array, optional_idus array, covered_participant_keys, coverage_justification). Zero-shot convention preserved \u2014 no examples injected.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-generic-diachronic/SKILL.md",
+    "change_summary": "Minor update to the pattern_identification row in the Closure table (line 50) to note the new artifact shape (common_idus / optional_idus / coverage_justification). No structural change to the SKILL.md orchestration logic.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_cross_participant_analysis.py",
+    "change_summary": "Add new test `test_pattern_identification_common_optional_schema`: constructs a minimal `pattern_identification` JSON payload and calls `_validate_generic_diachronic_pattern_identification` directly; asserts (a) a pattern with valid `common_idus`, `optional_idus`, `covered_participant_keys`, `coverage_justification`, and `utterance_refs` passes, (b) a pattern missing `common_idus` fails with the appropriate SchemaError, (c) a pattern with empty `common_idus` fails, (d) a pattern missing `coverage_justification` fails. Import `_validate_generic_diachronic_pattern_identification` from `microphenomenograph.1.0.0.scripts._mpi_schemas` (adjust import path to match project layout). Also add `test_pattern_optimum_set_justification_nonempty` asserting the justification string may not be empty or whitespace-only.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_cross_participant_analysis.py \u2014 existing tests do not cover pattern_identification JSON structure; new tests needed (see files_to_change)",
+    "tests/test_e2e_pipeline.py \u2014 any fixture that closes a generic_diachronic.pattern_identification substep with the old flat-pattern shape will fail schema validation after the change; fixtures need updating to include common_idus/optional_idus/coverage_justification",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 if it exercises pattern_identification output shape, needs update",
+    "tests/test_mpi_orchestration.py \u2014 if it mocks or closes pattern_identification, needs update"
+   ],
+   "contracts": [
+    "plugin CLAUDE.md / Substep DAG section: pattern_identification artifact format description (currently implicit \u2014 no payload field spec listed)",
+    "plugin CLAUDE.md / Data formats section: no current entry for pattern object fields \u2014 a 'Pattern object' subsection should be added documenting common_idus, optional_idus, covered_participant_keys, coverage_justification",
+    "mpi-cross-analyst.md Generic Diachronic task description (the analytical instruction IS the agent contract)",
+    "_mpi_schemas.py _validate_generic_diachronic_pattern_identification \u2014 the validator IS the machine-checkable contract",
+    "No close-protocol invariants (close_id chain, audit events) are touched \u2014 this fix adds fields to the payload that the existing close transaction validates; the four-part commit chain is unaffected",
+    "No manifest fields added or removed",
+    "In-flight runs: any run that has already closed generic_diachronic.pattern_identification with the old flat structure will be rejected by `mpi_step.py verify` after the schema update. The recommend path is to note this as a breaking schema change and provide a migration note. Runs in C:/microphenomenograph/runs/ that have not yet reached pattern_identification are unaffected."
+   ],
+   "other": "Version-bump consideration: adding required fields to an existing substep schema is a breaking change for any artifact already on disk. The plugin is pinned at 1.0.0. If in-flight runs exist at the pattern_identification stage, this constitutes a contract break that warrants a version-bump discussion. If no in-flight runs have reached pattern_identification yet (likely given project maturity), the change can land in 1.0.0 with a documented migration note."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C4",
+    "why": "C4 fixes the generic synchronic ISU grouping rule in mpi-cross-analyst.md (lines 93\u2013100). Both C4 and C5 require edits to the same file. If both plans are active simultaneously, they will produce merge conflicts on the Generic Diachronic / Generic Synchronic sections of mpi-cross-analyst.md. This is a soft dependency \u2014 C5 does not logically require C4 to land first, but they should be bundled in a single edit pass or sequenced to avoid churn.",
+    "hard_or_soft": "soft"
+   },
+   {
+    "cluster": "C1",
+    "why": "C1 fixes the IRR alignment map inversion in irr.py. C5 does not touch irr.py and has no code dependency on C1. Pure soft dependency: the priority list in the review (section 5) places C1 at #1 and C5 at #6, suggesting C1 should land first in the same release train, but there is no blocking code relationship.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "S",
+  "open_design_questions": [
+   {
+    "question": "Should `covered_participant_keys` be validated against the event's actual participant roster (cross-referenced from the upstream participant_row_assembly artifact), or is a non-empty list of strings sufficient?",
+    "options": [
+     "Non-empty list of strings only \u2014 simpler schema, no cross-artifact lookup at close time",
+     "Cross-reference against participant_row_assembly artifact \u2014 catches phantom participant keys but requires mpi_step.py close to load the upstream artifact during schema validation, adding complexity"
+    ],
+    "recommendation": "Non-empty list of strings only for now. Cross-referencing is a stronger guard but adds significant complexity to the close path; a subsequent verification pass (mpi_step.py verify) can audit coverage completeness. Keep the schema simple and the close fast."
+   },
+   {
+    "question": "Should `optional_idus` be allowed to be an empty list (for patterns where every participant row shares the same IDU set with no optional variation)?",
+    "options": [
+     "Yes \u2014 empty optional_idus is valid when all covered rows share the exact same IDU set",
+     "No \u2014 require at least one optional IDU to force the analyst to explicitly consider variation; a pattern with no optional elements should instead have a single common_idus list and be documented as invariant"
+    ],
+    "recommendation": "Yes, allow empty optional_idus. The manual allows patterns where all rows share the same structure; forcing a non-empty optional list would make valid invariant patterns unrepresentable."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "Bundle C5 with C4 (generic synchronic ISU grouping rule rewrite) in a single design plan titled something like 'generic-cross-participant-pattern-fidelity'. Both touch mpi-cross-analyst.md and _mpi_schemas.py; both are S-sized prompt and schema fixes with no control-flow changes; bundling avoids two overlapping PRs on the same files and lets the tests be written once covering both corrections. C1 (IRR alignment inversion) should land separately first as it is the highest-priority two-line code fix with its own regression test, and it touches entirely different files (irr.py)."
+ },
+ {
+  "cluster": "C6-generic-synchronic-grouping",
+  "current_state_notes": "**mpi-cross-analyst.md lines 93\u2013100 (confirmed current text):** The \"Generic synchronic\" section contains an \"ISU grouping rule\" that instructs: \"ISUs are grouped **by experiential similarity regardless of which IDU group they came from**. Synchronic outputs nest ISUs inside `isu_groups` (one group per IDU); when comparing across participants, flatten all ISUs from all IDU groups and group them by semantic similarity.\" This is the defect \u2014 it explicitly instructs cross-IDU flattening.\n\n**mpi-generic-synchronic/SKILL.md (confirmed current text):** The Closure table shows `isu_second_level_grouping` has scope `event<E>-cat-<C>-gidu<G>` \u2014 per generic-IDU scoping is architecturally correct here. The per-gidu scope means the orchestrator already iterates per generic-IDU; the LLM gets one gidu's worksheet per invocation.\n\n**_mpi_schemas.py lines 262\u2013271:** `_validate_generic_synchronic_isu_second_level` requires `[\"event\", \"iv_category\", \"generic_idu\", \"isus\"]` in the payload \u2014 `generic_idu` is already a required field, so the schema partially enforces single-IDU scope. But the schema does NOT enforce that `isus` excludes ISUs sourced from other generic IDUs.\n\n**tests/test_cross_participant_analysis.py lines 476\u2013527:** `test_isu_flattening_across_idu_groups` actively tests and asserts the broken behaviour \u2014 that ISUs from different IDU contexts are correctly flattened and grouped together. This test must be rewritten to assert the corrected (within-IDU) constraint.\n\n**mpi_step.py:** No hits for generic_idu-scope enforcement or cross-IDU guard in cmd_close. The per-gidu scoping is structural (the scope string `event<E>-cat-<C>-gidu<G>`) but no code rejects ISUs from wrong generic IDUs in the JSON payload.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Rewrite the 'ISU grouping rule' paragraph in the '### Generic synchronic' section (lines 93\u2013100). Remove the instruction to flatten all ISUs across all IDU groups. Replace with: the agent receives a worksheet for one specific generic IDU (identified by `generic_idu` in the scope `event<E>-cat-<C>-gidu<G>`); it must group ISUs only from that generic IDU across participants within the same score category. Cross-IDU synthesis is global synchronic's job \u2014 doing it here contaminates within-IDU structure and pre-empts the next stage. Keep the instruction to document IDU-group provenance in source citations (it is correct as traceability, just must not be used to justify cross-boundary grouping).",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_cross_participant_analysis.py",
+    "change_summary": "Rewrite test_isu_flattening_across_idu_groups (lines 476\u2013527): currently it asserts the broken cross-IDU flattening behaviour. Replace with a test that asserts ISU grouping stays within the target generic IDU \u2014 i.e., an ISU in generic-IDU-1 for p1s1 and an ISU in generic-IDU-2 for p2s1 must NOT be grouped together even if semantically similar. Add a companion test asserting that ISUs from the same generic IDU, across different participants, ARE correctly grouped (the correct within-IDU grouping). Name the new test test_isu_grouping_stays_within_generic_idu.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-generic-synchronic/SKILL.md",
+    "change_summary": "Minor clarification only: in the description of `isu_second_level_grouping`, add a one-sentence note that the agent must restrict ISU grouping to the generic IDU identified by the scope (matching the `generic_idu` field). Also remove the legacy reference 'Write analyses/generic-synchronic.md' on line 14 \u2014 that file path is never produced (per review section 1.4); the actual artifacts are per-scope files named by the gidu scope. This is a minor adjacent fix but is in the same file.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_cross_participant_analysis.py \u2014 test_isu_flattening_across_idu_groups must be rewritten (currently validates broken behaviour); a new test test_isu_grouping_stays_within_generic_idu must be added",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 read test: no current test checks for the within-IDU constraint in agent text; a new contract test should assert that 'generic_idu' boundary language is present in the generic-synchronic section of mpi-cross-analyst.md",
+    "tests/test_mpi_orchestration.py \u2014 no direct impact (the orchestration structure is already per-gidu; no test changes needed here)",
+    "tests/test_e2e_pipeline.py \u2014 if any E2E fixture exercises generic_synchronic.isu_second_level_grouping, the fixture payload must not contain ISUs sourced from multiple generic IDUs; verify fixtures in tests/fixtures/cross_analyst/"
+   ],
+   "contracts": [
+    "microphenomenograph/1.0.0/CLAUDE.md: Substep DAG \u2014 generic_synchronic.isu_second_level_grouping scope is already correctly documented as event<E>-cat-<C>-gidu<G>; no change needed",
+    "microphenomenograph/1.0.0/CLAUDE.md: No manifest fields change \u2014 generic_idu scoping is already structural in the scope string",
+    "_mpi_schemas.py _validate_generic_synchronic_isu_second_level: requires generic_idu in payload already; optionally add an isu-level source_generic_idu field and validate it matches payload.generic_idu (policy decision \u2014 see open questions)",
+    "Close protocol invariant: unchanged \u2014 close_id chain is not affected; this is a prompt-content fix only"
+   ],
+   "other": "No in-flight runs are invalidated by this change \u2014 the fix is to agent instructions only, not to schema validation or manifest structure. Runs already past generic_synchronic.isu_second_level_grouping are unaffected at the protocol level, but their analytic output may have cross-IDU contamination that cannot be detected retrospectively by the schema validator. The SKILL.md legacy 'generic-synchronic.md' reference fix (section 1.4 of review) is a related adjacent cleanup but is a separate defect (C4 in the review's wiring section)."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C4 (global-synchronic input wiring \u2014 generic-synchronic.md does not exist)",
+    "why": "The mpi-global-synchronic SKILL.md and mpi-cross-analyst.md both reference 'analyses/generic-synchronic.md' as global synchronic's input, but that file is never produced \u2014 actual artifacts are per-scope gidu files. Fixing C6 clarifies that generic_synchronic produces per-gidu artifacts; C4's fix (correcting the input path references in global synchronic) depends on the same per-gidu artifact naming that C6 reaffirms. Soft dependency: both fixes touch mpi-cross-analyst.md and the per-gidu artifact naming; should be coordinated in the same design plan to avoid conflicting prose.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "S",
+  "open_design_questions": [
+   {
+    "question": "Should the schema validator enforce that each ISU in a generic_synchronic.isu_second_level_grouping payload carries a source_generic_idu field that must match payload.generic_idu, making cross-IDU contamination machine-detectable at close time?",
+    "options": [
+     "Add source_generic_idu as a required field on each ISU in _validate_generic_synchronic_isu_second_level and reject mismatches \u2014 catches LLM non-compliance at close time, hardens the constraint beyond prompt instructions alone",
+     "Leave schema as-is (generic_idu already required at payload level) \u2014 rely on prompt instructions and human review; simpler, no schema churn, no in-flight breakage"
+    ],
+    "recommendation": "Add source_generic_idu as a required ISU-level field and validate it matches payload.generic_idu. The LLM already receives the target gidu in its scope; recording it per-ISU costs nothing and makes the constraint mechanically enforceable. This also improves downstream provenance tracing for global synchronic."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "Bundle C6 with C4 (global-synchronic input wiring). Both defects are in mpi-cross-analyst.md's generic synchronic and global synchronic sections, both concern the per-gidu artifact naming and scoping contract, and fixing C6 first clarifies the per-gidu artifact structure that C4's fix depends on. A single small design plan covering both is cleaner than two separate S-sized plans touching the same file sections. Do not bundle with the larger clusters (C1 IRR alignment, C2/C3 convergence loop and temporal-order blocking) \u2014 those require mpi_step.py cmd_close changes and are independently scoped."
+ },
+ {
+  "cluster": "C7-hypothesis-evidence",
+  "current_state_notes": "Three confirmed findings in scope (review \u00a71.3 MAJOR, \u00a71.4 MINOR, \u00a71.5 MINOR):\n\n**Finding 1 \u2014 weak_evidence_review is an empty shell (\u00a71.3 MAJOR)**\n`_mpi_schemas.py` line 377-378: `_validate_hypothesis_weak_evidence_review` only checks that the `review_items` key exists (`_require_keys(payload, [\"review_items\"], \"payload\")`). An empty list passes. No structure is required per review item. `mpi-cross-analyst.md`: the `### Hypothesis generation` section (lines 121-147) ends with the no-patterns template \u2014 there is no `### Weak evidence review` section at all. The agent has zero instructions about what \"thin support\" means, what counts as causal-verb overreach, or how to frame a rung-1 caveat. `mpi-hypothesis/SKILL.md` lines 119 correctly names the substep but provides no criteria.\n\n**Finding 2 \u2014 SKILL.md internal contradiction / defunct prose (\u00a71.4 adjacent)**\n`mpi-hypothesis/SKILL.md` lines 6-108 describe a single-shot design: read `analyses/global-synchronic.md` (a file that is never produced in the actual per-scope `gidu<G>-cat-<C>` artifact naming), emit one `analyses/hypotheses.md` with `## Hypothesis N:` / Pearl-rung / confidence table format. Lines 110-141 (Closure table) describe the real 3-substep `dv-<focus>` structure. The upper half actively instructs an incompatible and non-runnable flow. `mpi-cross-analyst.md` `### Hypothesis generation` (lines 121-147) similarly describes the old single-table markdown format, not the JSON schema that `cmd_close` validates.\n\n**Finding 3 \u2014 evidence_extraction reads only global-synchronic (\u00a71.4 MINOR)**\n`mpi-hypothesis/SKILL.md` lines 14-22: Prerequisites list only `analyses/global-synchronic.md`; Context documents list only `(1) global-synchronic.md` and `(2) bookowhy_rev.md`. Generic-diachronic (IDU-ordering contrasts across IV levels) and generic-synchronic artifacts are never passed. The review documents that diachronic structural contrasts \"are not recoverable from the global synchronic abstraction alone.\" The real per-scope global-synchronic artifact naming (`gidu<G>-cat-<C>-global_synchronic.*`) makes this even worse since there is no single `global-synchronic.md` to read.\n\n**Finding 4 \u2014 replication_recommendation absent (\u00a71.5 MINOR)**\n`_validate_hypothesis_candidate_drafting` (lines 298-374 of `_mpi_schemas.py`) requires `dv_focus`, `disclaimer`, `candidates`. No `replication_recommendation` field. `mpi-cross-analyst.md` `### Hypothesis generation` has no such instruction. The review (\u00a74) also wants this as the \"testable implications hand-off\" \u2014 making it a seam with C9.\n\n**In-flight run status:** `runs/phase1-2026-05-17/analyses/` contains only per-participant diachronic `.md` files (pNsN-diachronic.md, 17 files). No hypothesis, generic, or global synchronic artifacts exist. Mandatory schema additions to `candidate_drafting` or `weak_evidence_review` will NOT invalidate any existing artifact in the run.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-hypothesis/SKILL.md",
+    "change_summary": "Complete rewrite of lines 6-108 (the defunct single-file design section). Remove all references to non-existent `analyses/global-synchronic.md` and `analyses/hypotheses.md`. Replace Prerequisites and Context-documents sections to match actual per-scope artifact naming. Add generic-diachronic and generic-synchronic artifact paths as evidence inputs (or provide documented justification for why global-synchronic alone is sufficient \u2014 a user decision). Remove the defunct `## Invoking mpi-cross-analyst` block that still describes the old single-table markdown output. The Closure table (lines 110-141) is correct and stays. Add a `### Weak evidence review` section documenting review criteria: flag claims where n_transcripts < 3 or n_iv_levels_covered < 2; flag causal verbs (causes, leads to, produces, drives) in rung-1 claims; flag absence of negative_cases; require rung-1 framing for all observational claims.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Add a `### Weak evidence review` sub-section under `## Your tasks`. Criteria: for each candidate_drafting claim, flag if n_transcripts < 3 or n_iv_levels_covered < 2 (thin support); flag causal-verb overreach (causes/leads_to/produces in a rung-1 claim); flag missing negative_cases or empty negative_cases list; verify that claims are framed with uncertainty_language. Each review item must reference which candidate hypothesis and which claim it covers (by claim_text or a candidate index). The review produces review_summary.json. Also update the `### Hypothesis generation` section (lines 121-147) to remove the old markdown-table output format and replace with the actual 3-substep structure so it no longer contradicts mpi-cross-analyst.md's own Persistence section and the schema.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Three changes: (1) `_validate_hypothesis_weak_evidence_review` (line 377-378): add structure to review_items \u2014 each item must have at minimum a `candidate_ref` (hypothesis index or claim_text excerpt), a `flag_type` (enum: thin_support | causal_verb_overreach | missing_negative_cases | rung_mismatch), and a `note` string. Require non-empty review_items when candidates exist, or an explicit `no_flags_rationale` field when all claims are clean. (2) `_validate_hypothesis_candidate_drafting` (lines 298-374): add `replication_recommendation` as a required top-level field. (3) Consider adding a `claim_id` to candidates[i].claims[j] to allow review_items to cross-reference stably \u2014 or use (candidate_index, claim_index) tuple. The user must decide which approach.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/mpi_step.py",
+    "change_summary": "In `cmd_close`, at the hypothesis.weak_evidence_review path (near line 1521 where dv_focuses guard lives): add a cross-artifact coverage check. Load all candidate_drafting JSON artifacts found in the manifest (their output_path fields), count total claims across all candidates, and verify that review_items in the weak_evidence_review payload references at least one review item per candidate hypothesis. Alternatively (if per-claim cross-reference is not required), verify that review_items is non-empty when any candidate has n_transcripts < 3 or n_iv_levels_covered < 2. The design question (full cross-check vs threshold-triggered check) is a user decision \u2014 flag in design questions.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/CLAUDE.md",
+    "change_summary": "Update the Hypothesis generation row in the Substep DAG table. Add a note about evidence_extraction inputs (all-three-analyses or documented justification). Update the candidate_drafting field list to include replication_recommendation. Update the weak_evidence_review description to reference the review criteria.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_hypothesis_generation.py",
+    "change_summary": "The existing tests exercise a defunct markdown format (inline sample strings with `## Hypothesis N:` / table format). They will not fail but are orphaned by the prose rewrite. Replace or supplement with contract tests that: (1) exercise the weak_evidence_review schema validator directly (non-empty review_items required, item structure validated); (2) test that candidate_drafting requires replication_recommendation; (3) test that a weak_evidence_review with review_items=[] is rejected when candidates exist. Mirror the negative-test pattern from TestAC23_1_HypothesisCandidateFixtureClose in test_mpi_cross_analyst_contract.py.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_mpi_cross_analyst_contract.py",
+    "change_summary": "Add a class TestWeakEvidenceReviewSchema covering: (1) review_items=[] is rejected when candidates exist; (2) review_items missing candidate_ref or flag_type is rejected; (3) no_flags_rationale allows empty review_items; (4) replication_recommendation missing from candidate_drafting is rejected. These are schema-level negative tests requiring no fixtures with LLM output.",
+    "new_file": false
+   },
+   {
+    "path": "tests/fixtures/cross_analyst/review_summary.json",
+    "change_summary": "New fixture for the weak_evidence_review close test. Minimal valid payload: dv_focus=global, review_items with at least one item that has candidate_ref, flag_type, note.",
+    "new_file": true
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_hypothesis_generation.py \u2014 existing tests exercise defunct markdown format; orphaned by SKILL.md rewrite but will not fail",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 TestClaimLevelEvidence and TestAC23_1_HypothesisCandidateFixtureClose pass today; adding replication_recommendation to schema will break any fixture that does not include it",
+    "microphenomenograph/1.0.0/scripts/test_mpi_step.py \u2014 TestAC2_* tests for weak_evidence_review (lines 3631-4871) test gate logic only, not payload structure; will need new tests for review_items coverage check",
+    "New tests needed: TestWeakEvidenceReviewSchema (schema validator unit tests); new fixture close test for weak_evidence_review via mpi_step.py close; negative test for candidate_drafting missing replication_recommendation"
+   ],
+   "contracts": [
+    "plugin CLAUDE.md \u2014 hypothesis candidate_drafting field list; weak_evidence_review description; evidence_extraction context inputs",
+    "microphenomenograph/1.0.0/CLAUDE.md \u2014 Substep DAG table; hypothesis stage description",
+    "candidate_drafting schema: adding replication_recommendation as required field is a contract-breaking schema addition for any artifact already closed (none exist in in-flight run)",
+    "weak_evidence_review schema: adding structure to review_items is a contract-breaking change; empty-list close will be rejected after fix",
+    "close-protocol invariant: any new cross-artifact coverage check in cmd_close must fail before close_attempted is emitted \u2014 failure must not create a half-written audit chain",
+    "version-bump discussion: adding mandatory fields to candidate_drafting and weak_evidence_review changes the schema contract for v2.0 artifacts; warrants version-bump discussion if any run has hypothesis artifacts (none currently)"
+   ],
+   "other": "In-flight run (runs/phase1-2026-05-17) is at diachronic stage only \u2014 no hypothesis artifacts exist. Mandatory schema additions are safe for this run. The defunct prose in mpi-hypothesis/SKILL.md (lines 6-108) references analyses/global-synchronic.md and analyses/hypotheses.md \u2014 both non-existent under the implemented artifact naming \u2014 so any agent following the current SKILL.md upper half would hit the anti-fabrication guard. The fix closes a live instructional dead-end, not just a documentation gap."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C4 or whichever cluster owns the global-synchronic wiring fix (\u00a71.4 MAJOR: generic-synchronic.md does not exist)",
+    "why": "The all-three-analyses evidence input fix (evidence_extraction reading generic-diachronic + generic-synchronic artifacts) requires knowing the correct per-scope artifact paths for generic-synchronic outputs. The wiring fix cluster establishes those paths and the orchestrator path-resolution mechanism; C7 extends that mechanism to also pass the paths to evidence_extraction.",
+    "hard_or_soft": "hard"
+   },
+   {
+    "cluster": "C9",
+    "why": "replication_recommendation is the seam between \u00a71.5 (add the field) and \u00a74's causal roadmap (testable implications as replication hand-off). Designing the field once with C9 avoids a two-phase schema churn on the same candidate_drafting payload. If C9 also adds assumptions fields for rung>=2 claims, the per-hypothesis shape changes again.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "M",
+  "open_design_questions": [
+   {
+    "question": "Should evidence_extraction be given all three upstream analysis types (generic-diachronic, generic-synchronic, global-synchronic) as context, or is global-synchronic synthesis alone sufficient with documented justification?",
+    "options": [
+     "Pass all three artifact types: diachronic structural contrasts (IDU-ordering differences across IV levels) reach the hypothesis stage and are not recoverable from global-synchronic alone. Requires orchestrator to resolve and pass per-scope generic-diachronic and generic-synchronic artifact paths.",
+     "Document global-synchronic as sufficient: the global-synchronic stage already abstracts from generic-synchronic, and generic-diachronic contrasts are represented in the cross_iv_contrast artifact which feeds into global-synchronic indirectly. Add this rationale to the SKILL.md as explicit justification."
+    ],
+    "recommendation": "Pass all three types. The review's reasoning (diachronic structural contrasts are not recoverable from the global synchronic abstraction) is sound \u2014 IDU ordering and transition patterns are distinct from ISU-level patterns and could be the basis of different hypotheses. The cost (orchestrator path wiring) is bounded."
+   },
+   {
+    "question": "Should weak_evidence_review be a flag-only substep (review items noted, close still succeeds) or a blocking substep (thin-support hypotheses must be resolved before close succeeds)?",
+    "options": [
+     "Flag-only (warn-by-default): review_summary records flagged items; status stays done regardless. Consistent with warn-by-default IRR. Researcher reads the summary and decides whether to revise candidate_drafting.",
+     "Blocking on unresolved flags: if any review item has flag_type=thin_support or causal_verb_overreach and no resolution field, close fails. Stronger enforcement but may block pipeline on small samples where thin support is expected."
+    ],
+    "recommendation": "Flag-only, consistent with the IRR warn-by-default posture. Add a resolution pathway: each review item may carry an optional acknowledged_by field; a future --strict-weak-evidence flag can block on unresolved items, following the --strict-irr pattern."
+   },
+   {
+    "question": "Should a mandatory replication_recommendation field be added to candidate_drafting now (C7 scope), or co-designed with the causal roadmap work (C9) to ensure the field shape is not designed twice?",
+    "options": [
+     "Add it now in C7 as a simple required string field: 'Repeat the analysis with a second set of participants to assess whether the same patterns emerge before treating these patterns as robust.' Minimal contract change.",
+     "Defer to C9 and design it as testable_implications (a structured field listing what pattern a second participant set would show if the mechanism is real), making it the canonical replication hand-off shape."
+    ],
+    "recommendation": "Defer to C9. The \u00a74 causal roadmap explicitly frames this as 'testable implications as the replication hand-off' with a richer structure than a fixed-phrase string. Designing it twice risks a schema churn on a mandatory field. In C7, add the field as optional-but-encouraged until C9 lands the canonical shape."
+   },
+   {
+    "question": "How should review_items cross-reference candidate_drafting claims \u2014 by candidate index + claim index tuple, by claim_text excerpt, or by adding a new claim_id field to candidate_drafting?",
+    "options": [
+     "Add claim_id to candidate_drafting schema: each claims[j] gets a stable UUID or short string ID; review_items reference it. Clean but adds a mandatory field to an existing schema.",
+     "Use (candidate_index, claim_index) integer tuple: no schema change to candidate_drafting; review items carry {candidate_index: int, claim_index: int}. Brittle if candidates are reordered.",
+     "Reference by claim_text substring: review items carry a claim_text_excerpt string. Human-readable but not machine-checkable without fuzzy matching."
+    ],
+    "recommendation": "Add claim_id to candidate_drafting. This is a mandatory schema change but the cleanest path for machine-checkable cross-artifact coverage. claim_id can be a short deterministic string (e.g. 'c1', 'c2') or a UUID. Coordinate with the replication_recommendation field shape decision since both modify candidate_drafting in C7."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C7 can stand alone as a design plan but should be sequenced after the global-synchronic wiring cluster (whichever cluster owns \u00a71.4 MAJOR: the nonexistent generic-synchronic.md input) because the all-three-analyses fix in evidence_extraction extends whatever path-resolution mechanism that cluster installs. Running C7 before that wiring cluster means the evidence_extraction prose will still reference non-existent file paths. If the wiring cluster is C4 or C6, bundle C7 immediately after it or note the sequencing constraint explicitly. C7 and C9 (causal roadmap) share the replication_recommendation field shape \u2014 they can proceed in parallel if replication_recommendation is kept optional in C7 and mandatory+structured in C9, with C9 being a schema amendment pass."
+ },
+ {
+  "cluster": "C8-small-fidelity",
+  "current_state_notes": "All 8 findings from adversarial-review section 1.5 verified against current code:\n\n1. SCORE RANGE: `mpi-init/SKILL.md` line 90 regex `(\\d+)/5` captures any non-negative integer. Score categories defined at lines 141-144 (0-1=low, 2-3=moderate, 4-5=high) with no guard for values outside 0-5. `test_verify_mpi_init.py` `get_score_category` has `else: return \"high\"` (line ~74) so score=7 silently maps to \"high\" in tests. The SKILL.md itself has no fallback rule \u2014 out-of-range scores silently produce a broken manifest entry.\n\n2. QUESTION REMOVAL: `mpi-transcript-prep/SKILL.md` normalize steps (lines 38-42) list: strip BOM, normalise whitespace, normalise speaker labels, remove Windows line endings, report malformed lines. No question-removal step anywhere in the plugin directory (grep for \"question.*remov\" returns zero hits). The manual's primary content-editing rule (remove interviewer questions before analysis) is absent.\n\n3. IDU NAMING TIMING: `_mpi_schemas.py` line 86-87 defines `_IDU_REQUIRED = [\"idu_number\", \"idu_name\", \"moment\", \"criteria\", \"confidence\", \"flag_for_review\", \"utterance_numbers\", \"hinge_to_next\", \"utterance_refs\"]` \u2014 both `idu_name` and `moment` required from substep 1. `_validate_diachronic_idu_naming_ordering` at lines 167-168 is `return _validate_diachronic_criteria_grouping(payload)` \u2014 byte-identical delegation, no relaxation for early substeps. Manual sequences naming AFTER convergence (criteria_grouping -> criteria_revision -> idu_naming_ordering), but the schema enforces identical requirements at all three.\n\n4. TEMPORAL LINKAGE PHRASES: `mpi-analyst.md` diachronic rule 4 (line 33): \"When uncertain, prefer fewer IDUs\" \u2014 actively discourages boundary splits. Zero hits for \"and then\", \"after that\", \"linkage_phrase\", \"temporal.link\" in plugin directory. The manual's explicit IDU-boundary trigger phrases are absent from all 9 diachronic rules.\n\n5. PATTERN COMPLEXITY CONSTRAINT: `mpi-cross-analyst.md` line 30-32: \"A pattern is 'common' if it appears in \u2265 2 participants within the same score category.\" No merge-evaluation, no \"optimum small set\", no complexity constraint. Zero hits for \"optimum\", \"overly complex\", \"merge.eval\", \"small.*set\" in plugin directory.\n\n6. SOURCE_EVENT ON GLOBAL SYNCHRONIC: `_mpi_schemas.py` line 274-283 `_validate_global_synchronic` requires only `[\"generic_idu\", \"iv_category\", \"isus\"]`. No `source_event` field. Event provenance is markdown-convention only.\n\n7. REPLICATION_RECOMMENDATION: `_validate_hypothesis_candidate_drafting` (lines 298-374) requires `[\"dv_focus\", \"disclaimer\", \"candidates\"]` with no `replication_recommendation` field. Each candidate requires `[\"hypothesis\", \"claims\", \"sample_summary\"]` \u2014 no replication field at candidate level either.\n\n8. PARTICIPANT COUNT NOTE: No advisory anywhere in `mpi_step.py` `cmd_init` (lines 83-169) or `mpi-init/SKILL.md` when participant count falls outside the manual's 6-12 adequacy guidance.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-init/SKILL.md",
+    "change_summary": "Add post-parse score range validation rule: after regex match, validate parsed score integer is in 0-5; error + skip file if out-of-range (e.g., 'ERROR: <filename>: score 7 out of valid range 0-5'). Add optional participant-count advisory when N < 6 or N > 12 per manual's adequacy guidance.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Split _IDU_REQUIRED into _IDU_BASE_REQUIRED (idu_number, criteria, confidence, flag_for_review, utterance_numbers, hinge_to_next, utterance_refs) and _IDU_NAMING_REQUIRED (adds idu_name, moment). Make _validate_diachronic_criteria_grouping and _validate_diachronic_criteria_revision use _IDU_BASE_REQUIRED. Keep _validate_diachronic_idu_naming_ordering using full set. Add source_event to _validate_global_synchronic required keys. Add replication_recommendation to _validate_hypothesis_candidate_drafting required fields (at top payload level or per-candidate level, per design decision).",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-analyst.md",
+    "change_summary": "Add temporal linkage phrase boundary detection rule to diachronic rules: when participant uses 'and then', 'after that', 'at that point', or similar temporal sequencing connectives between experiential descriptions, treat as a strong signal for an IDU boundary split. Soften rule 4 ('prefer fewer IDUs') to acknowledge that temporal linkage phrases override the merge-preference heuristic.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Expand pattern threshold rule (currently line 30-32) to include merge-evaluation step: after identifying candidate patterns, check if the set is 'optimum small' (no overly complex or marginal patterns per manual criteria). Add justification step: for each merged or discarded candidate pattern, write a rationale sentence.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-transcript-prep/SKILL.md",
+    "change_summary": "Document the question-removal expectation explicitly: either (a) add a pre-normalization LLM-assisted step with audit trail that removes interviewer questions, or (b) add a researcher pre-step note stating that interviewer questions must be removed before pipeline invocation, with the normalize step validating that no obvious question lines remain.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_verify_mpi_init.py",
+    "change_summary": "Add test cases for out-of-range scores: verify that score=6 and score=7 produce an error/skip (not a silent category mapping). Add test for participant count advisory boundary conditions (N=5 warns, N=6 does not, N=12 does not, N=13 warns).",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_mpi_analyst_contract.py",
+    "change_summary": "Add test verifying mpi-analyst.md diachronic rules contain temporal linkage phrase language (at minimum one of: 'and then', 'after that', 'temporal linkage', 'linkage phrase'). Add test verifying rule 4 does not override linkage-phrase splits.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_mpi_cross_analyst_contract.py",
+    "change_summary": "Add test verifying mpi-cross-analyst.md contains pattern merge-evaluation / complexity constraint language (at minimum one of: 'optimum', 'overly complex', 'merge', 'justification').",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_mpi_schemas_staged_idu.py",
+    "change_summary": "New test file: verify that _validate_diachronic_criteria_grouping and _validate_diachronic_criteria_revision do NOT require idu_name/moment; verify _validate_diachronic_idu_naming_ordering DOES require idu_name/moment. Verify _validate_global_synchronic requires source_event. Verify _validate_hypothesis_candidate_drafting requires replication_recommendation.",
+    "new_file": true
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_verify_mpi_init.py \u2014 add out-of-range score tests; add participant count advisory tests",
+    "tests/test_mpi_analyst_contract.py \u2014 add temporal linkage phrase detection rule tests",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 add pattern complexity constraint tests",
+    "tests/test_mpi_schemas_staged_idu.py \u2014 NEW: staged IDU field requirements, source_event, replication_recommendation",
+    "tests/test_transcript_prep.py \u2014 may need update if question-removal is implemented as a pipeline step (not just a doc note)",
+    "microphenomenograph/1.0.0/scripts/test_mpi_step.py \u2014 no direct impact unless cmd_init gets participant-count logic"
+   ],
+   "contracts": [
+    "_mpi_schemas.py _IDU_REQUIRED split: any substep using _IDU_BASE_REQUIRED must not produce idu_name/moment until idu_naming_ordering substep \u2014 changes the close-time validation contract for criteria_grouping and criteria_revision substeps",
+    "_mpi_schemas.py _validate_global_synchronic: adding source_event is a breaking schema change \u2014 existing close artifacts for global_synchronic without source_event will fail re-validation",
+    "_mpi_schemas.py _validate_hypothesis_candidate_drafting: adding replication_recommendation is a breaking schema change \u2014 existing hypothesis artifacts without the field will fail re-validation",
+    "mpi-analyst.md diachronic rules: prompt-contract change; affects LLM output shape for all diachronic substeps",
+    "mpi-cross-analyst.md pattern rules: prompt-contract change; affects LLM output shape for pattern_identification substep",
+    "mpi-init/SKILL.md score validation: tightens header parsing contract; 'Scored 7/5' now errors instead of silently passing",
+    "CLAUDE.md plugin-version policy: if any schema change is breaking for in-flight runs (runs/phase1-2026-05-17), a version bump may be required per 'bump the directory name for breaking changes' policy"
+   ],
+   "other": "runs/phase1-2026-05-17 is an in-flight run. Breaking schema changes (source_event, replication_recommendation, staged IDU fields) will affect re-validation of that run's existing artifacts. Design must decide whether to grandfather existing artifacts or require re-close."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C1",
+    "why": "C1 addresses temporal_order_within_idu flag on synchronic ISUs. The temporal-linkage-phrase rule in C8 touches mpi-analyst.md diachronic rules section; C1 may touch synchronic rules in the same file. Soft dependency \u2014 no logical conflict but same file edits should be coordinated to avoid merge conflicts.",
+    "hard_or_soft": "soft"
+   },
+   {
+    "cluster": "C5",
+    "why": "C5 (major: generic synchronic ISU grouping) touches mpi-cross-analyst.md rules and potentially _mpi_schemas.py generic_synchronic validator. C8 also touches mpi-cross-analyst.md (pattern complexity) and _mpi_schemas.py (global_synchronic, hypothesis). Same files; edits should be sequenced or bundled to avoid conflicts.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "M",
+  "open_design_questions": [
+   {
+    "question": "Question-removal handling: implement as a pipeline step or document as a researcher pre-step?",
+    "options": [
+     "Add LLM-assisted question-removal sub-step in mpi-transcript-prep with its own close artifact and audit event (pipeline step with full doc-as-done transaction)",
+     "Add a validate-only check in the normalize step that flags lines matching 'Interviewer:' / 'Q:' speaker labels as errors requiring manual removal before pipeline invocation",
+     "Document as a researcher pre-step in SKILL.md with no pipeline enforcement \u2014 researcher is responsible for cleaning the transcript before /mpi transcript-prep"
+    ],
+    "recommendation": "Option 2 (validate-only flagging) balances fidelity with complexity: the normalize step already detects malformed lines, so adding a speaker-label check for interviewer turns is low-cost and provides a clear error message without adding a new LLM substep. Full LLM removal (option 1) risks introducing errors in a preprocessing step that should be deterministic."
+   },
+   {
+    "question": "IDU naming timing fix scope: schema-only or also update mpi-analyst.md rules?",
+    "options": [
+     "Schema-only: split _IDU_REQUIRED into base + naming sets; mpi-analyst.md rules unchanged (naming rule 5-6 already implies naming happens after grouping, so no prompt change needed)",
+     "Schema + prompt: split _IDU_REQUIRED AND rewrite mpi-analyst.md rules to explicitly state that idu_name and moment are NOT required in criteria_grouping / criteria_revision output (placeholder null acceptable)",
+     "Schema + prompt + example output shapes: add per-substep output format tables to mpi-analyst.md showing which fields are required at each substep"
+    ],
+    "recommendation": "Option 2 (schema + prompt): the current prompt's rule 5-6 describes naming as a step but does not explicitly say it is deferred \u2014 an LLM following the current rules would attempt to fill idu_name at criteria_grouping time. Making the deferral explicit in the prompt is necessary for reliable compliance. Full output-shape tables (option 3) are thorough but may be implementation-plan scope."
+   },
+   {
+    "question": "Breaking schema changes (source_event, replication_recommendation) and in-flight runs: grandfather or require re-close?",
+    "options": [
+     "Grandfather: add source_event / replication_recommendation as optional-with-warning fields initially, make them required only for new runs started after this design lands",
+     "Require re-close: treat schema changes as hard breaks; in-flight run (runs/phase1-2026-05-17) must re-close affected substeps",
+     "Version bump: follow CLAUDE.md policy and bump plugin to 1.1.0 directory, treating in-flight run as 1.0.0-schema until manually migrated"
+    ],
+    "recommendation": "Option 1 (grandfather with optional-warning) is most pragmatic: the in-flight run is real data, and forcing re-close of global_synchronic or hypothesis substeps would require re-running expensive LLM steps. Mark fields as 'strongly recommended' in validator (emit SchemaWarning not SchemaError) for runs whose manifest version predates this design. This avoids the version-bump overhead while preserving forward compatibility."
+   },
+   {
+    "question": "replication_recommendation field location: top-level payload or per-candidate?",
+    "options": [
+     "Top-level payload field on _validate_hypothesis_candidate_drafting: one replication_recommendation string applies to the whole drafting artifact",
+     "Per-candidate field: each candidate object gains a replication_recommendation field (consistent with how claims are scoped)"
+    ],
+    "recommendation": "Top-level (option 1): the manual's replication-with-second-set recommendation is a study-level conclusion, not a per-hypothesis conclusion. A single top-level field is simpler and matches the manual's intent."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C8 can be its own plan, but it would benefit from bundling with C4 (weak-evidence-review schema fix) and C6 (replication/causal output) if those clusters exist, since all three touch _mpi_schemas.py validators and agent prompts without conflicting logic. The shared file edits (mpi-cross-analyst.md, _mpi_schemas.py hypothesis validators) make a single implementation plan more efficient than three sequential ones. C5 (major: generic synchronic ISU grouping) should NOT be bundled \u2014 it is a larger, riskier change to the same files and should land first so C8 can diff cleanly on top."
+ },
+ {
+  "cluster": "C9-causal-extension",
+  "current_state_notes": "Review \u00a74 identifies five causal-extension gaps. Verified current state:\n\n1. RUNG IS MARKDOWN-ONLY (no JSON enforcement): `_validate_hypothesis_candidate_drafting` (lines 298-374 of `microphenomenograph/1.0.0/scripts/_mpi_schemas.py`) validates `dv_focus`, `disclaimer`, `candidates[].hypothesis`, `candidates[].claims`, `candidates[].sample_summary`, and claim-level evidence fields \u2014 but has no `rung` field at the candidate level. The Pearl rung lives only in the markdown table (SKILL.md line 52; `mpi-cross-analyst.md` line 129 in the `### Hypothesis generation` section). The existing test `tests/test_hypothesis_generation.py` checks rung only via regex on markdown text, not via schema validation. No guard prevents a rung-2/3 label from closing without any `assumptions` field.\n\n2. NO ASSUMPTIONS FIELD: `_validate_hypothesis_candidate_drafting` has no `assumptions` field check. A rung-2 (\"If we intervene to change X...\") or rung-3 counterfactual claim carries no validated assumptions block licensing the higher-rung inference.\n\n3. NO DAG ARTIFACT OR FIELD: No `dag` field exists in `_validate_hypothesis_candidate_drafting` or in the candidate schema documented in `mpi-cross-analyst.md` (lines 149-184). No substep for DAG production exists in the SUBSTEP_PREREQUISITES dict (line 587-619 of `_mpi_schemas.py`) or in LLM_SUBSTEPS (lines 621-639). No artifact convention is defined.\n\n4. NO CONFOUNDER ENUMERATION: `candidate_drafting` schema requires `claims` with evidence fields but no `confounders` field. `mpi-cross-analyst.md`'s hypothesis generation section (lines 122-202) has no instruction to enumerate alternative explanations, selection effects, or the shared-method common cause (self-report IV and DV from same session). The review's \u00a74 notes this is a \"required field\" gap in `candidate_drafting`.\n\n5. NO TESTABLE_IMPLICATIONS FIELD: Neither `_validate_hypothesis_candidate_drafting` nor `mpi-cross-analyst.md` carry a `testable_implications` field. The review's \u00a74 states \"each hypothesis should state what pattern a second participant set would show if the mechanism is real\" \u2014 this also discharges the \u00a71.5 replication_recommendation minor finding. The existing `suggested_test` in the markdown output (SKILL.md line 57, `mpi-hypothesis/SKILL.md`) is a quantitative follow-up idea, not a qualitative replication pattern prediction.\n\n6. WEAK EVIDENCE REVIEW IS AN EMPTY SHELL (related): `_validate_hypothesis_weak_evidence_review` (line 377-378) only checks for a `review_items` key \u2014 it does not require non-empty `review_items`, no instruction to flag causal verbs, and no instruction to verify rung-1 framing. This is confirmed as a separate \u00a71.3 finding but overlaps with the causal guard logic of C9.\n\n7. IN-FLIGHT RUN STATUS: `runs/phase1-2026-05-17/.mpi/project.json` \u2014 all cross_participant_stages (generic_diachronic, generic_synchronic, global_synchronic, hypothesis) have `status: pending`. No `candidate_drafting` has been closed in this run. Adding required fields to the schema does not invalidate any completed artifact in the only tracked run.\n\n8. EVIDENCE_EXTRACTION INPUT WIRING (soft dependency on another cluster): `mpi-hypothesis/SKILL.md` line 13-22 lists only `analyses/global-synchronic.md` as context \u2014 generic-diachronic contrasts (cross-IV structural differences) do not reach the hypothesis stage. The review \u00a71.4 minor notes this. Confounder enumeration quality depends on having cross-IV contrast data visible, making this a soft dependency.",
+  "files_to_change": [
+   {
+    "path": "microphenomenograph/1.0.0/scripts/_mpi_schemas.py",
+    "change_summary": "Promote `rung` to a required, validated field (enum: 1|2|3) on each candidate in `_validate_hypothesis_candidate_drafting`. Add conditional validation: if `rung >= 2`, require a non-empty `assumptions` list field on the candidate. Add a required `confounders` list field (list of dicts with `variable` and `mechanism` keys) on each candidate. Add a required `testable_implications` field (list of strings, non-empty) on each candidate. Update `_validate_hypothesis_weak_evidence_review` to require at least one entry in `review_items` (currently accepts empty list) and to check each item for a `hypothesis_ref` field (links review item back to a candidate). These are additive required-field changes to existing validator functions \u2014 close_id chain is preserved since close calls the same validate_units path.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/agents/mpi-cross-analyst.md",
+    "change_summary": "Extend the `### Hypothesis generation` section (currently lines 122-202): (1) Add instruction to assign `rung` as a JSON field (1/2/3) on each candidate \u2014 not only describe it in the markdown table. (2) Add instruction: if rung >= 2, populate a required `assumptions` list documenting the explicit causal assumption(s) that license the higher-rung inference (e.g., 'No unmeasured confounder of score \u2192 response'). (3) Add instruction to populate a `confounders` list on every candidate, always including the default shared-method common cause entry: participant self-report disposition is a common cause of both the IV (suggestibility score) and DV (experience description) \u2014 the analyst must include this by default and enumerate any additional confounders from the data. (4) Add instruction to populate `testable_implications` (list of qualitative patterns a second participant set would show if the mechanism is real). (5) Update the `### Weak evidence review` section (or add it if absent) with instructions to: flag claims with rung >= 2 that lack assumptions, flag causal language verbs, verify rung-1 framing on association-only claims, and require one `review_items` entry per candidate drafted.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/skills/mpi-hypothesis/SKILL.md",
+    "change_summary": "Update the candidate_drafting output format table and the closure subsection to reflect the four new JSON fields: `rung` (int 1-3), `assumptions` (list, required when rung >= 2), `confounders` (list, always required, default entry for shared-method common cause), `testable_implications` (list, non-empty). Update the `## Output format` section's markdown template to render these fields. Update the anti-fabrication and closure notes to reflect that these fields are schema-enforced. Add a note that a DAG (mermaid/DOT) is encouraged (but not schema-enforced) in the markdown artifact \u2014 the note must not provide a worked example (zero-shot constraint).",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/CLAUDE.md",
+    "change_summary": "Update the 'Substep DAG' section's hypothesis row and the 'Documentation-as-Done contract' paragraph about hypothesis generation to document the four new candidate-level fields (rung, assumptions, confounders, testable_implications) and the rung>=2 guard. If a DAG substep option is chosen by the user, add it to the Substep DAG table. Update the 'Last updated' date.",
+    "new_file": false
+   },
+   {
+    "path": "tests/test_hypothesis_generation.py",
+    "change_summary": "Extend existing markdown-parsing tests to also test the new JSON fields: (1) Test that a rung-2 candidate without `assumptions` fails schema validation (call validate_units directly). (2) Test that a rung-1 candidate without `assumptions` passes. (3) Test that `confounders` is required and that a missing or empty list fails. (4) Test that `testable_implications` is required and non-empty. (5) Test that `weak_evidence_review` with empty `review_items` now fails. These replace/extend the markdown-only regex approach for the new fields.",
+    "new_file": false
+   },
+   {
+    "path": "microphenomenograph/1.0.0/scripts/test_mpi_step.py",
+    "change_summary": "Add integration-level close tests mirroring the existing weak_evidence_review tests: (1) Fixture close of `hypothesis.candidate_drafting` with rung=2 and no `assumptions` \u2014 expect rc != 0 with schema error. (2) Fixture close with rung=2 and valid `assumptions` list \u2014 expect rc == 0. (3) Fixture close with rung=1 and no `assumptions` \u2014 expect rc == 0. (4) Fixture close with empty `confounders` \u2014 expect rc != 0. (5) Fixture close with empty `testable_implications` \u2014 expect rc != 0. (6) Test `weak_evidence_review` with empty `review_items` \u2014 expect rc != 0.",
+    "new_file": false
+   }
+  ],
+  "blast_radius": {
+   "tests": [
+    "tests/test_hypothesis_generation.py \u2014 existing markdown-regex rung tests pass through unchanged but new schema-level tests must be added for rung, assumptions, confounders, testable_implications, and non-empty review_items",
+    "microphenomenograph/1.0.0/scripts/test_mpi_step.py \u2014 the TestAllCandidateDraftingsDone class (lines ~209-329) and test_ac2_* tests (lines ~3631-3910) use candidate JSON fixtures that will need the new required fields; all existing _write_units_json calls for hypothesis.candidate_drafting will fail schema validation unless updated with stub values for the new fields",
+    "tests/test_mpi_cross_analyst_contract.py \u2014 TestClaimLevelEvidence class checks for 'not causal estimates from a hypothesis test' disclaimer; no direct break but verifies contract text still present after agent rewrite",
+    "tests/test_mpi_orchestration.py \u2014 E2E tests that close hypothesis stages will need updated fixtures",
+    "tests/test_e2e_pipeline.py \u2014 full pipeline DAG walkthrough; any hypothesis close fixture will need new required fields"
+   ],
+   "contracts": [
+    "microphenomenograph/1.0.0/CLAUDE.md 'Substep DAG' table \u2014 hypothesis row must reflect new candidate fields",
+    "microphenomenograph/1.0.0/CLAUDE.md 'Documentation-as-Done contract' \u2014 hypothesis artifact description must include rung guard",
+    "microphenomenograph/1.0.0/CLAUDE.md plugin version \u2014 adding required fields to a closed schema is a contract-breaking change under the pinned 1.0.0 convention; a version-bump discussion is warranted per the project's 'bump the directory name for new versions, do not edit in place after release' rule",
+    "_mpi_schemas.py _validate_hypothesis_candidate_drafting \u2014 schema contract for candidate_drafting close",
+    "_mpi_schemas.py _validate_hypothesis_weak_evidence_review \u2014 schema contract for weak_evidence_review close (empty list currently accepted)",
+    "mpi-cross-analyst.md Persistence section \u2014 agent instructions for what JSON to write at candidate_drafting close",
+    "mpi-hypothesis/SKILL.md Closure table \u2014 artifact format and field list",
+    "close_id chain: these changes touch validate_units only; no change to the audit event structure, manifest mutation order, or git commit step"
+   ],
+   "other": "In-flight run `runs/phase1-2026-05-17`: all cross-participant stages are pending \u2014 no candidate_drafting close has occurred. Zero artifact invalidation risk for this run. However, adding required fields to the candidate schema means any external run that HAS closed candidate_drafting would fail re-validation (cmd_verify). The zero-shot constraint is satisfied: the DAG format can be described structurally (nodes: IV, mechanism components, DV, confounders; mermaid/DOT) without providing a worked example in the prompt."
+  },
+  "dependencies_on_other_clusters": [
+   {
+    "cluster": "C6",
+    "why": "Review \u00a71.3 identifies `weak_evidence_review` as an empty shell (no instructions, empty list passes). C9's rung guard needs weak_evidence_review to flag rung>=2 claims without assumptions \u2014 both touch `_validate_hypothesis_weak_evidence_review` and the `### Weak evidence review` agent section. If C6 lands first and adds non-empty review_items enforcement, C9 can extend it; if C9 lands first it must add those stubs. Same-file churn makes this a coordination soft dep.",
+    "hard_or_soft": "soft"
+   },
+   {
+    "cluster": "C4",
+    "why": "Review \u00a71.4 minor: evidence_extraction currently reads only global-synchronic.md; confounder enumeration quality (a C9 deliverable) depends on cross-IV contrast data from generic-diachronic artifacts being visible to the hypothesis agent. If C4 (input wiring fix) lands first, the confounder list has richer input. C9 can proceed without it but the instruction quality is lower.",
+    "hard_or_soft": "soft"
+   }
+  ],
+  "sizing": "L",
+  "open_design_questions": [
+   {
+    "question": "Should the per-hypothesis DAG (mermaid/DOT) be a required field in the candidate_drafting JSON schema, or encouraged-but-optional in the markdown artifact only?",
+    "options": [
+     "Required JSON field `dag_source` (mermaid/DOT string) validated by schema \u2014 machine-checkable, but raises bar for every close; requires updating all test fixtures and the LLM must produce valid graph syntax or close fails",
+     "Encouraged-but-optional: SKILL.md and agent instructions describe the DAG format and recommend it; no schema enforcement \u2014 cannot be gated or audited, but does not block closes on syntax failure",
+     "New substep `hypothesis.dag_generation` between candidate_drafting and weak_evidence_review \u2014 own close_id, own artifact, own LLM call; adds replay-grade provenance to the DAG but expands the substep DAG table and touches SUBSTEP_PREREQUISITES and LLM_SUBSTEPS"
+    ],
+    "recommendation": "Encouraged-but-optional (option 2) for this design phase. A required field raises the bar correctly but mermaid/DOT syntax validation in _mpi_schemas.py is non-trivial and the LLM will produce errors; a new substep (option 3) is the rigorous path but is XL scope on its own. Document the preferred DAG node set in the agent instructions (IV node, mechanism-component nodes from generic-IDU/ISU structure, DV node, confounder nodes including the shared-method default) without enforcing graph validity at close time."
+   },
+   {
+    "question": "Should adding required fields (`rung`, `assumptions`, `confounders`, `testable_implications`) to `candidate_drafting` trigger a plugin version bump from 1.0.0?",
+    "options": [
+     "Version bump: create `microphenomenograph/1.1.0/` with the updated schema; 1.0.0 remains frozen per the 'do not edit in place after release' contract",
+     "In-place edit with an explicit policy exception: treat these as bug-fixes/extensions to a pre-production plugin that has no external dependents; document the decision in CLAUDE.md",
+     "Version bump only when a run has been completed end-to-end with 1.0.0; since no run has cleared hypothesis stage, treat current state as pre-release and edit in place"
+    ],
+    "recommendation": "Option 3 is pragmatic: no run in `runs/` has a closed candidate_drafting artifact, so no existing artifact would be invalidated. Document the rationale in CLAUDE.md. If the user expects strict semantic versioning for external consumers, use option 1."
+   },
+   {
+    "question": "Should the `confounders` list enforce the shared-method common cause entry structurally (schema checks for a confounder with a specific `mechanism` keyword) or only in agent instructions?",
+    "options": [
+     "Schema-enforced: `_validate_hypothesis_candidate_drafting` checks that at least one confounder entry mentions 'self-report' or a canonical key \u2014 fragile string matching, could produce false positives/negatives",
+     "Instruction-only: agent is told to always include the shared-method entry as the first item; schema only checks that `confounders` is a non-empty list of objects with `variable` and `mechanism` fields",
+     "Schema-enforced presence check only: `confounders` must be non-empty; no content check \u2014 human reviewer is responsible for verifying the shared-method entry is present"
+    ],
+    "recommendation": "Option 3: require non-empty list of `{variable, mechanism}` objects, no content-level check. The shared-method entry is methodological guidance that belongs in agent instructions; schema enforcement of specific wording is brittle and conflates structural validation with methodological review."
+   }
+  ],
+  "standalone_plan_viable": true,
+  "grouping_recommendation": "C9 can stand alone as a design plan titled 'Causal extension hardening for hypothesis stage'. Bundle the \u00a71.5 `replication_recommendation` minor finding into C9 \u2014 the review's \u00a74 explicitly states that `testable_implications` discharges it, and both touch the same `candidate_drafting` schema and agent instructions. The `weak_evidence_review` instruction gap (\u00a71.3 major) should be coordinated with C9 since both require the same agent-section rewrite and the rung guard interacts with the review's 'verify rung-1 framing' instruction; if assigned to a separate cluster (C6), sequence C6 before C9 or merge them. Do not bundle with C1-C5 (different pipeline stages, different files)."
+ }
+]
