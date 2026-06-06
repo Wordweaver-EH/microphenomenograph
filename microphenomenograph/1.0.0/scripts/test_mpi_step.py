@@ -3680,7 +3680,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3711,7 +3711,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3776,7 +3776,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3826,7 +3826,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3894,7 +3894,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4757,7 +4757,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4789,7 +4789,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4824,7 +4824,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4855,7 +4855,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",

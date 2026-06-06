@@ -6,6 +6,7 @@
       "hypothesis": "Higher hypnotic suggestibility is associated with greater automaticity in ideomotor responses.",
       "claims": [
         {
+          "claim_id": "c1",
           "claim_text": "Participants in the high-suggestibility condition reported less deliberate effort during movement.",
           "supports": [
             {

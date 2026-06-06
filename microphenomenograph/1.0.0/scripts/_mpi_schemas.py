@@ -406,6 +406,8 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
         errors.append(SchemaError("payload.disclaimer",
                                   f"must contain the verbatim disclaimer phrase '{required_phrase}'"))
     candidates = payload.get("candidates", [])
+    # AC2.2: claim_id must be unique across the entire artifact (all candidates)
+    seen_claim_ids: set[str] = set()
     if isinstance(candidates, list):
         for i, cand in enumerate(candidates):
             if not isinstance(cand, dict):
@@ -430,10 +432,21 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                     if not isinstance(claim, dict):
                         errors.append(SchemaError(cl_prefix, "must be an object"))
                         continue
-                    errors.extend(_require_keys(claim, ["claim_text", "supports", "contradicts",
+                    # AC2.1: claim_id is required on every claim
+                    errors.extend(_require_keys(claim, ["claim_id", "claim_text", "supports",
+                                                         "contradicts",
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
                                                          "negative_cases"], cl_prefix))
+                    # AC2.2: claim_id must be unique across the entire artifact
+                    cid = claim.get("claim_id")
+                    if cid is not None:
+                        if cid in seen_claim_ids:
+                            errors.append(SchemaError(
+                                f"payload.candidates.claims",
+                                f"duplicate claim_id {cid!r} — claim_id must be unique within the artifact"
+                            ))
+                        seen_claim_ids.add(cid)
 
                     # Validate that claim has at least one of: non-empty supports, non-empty contradicts, or not_applicable field
                     supports = claim.get("supports", [])
@@ -477,7 +490,70 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
 
 
 def _validate_hypothesis_weak_evidence_review(payload: dict) -> list[SchemaError]:
-    return _require_keys(payload, ["review_items"], "payload")
+    """Validate weak_evidence_review payload.
+
+    Requires:
+    - review_items: list of review item objects
+    - claim_ids: list of claim IDs that the review covers (the roster)
+    - Every entry in claim_ids must have a corresponding review_item
+    - Every review_item must have a claim_id, checks dict, and outcome
+    - review_items must not be empty when claim_ids is non-empty (AC2.4)
+    """
+    errors = _require_keys(payload, ["review_items", "claim_ids"], "payload")
+
+    claim_ids = payload.get("claim_ids", [])
+    review_items = payload.get("review_items", [])
+
+    # Validate claim_ids is a list
+    if not isinstance(claim_ids, list):
+        errors.append(SchemaError("payload.claim_ids", "must be a list of claim ID strings"))
+        return errors
+
+    # Validate review_items is a list
+    if not isinstance(review_items, list):
+        errors.append(SchemaError("payload.review_items", "must be a list"))
+        return errors
+
+    # AC2.4: if claim_ids is non-empty, review_items must not be empty
+    if len(claim_ids) > 0 and len(review_items) == 0:
+        errors.append(SchemaError(
+            "payload.review_items",
+            "empty review_items with non-empty claim_ids: every claim must have a review item"
+        ))
+        return errors
+
+    # Validate each review item shape
+    reviewed_claim_ids: set[str] = set()
+    for i, item in enumerate(review_items):
+        item_prefix = f"payload.review_items[{i}]"
+        if not isinstance(item, dict):
+            errors.append(SchemaError(item_prefix, "must be an object"))
+            continue
+        errors.extend(_require_keys(item, ["claim_id", "checks", "outcome"], item_prefix))
+        cid = item.get("claim_id")
+        if cid is not None:
+            reviewed_claim_ids.add(cid)
+        # Validate outcome is valid
+        outcome = item.get("outcome")
+        if outcome is not None and outcome not in ("pass", "flagged"):
+            errors.append(SchemaError(
+                f"{item_prefix}.outcome",
+                f"must be 'pass' or 'flagged', got {outcome!r}"
+            ))
+        # Validate checks is a dict
+        checks = item.get("checks")
+        if checks is not None and not isinstance(checks, dict):
+            errors.append(SchemaError(f"{item_prefix}.checks", "must be an object"))
+
+    # AC2.3: every claim_id in the roster must have a review item
+    for cid in claim_ids:
+        if cid not in reviewed_claim_ids:
+            errors.append(SchemaError(
+                "payload.review_items",
+                f"no review item found for claim_id {cid!r} — every claim must be reviewed"
+            ))
+
+    return errors
 
 
 def _validate_irr_calibration_independent_analyst(payload: dict) -> list[SchemaError]:

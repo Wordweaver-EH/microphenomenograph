@@ -174,6 +174,7 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
   "hypothesis": "<one-sentence hypothesis statement>",
   "claims": [
     {
+      "claim_id": "c1",
       "claim_text": "<specific claim being made>",
       "supports": [
         {
@@ -202,6 +203,11 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
   }
 }
 ```
+Each claim MUST carry a `claim_id`: a short deterministic string (`c1`, `c2`, …) unique
+within the candidate artifact. The `weak_evidence_review` references claims by `claim_id`;
+the schema rejects any candidate artifact missing `claim_id` or with duplicate `claim_id`
+values across the entire artifact (all candidates combined).
+
 A claim may not close without at least one of `supports` or `contradicts` being non-empty,
 OR an explicit `not_applicable` field with rationale at the claim level.
 
