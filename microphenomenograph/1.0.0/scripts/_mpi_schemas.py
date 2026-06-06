@@ -398,7 +398,7 @@ def _validate_hypothesis_evidence_extraction(payload: dict) -> list[SchemaError]
 
 
 def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
-    errors = _require_keys(payload, ["dv_focus", "disclaimer", "candidates"], "payload")
+    errors = _require_keys(payload, ["dv_focus", "disclaimer", "candidates", "replication_recommendation"], "payload")
     # Require disclaimer text
     disclaimer = payload.get("disclaimer", "")
     required_phrase = "generative conjectures"
@@ -437,7 +437,65 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                                                          "contradicts",
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
-                                                         "negative_cases"], cl_prefix))
+                                                         "negative_cases",
+                                                         "rung", "assumptions", "confounders",
+                                                         "testable_implications"], cl_prefix))
+
+                    # causal-extension AC1.1: rung >= 2 requires non-empty assumptions
+                    rung = claim.get("rung")
+                    if rung is not None and isinstance(rung, int) and rung >= 2:
+                        assumptions = claim.get("assumptions", [])
+                        if not isinstance(assumptions, list) or len(assumptions) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.assumptions",
+                                f"must be a non-empty list when rung >= 2 (rung={rung}); "
+                                "state the causal assumptions licensing the higher-rung framing"
+                            ))
+
+                    # causal-extension AC1: validate rung value (must be 1, 2, or 3)
+                    if rung is not None and rung not in (1, 2, 3):
+                        errors.append(SchemaError(
+                            f"{cl_prefix}.rung",
+                            f"must be 1, 2, or 3 (Pearl rung), got {rung!r}"
+                        ))
+
+                    # causal-extension AC1.3/AC1.4: confounders shape validation
+                    confounders = claim.get("confounders")
+                    if confounders is not None:
+                        if not isinstance(confounders, list) or len(confounders) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.confounders",
+                                "must be a non-empty list of {variable, mechanism} objects"
+                            ))
+                        else:
+                            for ci, cf in enumerate(confounders):
+                                cf_prefix = f"{cl_prefix}.confounders[{ci}]"
+                                if not isinstance(cf, dict):
+                                    errors.append(SchemaError(
+                                        cf_prefix,
+                                        "must be an object with 'variable' and 'mechanism'"
+                                    ))
+                                else:
+                                    if "variable" not in cf:
+                                        errors.append(SchemaError(
+                                            f"{cf_prefix}.variable",
+                                            "required field missing"
+                                        ))
+                                    if "mechanism" not in cf:
+                                        errors.append(SchemaError(
+                                            f"{cf_prefix}.mechanism",
+                                            "required field missing"
+                                        ))
+
+                    # causal-extension AC1: testable_implications must be non-empty list
+                    ti = claim.get("testable_implications")
+                    if ti is not None:
+                        if not isinstance(ti, list) or len(ti) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.testable_implications",
+                                "must be a non-empty list of strings (DAGitty notation)"
+                            ))
+
                     # AC2.2: claim_id must be unique across the entire artifact
                     cid = claim.get("claim_id")
                     if cid is not None:

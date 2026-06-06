@@ -1,6 +1,7 @@
 {
   "dv_focus": "automaticity",
   "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such.",
+  "replication_recommendation": "A second participant set would need to replicate the association between suggestibility score and automaticity reports.",
   "candidates": [
     {
       "hypothesis": "Higher hypnotic suggestibility is associated with greater automaticity in ideomotor responses.",
@@ -27,7 +28,11 @@
           "n_transcripts": 1,
           "n_iv_levels_covered": 1,
           "uncertainty_language": "associated with",
-          "negative_cases": []
+          "negative_cases": [],
+          "rung": 1,
+          "assumptions": [],
+          "confounders": [{"variable": "common_method_variance", "mechanism": "IV score and DV description both self-reported by same participant in same session"}],
+          "testable_implications": ["automaticity _||_ session_order | suggestibility"]
         }
       ],
       "sample_summary": {

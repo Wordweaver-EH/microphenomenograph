@@ -47,6 +47,10 @@ class TestAC2_ClaimIdCoverage:
             "n_iv_levels_covered": 2,
             "uncertainty_language": "associated with",
             "negative_cases": [],
+            "rung": 1,
+            "assumptions": [],          # empty allowed at rung=1
+            "confounders": [{"variable": "common_method_variance", "mechanism": "self-report bias"}],
+            "testable_implications": ["IV _||_ DV | CMV"],
         }
         claim.update(kwargs)
         return claim
@@ -65,6 +69,7 @@ class TestAC2_ClaimIdCoverage:
             "dv_focus": "automaticity",
             "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such.",
             "candidates": candidates,
+            "replication_recommendation": "A second participant set would need to show the same pattern to support this mechanism.",
         }
 
     def test_AC2_1_missing_claim_id_rejected(self):
