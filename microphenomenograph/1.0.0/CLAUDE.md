@@ -1,6 +1,6 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-06-05 (doc-as-done Plan 1 + Plan 2 all landed; cross-scope-prereq-resolution all 8 phases landed)_
+_Last updated: 2026-06-06 (review-remediation all 5 plans landed: GATES registry, inputs verb, IRR alignment fix + rater_kind, analysis-fidelity rules, hypothesis claim contract, causal extension)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
