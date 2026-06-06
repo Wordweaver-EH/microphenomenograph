@@ -29,7 +29,7 @@ from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acqui
 from _mpi_schemas import (
     validate_units, validate_prompt_artifact,
     SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS, COMPLETENESS_GATES,
-    GATES,
+    GATES, _scope_strip_to_event,
 )
 
 
@@ -1613,9 +1613,30 @@ def cmd_close(args: argparse.Namespace) -> int:
             if completeness_rc != 0:
                 return _abort("completeness_gate_unsatisfied")
 
-        # --- close-enforcement-2 Phase 1: warn_or_abort gate call site ---
-        # Phases 2–3 will wire single_event_global_synchronic and undeclared_input here.
-        # Placeholder intentionally empty for Phase 1.
+        # --- close-enforcement-2 Phase 2: undeclared_input gate ---
+        # If the artifact's units_payload carries inputs_consumed, verify it is a subset
+        # of the upstream paths resolved by _resolve_inputs for this (stage, scope).
+        # Absent inputs_consumed → skip (not a violation).
+        inputs_consumed = units_payload.get("inputs_consumed")
+        if inputs_consumed is not None:
+            resolved = _resolve_inputs(manifest, args.stage, args.scope)
+            if resolved is not None:
+                resolved_paths = {r["path"] for r in resolved}
+                consumed_set = set(inputs_consumed)
+                undeclared = consumed_set - resolved_paths
+                if undeclared:
+                    gate_rc = _evaluate_gate(
+                        "undeclared_input",
+                        run_dir, manifest, args, audit_path, close_id,
+                        stage=args.stage, substep=args.substep,
+                        scope=args.scope, actor=args.actor,
+                        actor_kind=getattr(args, "actor_kind", "subagent"),
+                        extra_details={"undeclared_paths": sorted(undeclared)},
+                    )
+                    if gate_rc != 0:
+                        return _abort("undeclared_input")
+
+        # Phase 3 will wire single_event_global_synchronic here.
 
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
@@ -1986,6 +2007,115 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# inputs verb: resolve upstream artifact paths from manifest (close-enforcement-2, Phase 2)
+# ---------------------------------------------------------------------------
+
+def _resolve_inputs(manifest: dict, stage: str, scope: str) -> list[dict]:
+    """
+    Resolve upstream artifact paths + SHAs for the given (stage, scope) pair.
+
+    Returns a list of dicts: [{"path": <str>, "sha256": <str>}, ...].
+    Returns None if stage is unknown (caller should return 1).
+
+    Resolution rules:
+    - generic_diachronic (scope: event<E>-cat-<C>):
+        upstream = diachronic.idu_naming_ordering artifacts for transcripts in event_groups[event_id]
+                 + synchronic.isu_second_level_grouping artifacts for pNsN-iduK participant keys
+    - generic_synchronic (scope: event<E>-cat-<C>-gidu<G>):
+        upstream = generic_diachronic.cross_iv_contrast artifacts for scope event<E>-cat-<C>
+    - global_synchronic (scope: gidu<G>-cat-<C>):
+        upstream = generic_synchronic.isu_second_level_grouping artifacts for all scopes
+                   ending with -gidu<G>
+    - hypothesis (scope: dv-<focus> or global):
+        upstream = all global_synchronic.global_synchronic artifacts (gidu<G>-cat-<C> participants)
+    """
+    participants = manifest.get("participants", {})
+    event_groups = manifest.get("study", {}).get("event_groups", {}) or {}
+
+    def _collect_artifacts(participant_key: str, stg: str, substep: str) -> list[dict]:
+        """Collect output_paths + artifact_shas for a specific participant/stage/substep."""
+        p = participants.get(participant_key, {})
+        sub_data = p.get("stages", {}).get(stg, {}).get("substeps", {}).get(substep, {})
+        paths = sub_data.get("output_paths", []) or []
+        shas = sub_data.get("artifact_shas", {}) or {}
+        return [{"path": path, "sha256": shas.get(path, "")} for path in paths]
+
+    if stage == "generic_diachronic":
+        # scope: event<E>-cat-<C>
+        # Strip category suffix to get event_id
+        event_id = _scope_strip_to_event(scope)
+        transcript_ids = event_groups.get(event_id, [])
+        result = []
+        for tid in transcript_ids:
+            # diachronic.idu_naming_ordering for the transcript participant
+            result.extend(_collect_artifacts(tid, "diachronic", "idu_naming_ordering"))
+            # synchronic.isu_second_level_grouping for all pNsN-iduK participant keys
+            for pkey in participants:
+                if pkey.startswith(tid + "-idu"):
+                    result.extend(_collect_artifacts(pkey, "synchronic", "isu_second_level_grouping"))
+        return result
+
+    elif stage == "generic_synchronic":
+        # scope: event<E>-cat-<C>-gidu<G>
+        # upstream = generic_diachronic.cross_iv_contrast for scope event<E>-cat-<C>
+        # Derive event<E>-cat-<C> by stripping the gidu suffix
+        # "event1-cat-low-gidu1" -> "event1-cat-low"
+        # Find the "-gidu" marker
+        gidu_idx = scope.rfind("-gidu")
+        if gidu_idx < 0:
+            return []
+        event_cat_scope = scope[:gidu_idx]
+        return _collect_artifacts(event_cat_scope, "generic_diachronic", "cross_iv_contrast")
+
+    elif stage == "global_synchronic":
+        # scope: gidu<G>-cat-<C>
+        # upstream = all generic_synchronic.isu_second_level_grouping whose participant key
+        # ends with -gidu<G> (i.e. matches *-gidu<G>)
+        # Parse gidu ID: scope is "gidu<G>-cat-<C>", so split on "-cat-" to get gidu part
+        parts = scope.split("-cat-")
+        gidu_suffix = "-" + parts[0]  # e.g. "-gidu1"
+        result = []
+        for pkey in participants:
+            if pkey.endswith(gidu_suffix):
+                result.extend(_collect_artifacts(pkey, "generic_synchronic", "isu_second_level_grouping"))
+        return result
+
+    elif stage == "hypothesis":
+        # upstream = all global_synchronic.global_synchronic artifacts (gidu<G>-cat-<C> participants)
+        result = []
+        for pkey in participants:
+            if pkey.startswith("gidu"):
+                result.extend(_collect_artifacts(pkey, "global_synchronic", "global_synchronic"))
+        return result
+
+    else:
+        return None  # unknown stage
+
+
+def cmd_inputs(args: argparse.Namespace) -> int:
+    """
+    Resolve upstream artifact paths + SHAs for a given (stage, scope) pair.
+
+    Prints JSON to stdout: {"resolved": [{"path": "...", "sha256": "..."}, ...]}
+    Returns 0 on success, 1 if stage/scope is unknown.
+    """
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    try:
+        manifest = _load_manifest(run_dir)
+    except FileNotFoundError as e:
+        print(f"ERROR manifest_not_found: {e}", file=sys.stderr)
+        return 1
+
+    resolved = _resolve_inputs(manifest, args.stage, args.scope)
+    if resolved is None:
+        print(f"ERROR unknown stage for inputs resolution: {args.stage!r}", file=sys.stderr)
+        return 1
+
+    print(json.dumps({"resolved": resolved}))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # verify subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -2180,6 +2310,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ah.add_argument("--reason", required=True)
     p_ah.add_argument("--run-dir", default=".", metavar="DIR")
 
+    # inputs (close-enforcement-2, Phase 2)
+    p_inputs = sub.add_parser("inputs", help="Resolve upstream artifact paths + SHAs for a given stage/scope.")
+    p_inputs.add_argument("--stage", required=True, help="Pipeline stage (e.g. generic_diachronic).")
+    p_inputs.add_argument("--scope", required=True, help="Substep scope (e.g. event1-cat-low).")
+    p_inputs.add_argument("--run-dir", default=".", metavar="DIR",
+                          help="Path to the MPI run directory (default: cwd).")
+
     # acquire-lease (Task 4: AC20.6)
     p_al = sub.add_parser("acquire-lease", help="Acquire a run-level exclusive lease (.mpi/run.lease).")
     p_al.add_argument("--run-dir", default=".", metavar="DIR")
@@ -2197,6 +2334,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "init": cmd_init,
         "close": cmd_close,
+        "inputs": cmd_inputs,
         "render": cmd_render,
         "verify": cmd_verify,
         "unlock": cmd_unlock,

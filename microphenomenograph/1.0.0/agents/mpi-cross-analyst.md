@@ -209,6 +209,14 @@ missing, empty, or malformed, return `ERROR <reason>` and stop. Never generate p
 After producing your analysis, you MUST persist it yourself before returning. Return ONLY
 the one-line status string below — never the analysis content itself. The orchestrator reads from disk.
 
+**Consumed-input declaration (required for all LLM substeps):** Include `inputs_consumed: [<path>, ...]`
+in your JSON output listing the artifact paths you actually read. This enables `cmd_close` to verify
+your inputs are a subset of the resolved upstream set (the `undeclared_input` gate). To resolve the
+correct upstream paths for your scope and stage, run:
+```bash
+python scripts/mpi_step.py inputs --stage <stage> --scope <scope> --run-dir .
+```
+
 On success: `OK <scope> <stage>.<substep> <N>units <K>flagged`
 On failure: `ERROR <scope> <stage>.<substep>: <reason>`
 

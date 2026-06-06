@@ -5226,3 +5226,508 @@ class TestValidateConfirmStudyConfig:
             # strict_gates absent
         })
         assert errors == [], f"Expected no errors when strict_gates absent, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 tests: inputs verb + consumed-input verification (AC2.1, AC2.2)
+# ---------------------------------------------------------------------------
+
+class TestInputsVerb:
+    """AC2.1: cmd_inputs resolves upstream artifact paths from manifest."""
+
+    def test_inputs_generic_diachronic_resolves_upstream_transcripts(self, tmp_path):
+        """AC2.1: generic_diachronic scope resolves diachronic/synchronic artifacts for event transcripts."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with event_groups and done diachronic/synchronic substeps
+        # with output_paths and artifact_shas
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1", "p2s1"]
+                }
+            },
+            "participants": {
+                "p1s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {
+                                    "status": "done",
+                                    "close_id": "cid1",
+                                    "output_paths": ["analyses/p1s1-diachronic.idu_naming_ordering.json",
+                                                     "analyses/p1s1-diachronic.idu_naming_ordering.md"],
+                                    "artifact_shas": {
+                                        "analyses/p1s1-diachronic.idu_naming_ordering.json": "sha_p1s1_dia",
+                                        "analyses/p1s1-diachronic.idu_naming_ordering.md": "sha_p1s1_dia_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p1s1-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid2",
+                                    "output_paths": ["analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json"],
+                                    "artifact_shas": {
+                                        "analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json": "sha_p1s1_sync",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p2s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {
+                                    "status": "done",
+                                    "close_id": "cid3",
+                                    "output_paths": ["analyses/p2s1-diachronic.idu_naming_ordering.json"],
+                                    "artifact_shas": {
+                                        "analyses/p2s1-diachronic.idu_naming_ordering.json": "sha_p2s1_dia",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p2s1-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid4",
+                                    "output_paths": ["analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json"],
+                                    "artifact_shas": {
+                                        "analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json": "sha_p2s1_sync",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="event1-cat-low",
+            stage="generic_diachronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        assert "resolved" in result, f"Output missing 'resolved' key: {result}"
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # Must include diachronic idu_naming_ordering artifacts for both transcripts
+        assert "analyses/p1s1-diachronic.idu_naming_ordering.json" in resolved_paths
+        assert "analyses/p1s1-diachronic.idu_naming_ordering.md" in resolved_paths
+        assert "analyses/p2s1-diachronic.idu_naming_ordering.json" in resolved_paths
+        # Must include synchronic isu_second_level_grouping artifacts
+        assert "analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json" in resolved_paths
+        assert "analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json" in resolved_paths
+
+        # SHAs must be populated
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map["analyses/p1s1-diachronic.idu_naming_ordering.json"] == "sha_p1s1_dia"
+        assert sha_map["analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json"] == "sha_p2s1_sync"
+
+    def test_inputs_global_synchronic_resolves_generic_synchronic_artifacts(self, tmp_path):
+        """AC2.1: global_synchronic scope resolves generic_synchronic.isu_second_level_grouping artifacts for matching gidu."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with generic_synchronic done for gidu1 across two events
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"],
+                    "event2": ["p1s2"],
+                }
+            },
+            "participants": {
+                # event1-cat-low-gidu1: matches gidu1
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid10",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json",
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json": "sha_e1_gs",
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md": "sha_e1_gs_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                # event2-cat-low-gidu1: matches gidu1
+                "event2-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid11",
+                                    "output_paths": [
+                                        "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json": "sha_e2_gs",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                # event1-cat-low-gidu2: different gidu — should NOT be included for gidu1-cat-low
+                "event1-cat-low-gidu2": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid12",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json": "sha_e1_gs2",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="gidu1-cat-low",
+            stage="global_synchronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # gidu1 scope: event1-gidu1 and event2-gidu1 included
+        assert "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json" in resolved_paths
+        assert "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md" in resolved_paths
+        assert "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json" in resolved_paths
+        # gidu2 must NOT be included
+        assert "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json" not in resolved_paths
+
+        # SHAs must be present
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map.get("analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json") == "sha_e1_gs"
+
+    def test_inputs_unknown_stage_returns_nonzero(self, tmp_path):
+        """AC2.1 guard: unknown stage returns non-zero exit code."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        args = argparse.Namespace(
+            scope="event1-cat-low",
+            stage="nonexistent_stage",
+            run_dir=str(run_dir),
+        )
+
+        rc = cmd_inputs(args)
+        assert rc != 0, "cmd_inputs should return non-zero for unknown stage"
+
+
+class TestUndeclaredInputGate:
+    """AC2.2: undeclared_input gate in cmd_close."""
+
+    def _make_manifest_with_generic_sync_done(self, run_dir: Path, artifact_path: str, artifact_sha: str) -> None:
+        """Write a manifest with done upstream substeps for closing generic_synchronic.isu_second_level_grouping.
+
+        Scope: event1-cat-low-gidu1
+        Prerequisites for isu_second_level_grouping:
+        - generic_synchronic.worksheet_assembly at event1-cat-low-gidu1 must be done
+        Also populates event1-cat-low generic_diachronic.cross_iv_contrast (used as resolved input).
+        """
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                },
+                "strict_gates": [],
+            },
+            "participants": {
+                "event1-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "cross_iv_contrast": {
+                                    "status": "done",
+                                    "close_id": "cid-upstream",
+                                    "output_paths": [artifact_path],
+                                    "artifact_shas": {artifact_path: artifact_sha},
+                                }
+                            }
+                        }
+                    }
+                },
+                # worksheet_assembly prerequisite for isu_second_level_grouping
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "worksheet_assembly": {
+                                    "status": "done",
+                                    "close_id": "cid-ws",
+                                    "output_paths": [],
+                                    "artifact_shas": {},
+                                },
+                                "select_generic_idus_of_interest": {
+                                    "status": "done",
+                                    "close_id": "cid-sel",
+                                    "output_paths": [],
+                                    "artifact_shas": {},
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    def test_inputs_consumed_subset_closes_clean(self, tmp_path):
+        """AC2.2: inputs_consumed containing only resolved paths allows close to succeed."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        # Write the upstream artifact file so it exists on disk (SHAs won't be checked here)
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # Units JSON includes inputs_consumed pointing to the resolved upstream artifact
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test clean subset",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed when inputs_consumed ⊆ resolved; got rc={rc}"
+
+    def test_inputs_consumed_superset_warns(self, tmp_path, capsys):
+        """AC2.2: inputs_consumed with a path not in resolved set triggers gate_warning; close succeeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # Include a bogus path NOT in the resolved set
+        bogus_path = "analyses/bogus_not_in_resolved.md"
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path, bogus_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test superset warns",
+            "--run-dir", str(run_dir),
+        ])
+        # Close should succeed (warn-by-default, not strict)
+        assert rc == 0, f"Close should succeed (warn mode) with undeclared input; got rc={rc}"
+
+        # Audit must have a gate_warning event for undeclared_input
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"
+                     and e.get("mpi", {}).get("gate_id") == "undeclared_input"]
+        assert len(gw_events) >= 1, (
+            f"Expected gate_warning with gate_id=undeclared_input in audit, got events: "
+            f"{[e.get('event', {}).get('action') for e in events]}"
+        )
+
+    def test_inputs_consumed_superset_strict_blocks(self, tmp_path, capsys):
+        """AC2.2: inputs_consumed path not in resolved set + --strict-undeclared-input aborts close."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        bogus_path = "analyses/bogus_not_in_resolved_strict.md"
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path, bogus_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test superset strict",
+            "--run-dir", str(run_dir),
+            "--strict-undeclared-input",
+        ])
+        assert rc != 0, f"Close should abort with --strict-undeclared-input when path not in resolved set; got rc={rc}"
+        stderr_out = capsys.readouterr().err
+        assert "undeclared_input" in stderr_out, (
+            f"Expected 'undeclared_input' in stderr, got: {stderr_out}"
+        )
+
+    def test_inputs_consumed_absent_skips_check(self, tmp_path):
+        """AC2.2: absent inputs_consumed field skips the gate entirely (not a violation)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # No inputs_consumed field
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            # inputs_consumed intentionally absent
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test no inputs_consumed",
+            "--run-dir", str(run_dir),
+            "--strict-undeclared-input",  # even with strict, absent means skip
+        ])
+        assert rc == 0, f"Close should succeed when inputs_consumed absent; got rc={rc}"
+
+        # Audit must NOT have a gate_warning for undeclared_input
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"
+                     and e.get("mpi", {}).get("gate_id") == "undeclared_input"]
+        assert len(gw_events) == 0, (
+            f"Expected no undeclared_input gate_warning when inputs_consumed absent, got: {gw_events}"
+        )
