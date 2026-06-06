@@ -1,6 +1,6 @@
 # microphenomenograph plugin
 
-_Last updated: 2026-06-04 (Plan 1 Phases 1–6 + Plan 2 Phases 7, 9–13 all landed)_
+_Last updated: 2026-06-05 (doc-as-done Plan 1 + Plan 2 all landed; cross-scope-prereq-resolution all 8 phases landed)_
 
 Implements the Sheldrake & Dienes (2025) Microphenomenological Interview (MPI) analysis pipeline as a Claude Code CLI plugin.
 
@@ -10,6 +10,8 @@ The design of record is `docs/design-plans/2026-05-17-doc-as-done.md` (commit `f
 
 - **Plan 1 (Phases 1, 2, 3, 4, 5, 6, 8) — LANDED:** helper CLI (`scripts/mpi_step.py` with `init`/`close`/`render`/`verify`/`unlock`/`accept-head`), per-substep schemas (`scripts/_mpi_schemas.py` incl. `validate_prompt_artifact`), atomic file primitives (`scripts/_mpi_atomic.py`), prompt-capture artifacts, `mpi-analyst` self-persistence (Write/Bash tools, anti-fabrication), per-transcript SKILL closure sweep via the Closure subsections in `mpi-diachronic` / `mpi-synchronic` SKILL.md. Phase 8 (closure sweep generalisation) is pending. AC11.3 (prompt artifact SHA-mismatch enforcement via replay-grade path resolution) is Plan 2 scope; at close time only schema structure is enforced.
 - **Plan 2 (Phases 7, 9–13) — ALL LANDED:** `mpi-cross-analyst` self-persistence, cross-participant SKILL closure sweep, anti-fabrication guards for cross-analyst, E2E pipeline tests; Phase 12 (docs reconciliation); Phase 13 (full IRR calibration module with `scripts/irr.py` exposing Krippendorff α + Cohen κ + αU + ARI with bootstrap CIs, auto-trigger after calibration transcript closes, --strict-irr gate for cross-participant stages).
+
+A second, distinct design — `docs/design-plans/2026-06-05-cross-scope-prereq-resolution.md` (the pipeline-correctness plan, **all 8 phases LANDED**) — hardens close-time enforcement on top of doc-as-done: `study.event_groups` / `study.dv_focuses` / `study.dv_focuses_provenance` manifest fields written at `confirm_study_config`; `PREREQ_SCOPE_TRANSFORMS` + `_scope_strip_to_event` for cross-scope prerequisite resolution in `cmd_close`; `COMPLETENESS_GATES` + `_check_completeness_gate` enforcing cross-participant coverage at close and swept by `cmd_verify`; DV-focus enforcement (undeclared-focus guard at `hypothesis.evidence_extraction`); `acquire_close_lock` serialising the `cmd_close` manifest block; `transcript_prep` substep registration (`hash_raw`/`normalize`/`register_offsets`); flat-dict offset-format enforcement. These mechanisms are documented in the Substep DAG, prerequisite gates, offset contract, and manifest sections below.
 
 The "Substep DAG" / "Data formats" / "Execution modes" sections below describe stages that still run via the legacy paths until each phase's closure sweep lands; new artifacts already go through `mpi_step.py close`.
 
@@ -74,11 +76,12 @@ Example: `Participant 1, Suggestion 2 (Scored 3/5)` → p=1, s=2, score=3
 Runtime state file. Top-level structure:
 - `version`: `"2.0"`
 - `run_id`: UUID4 string
-- `study`: `{run_repo_mode, git_remote_configured, calibration_transcript_ids: [], calibration_mode?, event_groups?, dv_focuses?, config_provenance?}`
+- `study`: `{run_repo_mode, git_remote_configured, calibration_transcript_ids: [], calibration_mode?, event_groups?, dv_focuses?, dv_focuses_provenance?, config_provenance?}`
   - `calibration_transcript_ids`: list of transcript IDs selected for IRR calibration (e.g., `["p1s1", "p3s2"]` for stratified mode)
   - `calibration_mode`: optional string, either `"stratified"` (default, one per IV-level stratum) or `"smoke_test"` (first available)
   - `event_groups`: dict mapping event IDs (e.g. `"event1"`) to lists of transcript IDs. Written at `init.confirm_study_config` close. Study-design-agnostic — any string event ID, any transcript list. Required by completeness gates (Phase 7).
   - `dv_focuses`: optional list of researcher-declared dependent variable focus labels (e.g. `["automaticity", "attention"]`), or `null` when focuses are LLM-derived. Written at `init.confirm_study_config` close.
+  - `dv_focuses_provenance`: `"researcher_specified"` when `study.dv_focuses` was declared; `"emergent"` when null. Written automatically at `confirm_study_config` close alongside `dv_focuses`.
   - `config_provenance`: how the study config was determined (`"preregistered"`, `"user_specified"`, `"llm_proposed_user_confirmed"`). Immutable after `confirm_study_config`.
 - `participants`: dict keyed by participant scope (e.g. `p1s1`, `p1s1-idu1`), each with:
   - `stages`: dict keyed by stage name, each with:
