@@ -2202,7 +2202,10 @@ def _resolve_inputs(manifest: dict, stage: str, scope: str) -> list[dict]:
         upstream = generic_synchronic.isu_second_level_grouping artifacts for all scopes
                    ending with -gidu<G>
     - hypothesis (scope: dv-<focus> or global):
-        upstream = all global_synchronic.global_synchronic artifacts (gidu<G>-cat-<C> participants)
+        upstream = fan-in of all three cross-participant analysis artifact sets:
+                   global_synchronic.global_synchronic (gidu<G>-cat-<C> participants)
+                   + generic_synchronic.isu_second_level_grouping (event<E>-cat-<C>-gidu<G> participants)
+                   + generic_diachronic.cross_iv_contrast (event<E>-cat-<C> participants)
     """
     participants = manifest.get("participants", {})
     event_groups = manifest.get("study", {}).get("event_groups", {}) or {}
@@ -2256,11 +2259,21 @@ def _resolve_inputs(manifest: dict, stage: str, scope: str) -> list[dict]:
         return result
 
     elif stage == "hypothesis":
-        # upstream = all global_synchronic.global_synchronic artifacts (gidu<G>-cat-<C> participants)
+        # Fan-in: all three cross-participant analysis artifact sets for the study.
+        # global_synchronic  (keys: gidu<G>-cat-<C> — start with "gidu")
+        # generic_synchronic (keys: event<E>-cat-<C>-gidu<G> — contain "-cat-" AND "-gidu")
+        # generic_diachronic (keys: event<E>-cat-<C> — contain "-cat-", no "-gidu")
         result = []
         for pkey in participants:
             if pkey.startswith("gidu"):
+                # global_synchronic artifacts
                 result.extend(_collect_artifacts(pkey, "global_synchronic", "global_synchronic"))
+            elif "-cat-" in pkey and "-gidu" in pkey:
+                # generic_synchronic artifacts (event<E>-cat-<C>-gidu<G> keys)
+                result.extend(_collect_artifacts(pkey, "generic_synchronic", "isu_second_level_grouping"))
+            elif "-cat-" in pkey:
+                # generic_diachronic artifacts (event<E>-cat-<C> keys)
+                result.extend(_collect_artifacts(pkey, "generic_diachronic", "cross_iv_contrast"))
         return result
 
     else:

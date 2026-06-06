@@ -11,15 +11,22 @@ Generate structured research hypotheses from the global synchronic analysis. Req
 ## Prerequisites
 
 - `.mpi/project.json` must exist
-- `global_synchronic.status == "done"` in manifest
-- `analyses/global-synchronic.md` must exist
+- All `global_synchronic.*`, `generic_diachronic.*`, and `generic_synchronic.*` substeps `done` in manifest
 - `bookowhy_rev.md` must be readable (check: first look at `bookowhy_rev.md` relative
   to the current working directory, then at the repo root)
 
 ## Context documents
 
+Resolve all upstream analysis artifacts using the `inputs` verb:
+```bash
+python scripts/mpi_step.py inputs --stage hypothesis --scope <dv-focus-scope> --run-dir .
+```
+This returns all three cross-participant artifact sets as a JSON list:
+`{resolved: [{path, sha256}, ...]}` — includes `generic_diachronic.cross_iv_contrast`,
+`generic_synchronic.isu_second_level_grouping`, and `global_synchronic.global_synchronic` artifacts.
+
 Read and pass to the cross-analyst:
-1. `analyses/global-synchronic.md` — the patterns to hypothesise from
+1. All resolved artifact paths from the `inputs` verb — the complete evidence base
 2. `bookowhy_rev.md` — causal framing context (Pearl's causal hierarchy: association,
    intervention, counterfactual)
 
@@ -27,7 +34,7 @@ Read and pass to the cross-analyst:
 
 Invoke `mpi-cross-analyst` with:
 - Task type: `hypothesis_generation`
-- Content of `analyses/global-synchronic.md`
+- All resolved analysis artifacts (paths from `inputs` verb output)
 - Content of `bookowhy_rev.md` labelled as "Causal framing context:"
 - Instruction:
   ```
