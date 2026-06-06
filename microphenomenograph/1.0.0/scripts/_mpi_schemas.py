@@ -83,8 +83,17 @@ def _check_utterance_refs(obj: dict, prefix: str) -> list[SchemaError]:
 # IDU validator (shared by diachronic substeps)
 # ---------------------------------------------------------------------------
 
-_IDU_REQUIRED = ["idu_number", "idu_name", "moment", "criteria", "confidence",
-                  "flag_for_review", "utterance_numbers", "hinge_to_next", "utterance_refs"]
+# Fields required at ALL diachronic substeps
+_IDU_BASE_REQUIRED = ["idu_number", "criteria", "confidence",
+                      "flag_for_review", "utterance_numbers", "hinge_to_next",
+                      "utterance_refs"]
+
+# Additional fields required ONLY at idu_naming_ordering (naming must be locked)
+_IDU_NAMING_REQUIRED = ["idu_name", "moment"]
+
+# Back-compat alias: refers to the full set (idu_naming_ordering contract)
+_IDU_REQUIRED = _IDU_BASE_REQUIRED + _IDU_NAMING_REQUIRED
+
 _IDU_DRIFT_ALIASES = {
     "title": "idu_name",
     "name": "idu_name",
@@ -93,8 +102,10 @@ _IDU_DRIFT_ALIASES = {
 }
 
 
-def _validate_idu(idu: dict, prefix: str, is_last: bool = False) -> list[SchemaError]:
-    errors = _require_keys(idu, _IDU_REQUIRED, prefix)
+def _validate_idu(idu: dict, prefix: str, is_last: bool = False,
+                  require_naming: bool = True) -> list[SchemaError]:
+    required = _IDU_BASE_REQUIRED + (_IDU_NAMING_REQUIRED if require_naming else [])
+    errors = _require_keys(idu, required, prefix)
     errors.extend(_reject_drift_keys(idu, set(_IDU_REQUIRED), _IDU_DRIFT_ALIASES, prefix))
     errors.extend(_check_confidence(idu, prefix))
     errors.extend(_check_flag_for_review(idu, prefix))
@@ -141,7 +152,10 @@ def _validate_diachronic_criteria_grouping(payload: dict) -> list[SchemaError]:
         return errors
     for i, idu in enumerate(idus):
         is_last = (i == len(idus) - 1)
-        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last))
+        # idu_name and moment are NOT required at criteria_grouping/criteria_revision —
+        # naming is deferred until idu_naming_ordering (analysis-fidelity AC4.1)
+        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last,
+                                    require_naming=False))
     return errors
 
 
@@ -165,7 +179,18 @@ def _validate_diachronic_criteria_revision(payload: dict) -> list[SchemaError]:
 
 
 def _validate_diachronic_idu_naming_ordering(payload: dict) -> list[SchemaError]:
-    return _validate_diachronic_criteria_grouping(payload)
+    # At idu_naming_ordering, idu_name and moment MUST be populated on every IDU —
+    # naming must be locked before advancing to synchronic analysis (analysis-fidelity AC4.2)
+    errors = _require_keys(payload, ["analysis_type", "participant", "idus"], "payload")
+    idus = payload.get("idus", [])
+    if not isinstance(idus, list):
+        errors.append(SchemaError("payload.idus", "must be a list"))
+        return errors
+    for i, idu in enumerate(idus):
+        is_last = (i == len(idus) - 1)
+        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last,
+                                    require_naming=True))
+    return errors
 
 
 def _validate_synchronic_theme_grouping(payload: dict) -> list[SchemaError]:

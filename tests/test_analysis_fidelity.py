@@ -1,12 +1,14 @@
 """
 Analysis Fidelity tests — covers ACs for design plan 2026-06-05-analysis-fidelity.
 
-Phase 1 (this file): AC1.1, AC1.2, AC2.1, AC2.2, AC2.3
+Phase 1: AC1.1, AC1.2, AC2.1, AC2.2, AC2.3
   - Within-IDU grouping enforcement for generic_synchronic
   - Common/optional pattern semantics for pattern_identification
 
-Only Phase 1 test classes are present here. Phases 2 and 3 will add their
-own classes to this file when implemented.
+Phase 2: AC3.1, AC4.1, AC4.2
+  - Linkage-phrase boundary rule in mpi-analyst.md
+  - Naming deferred to convergence: idu_name/moment optional at criteria_grouping/criteria_revision,
+    required at idu_naming_ordering
 """
 import sys
 from pathlib import Path
@@ -247,4 +249,156 @@ class TestAC2_PatternCommonOptional:
         assert has_merge_eval or has_optimum, (
             "mpi-cross-analyst.md must mention merge evaluation or optimum-small-set criterion "
             "in generic-diachronic pattern instructions"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: AC3.1, AC4.1, AC4.2
+# ---------------------------------------------------------------------------
+
+
+class TestAC3_LinkagePhraseRule:
+    """AC3: Linkage-phrase boundary rule is present in mpi-analyst.md."""
+
+    def test_AC3_1_agent_contains_linkage_phrase_examples(self):
+        """AC3.1 Success: mpi-analyst.md diachronic rules mention 'and then' and 'after that'."""
+        content = (PLUGIN_ROOT / "agents" / "mpi-analyst.md").read_text(encoding="utf-8")
+        assert "and then" in content, (
+            "mpi-analyst.md diachronic rules must mention 'and then' as a temporal linkage phrase"
+        )
+        assert "after that" in content, (
+            "mpi-analyst.md diachronic rules must mention 'after that' as a temporal linkage phrase"
+        )
+
+    def test_AC3_1_agent_contains_outranks_or_overrides_language(self):
+        """AC3.1 Success: mpi-analyst.md states linkage-phrase rule outranks prefer-fewer-IDUs heuristic."""
+        content = (PLUGIN_ROOT / "agents" / "mpi-analyst.md").read_text(encoding="utf-8")
+        assert "outranks" in content or "overrides" in content, (
+            "mpi-analyst.md must state that the linkage-phrase rule outranks or overrides "
+            "the prefer-fewer-IDUs heuristic"
+        )
+
+    def test_AC3_1_agent_contains_boundary_signal_language(self):
+        """AC3.1 Success: mpi-analyst.md names linkage phrases as boundary signals."""
+        content = (PLUGIN_ROOT / "agents" / "mpi-analyst.md").read_text(encoding="utf-8")
+        assert "boundary" in content.lower(), (
+            "mpi-analyst.md must describe temporal linkage phrases as IDU boundary signals"
+        )
+
+
+class TestAC4_NamingDeferred:
+    """AC4: idu_name/moment optional at criteria_grouping/criteria_revision,
+    required at idu_naming_ordering."""
+
+    def _idu_without_naming(self) -> dict:
+        """IDU dict without idu_name or moment — valid at criteria_grouping."""
+        return {
+            "idu_number": 1,
+            "criteria": "The utterances talk about starting.",
+            "confidence": 3,
+            "flag_for_review": False,
+            "utterance_numbers": ["1"],
+            "hinge_to_next": None,
+            "utterance_refs": [{
+                "transcript_id": "p1s1",
+                "utterance_number": 1,
+                "byte_start": 0,
+                "byte_end": 5,
+                "raw_excerpt": "hello",
+            }],
+        }
+
+    def _idu_with_naming(self) -> dict:
+        """IDU dict with idu_name and moment — required at idu_naming_ordering."""
+        d = self._idu_without_naming()
+        d["idu_name"] = "Initial Contact"
+        d["moment"] = 1
+        return d
+
+    def test_AC4_1_criteria_grouping_accepts_idu_without_naming(self):
+        """AC4.1 Success: criteria_grouping close accepted without idu_name/moment."""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [self._idu_without_naming()],
+        }
+        errors = validate_units("diachronic", "criteria_grouping", payload)
+        assert errors == [], f"Unexpected errors at criteria_grouping without naming: {errors}"
+
+    def test_AC4_1_criteria_revision_accepts_idu_without_naming(self):
+        """AC4.1 variant: criteria_revision close also accepted without idu_name/moment."""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [self._idu_without_naming()],
+            "convergence": {"decision": "converged", "reason": "IDU grouping is stable."},
+        }
+        errors = validate_units("diachronic", "criteria_revision", payload)
+        assert errors == [], f"Unexpected errors at criteria_revision without naming: {errors}"
+
+    def test_AC4_1_criteria_grouping_also_accepts_idu_with_naming(self):
+        """AC4.1 backward-compat: criteria_grouping still accepts IDUs that include idu_name/moment."""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [self._idu_with_naming()],
+        }
+        errors = validate_units("diachronic", "criteria_grouping", payload)
+        assert errors == [], f"criteria_grouping must accept IDUs that supply idu_name/moment: {errors}"
+
+    def test_AC4_2_idu_naming_ordering_rejects_without_idu_name(self):
+        """AC4.2 Failure: idu_naming_ordering rejected when idu_name absent."""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [self._idu_without_naming()],
+        }
+        errors = validate_units("diachronic", "idu_naming_ordering", payload)
+        assert any("idu_name" in e.field for e in errors), (
+            f"Expected idu_name error at idu_naming_ordering; got: {errors}"
+        )
+
+    def test_AC4_2_idu_naming_ordering_rejects_without_moment(self):
+        """AC4.2 Failure: idu_naming_ordering rejected when moment absent but idu_name present."""
+        idu = self._idu_without_naming()
+        idu["idu_name"] = "Initial Contact"
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [idu],
+        }
+        errors = validate_units("diachronic", "idu_naming_ordering", payload)
+        assert any("moment" in e.field for e in errors), (
+            f"Expected moment error at idu_naming_ordering; got: {errors}"
+        )
+
+    def test_AC4_2_idu_naming_ordering_accepts_full_payload(self):
+        """AC4.2 Success path: idu_naming_ordering accepted with idu_name and moment."""
+        payload = {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [self._idu_with_naming()],
+        }
+        errors = validate_units("diachronic", "idu_naming_ordering", payload)
+        assert errors == [], f"Unexpected errors at idu_naming_ordering with full naming: {errors}"
+
+    def test_AC4_validators_are_not_byte_identical(self):
+        """Phase 2 structural check: idu_naming_ordering validator is no longer byte-identical
+        to criteria_grouping (confirms confirmed review finding is resolved)."""
+        import inspect
+        import _mpi_schemas as schemas
+        cg_src = inspect.getsource(schemas._validate_diachronic_criteria_grouping)
+        ino_src = inspect.getsource(schemas._validate_diachronic_idu_naming_ordering)
+        assert cg_src != ino_src, (
+            "_validate_diachronic_idu_naming_ordering must differ from "
+            "_validate_diachronic_criteria_grouping (naming fields split)"
+        )
+
+    def test_AC4_agent_contains_naming_deferred_rule(self):
+        """AC4 doc check: mpi-analyst.md states idu_name/moment are deferred until idu_naming_ordering."""
+        content = (PLUGIN_ROOT / "agents" / "mpi-analyst.md").read_text(encoding="utf-8")
+        lower = content.lower()
+        # Must mention that naming is deferred or not required at criteria_grouping
+        assert "defer" in lower or "idu_naming_ordering" in content, (
+            "mpi-analyst.md must state that idu_name/moment are deferred until idu_naming_ordering"
         )
