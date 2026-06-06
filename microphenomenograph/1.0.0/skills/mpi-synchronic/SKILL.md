@@ -82,7 +82,7 @@ Scope for each substep is `pNsN-iduN` (e.g., `p1s1-idu1`, `p1s1-idu2`).
 
 | Substep | Actor | Artifacts | Notes |
 |---------|-------|-----------|-------|
-| `synchronic.theme_grouping_within_idu` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.theme_grouping_within_idu.{json,md,prompt.json}` | First synchronic substep per IDU. If `temporal_order_within_idu: true`, orchestrator schedules `diachronic.criteria_revision` re-close for that transcript before continuing |
+| `synchronic.theme_grouping_within_idu` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.theme_grouping_within_idu.{json,md,prompt.json}` | First synchronic substep per IDU. If `temporal_order_within_idu: true`, `cmd_close` automatically downgrades to `flagged` (blocking `isu_naming`); `temporal_order_within_idu: true` also requires ≥1 ISU with `flag_for_review: true` (hard schema). Manifest records `idu_split_after_synchronic` audit event when a diachronic re-close follows this flag. |
 | `synchronic.isu_naming` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.isu_naming.{json,md,prompt.json}` | Requires `theme_grouping_within_idu` done for same IDU |
 | `synchronic.isu_second_level_grouping` | mpi-analyst (LLM) | `pNsN-iduN-synchronic.isu_second_level_grouping.{json,md,prompt.json}` | Final synchronic substep per IDU |
 

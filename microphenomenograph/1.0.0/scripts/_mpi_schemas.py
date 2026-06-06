@@ -83,8 +83,17 @@ def _check_utterance_refs(obj: dict, prefix: str) -> list[SchemaError]:
 # IDU validator (shared by diachronic substeps)
 # ---------------------------------------------------------------------------
 
-_IDU_REQUIRED = ["idu_number", "idu_name", "moment", "criteria", "confidence",
-                  "flag_for_review", "utterance_numbers", "hinge_to_next", "utterance_refs"]
+# Fields required at ALL diachronic substeps
+_IDU_BASE_REQUIRED = ["idu_number", "criteria", "confidence",
+                      "flag_for_review", "utterance_numbers", "hinge_to_next",
+                      "utterance_refs"]
+
+# Additional fields required ONLY at idu_naming_ordering (naming must be locked)
+_IDU_NAMING_REQUIRED = ["idu_name", "moment"]
+
+# Back-compat alias: refers to the full set (idu_naming_ordering contract)
+_IDU_REQUIRED = _IDU_BASE_REQUIRED + _IDU_NAMING_REQUIRED
+
 _IDU_DRIFT_ALIASES = {
     "title": "idu_name",
     "name": "idu_name",
@@ -93,8 +102,10 @@ _IDU_DRIFT_ALIASES = {
 }
 
 
-def _validate_idu(idu: dict, prefix: str, is_last: bool = False) -> list[SchemaError]:
-    errors = _require_keys(idu, _IDU_REQUIRED, prefix)
+def _validate_idu(idu: dict, prefix: str, is_last: bool = False,
+                  require_naming: bool = True) -> list[SchemaError]:
+    required = _IDU_BASE_REQUIRED + (_IDU_NAMING_REQUIRED if require_naming else [])
+    errors = _require_keys(idu, required, prefix)
     errors.extend(_reject_drift_keys(idu, set(_IDU_REQUIRED), _IDU_DRIFT_ALIASES, prefix))
     errors.extend(_check_confidence(idu, prefix))
     errors.extend(_check_flag_for_review(idu, prefix))
@@ -141,7 +152,10 @@ def _validate_diachronic_criteria_grouping(payload: dict) -> list[SchemaError]:
         return errors
     for i, idu in enumerate(idus):
         is_last = (i == len(idus) - 1)
-        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last))
+        # idu_name and moment are NOT required at criteria_grouping/criteria_revision —
+        # naming is deferred until idu_naming_ordering (analysis-fidelity AC4.1)
+        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last,
+                                    require_naming=False))
     return errors
 
 
@@ -165,7 +179,18 @@ def _validate_diachronic_criteria_revision(payload: dict) -> list[SchemaError]:
 
 
 def _validate_diachronic_idu_naming_ordering(payload: dict) -> list[SchemaError]:
-    return _validate_diachronic_criteria_grouping(payload)
+    # At idu_naming_ordering, idu_name and moment MUST be populated on every IDU —
+    # naming must be locked before advancing to synchronic analysis (analysis-fidelity AC4.2)
+    errors = _require_keys(payload, ["analysis_type", "participant", "idus"], "payload")
+    idus = payload.get("idus", [])
+    if not isinstance(idus, list):
+        errors.append(SchemaError("payload.idus", "must be a list"))
+        return errors
+    for i, idu in enumerate(idus):
+        is_last = (i == len(idus) - 1)
+        errors.extend(_validate_idu(idu, f"payload.idus[{i}]", is_last=is_last,
+                                    require_naming=True))
+    return errors
 
 
 def _validate_synchronic_theme_grouping(payload: dict) -> list[SchemaError]:
@@ -181,6 +206,18 @@ def _validate_synchronic_theme_grouping(payload: dict) -> list[SchemaError]:
         return errors
     for i, isu in enumerate(isus):
         errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=False))
+    # AC4.3: co-presence rule — temporal_order_within_idu=true requires ≥1 ISU with flag_for_review=true
+    if flag is True:
+        any_flagged = any(
+            isinstance(isu, dict) and isu.get("flag_for_review") is True
+            for isu in isus
+        )
+        if not any_flagged:
+            errors.append(SchemaError(
+                "payload.temporal_order_within_idu",
+                "co-presence rule: temporal_order_within_idu=true requires "
+                "at least one ISU with flag_for_review=true"
+            ))
     return errors
 
 
@@ -225,6 +262,50 @@ def _validate_generic_diachronic_pattern_identification(payload: dict) -> list[S
         for i, pat in enumerate(patterns):
             if isinstance(pat, dict):
                 errors.extend(_check_utterance_refs(pat, f"payload.patterns[{i}]"))
+                # AC2.1: common_idus required and non-empty (invariant IDU elements)
+                common = pat.get("common_idus")
+                if common is None:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].common_idus",
+                        "required field missing (non-empty list of common IDU labels — "
+                        "IDUs appearing in ≥ 2 participants for this pattern)"
+                    ))
+                elif not isinstance(common, list) or len(common) == 0:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].common_idus",
+                        "must be a non-empty list of common IDU labels"
+                    ))
+                # AC2.2: optional_idus required (may be empty — invariant patterns representable)
+                if "optional_idus" not in pat:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].optional_idus",
+                        "required field missing (list of optional IDU labels, may be empty)"
+                    ))
+                elif not isinstance(pat["optional_idus"], list):
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].optional_idus",
+                        "must be a list (may be empty)"
+                    ))
+                # AC2.1: covered_participant_keys required, non-empty list of strings
+                cpk = pat.get("covered_participant_keys")
+                if cpk is None:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].covered_participant_keys",
+                        "required field missing (non-empty list of participant key strings, "
+                        "e.g. [\"p1s1\", \"p3s1\"])"
+                    ))
+                elif not isinstance(cpk, list) or len(cpk) == 0:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].covered_participant_keys",
+                        "must be a non-empty list of participant key strings"
+                    ))
+                else:
+                    for j, k in enumerate(cpk):
+                        if not isinstance(k, str):
+                            errors.append(SchemaError(
+                                f"payload.patterns[{i}].covered_participant_keys[{j}]",
+                                "must be a string participant key"
+                            ))
             else:
                 errors.append(SchemaError(f"payload.patterns[{i}]", f"must be an object, got {type(pat).__name__}"))
     return errors
@@ -262,10 +343,25 @@ def _validate_generic_synchronic_worksheet_assembly(payload: dict) -> list[Schem
 def _validate_generic_synchronic_isu_second_level(payload: dict) -> list[SchemaError]:
     errors = _require_keys(payload, ["event", "iv_category", "generic_idu", "isus"], "payload")
     isus = payload.get("isus", [])
+    generic_idu = payload.get("generic_idu")
     if isinstance(isus, list):
         for i, isu in enumerate(isus):
             if isinstance(isu, dict):
                 errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+                # AC1.1: source_generic_idu required and must match payload.generic_idu
+                if "source_generic_idu" not in isu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_generic_idu",
+                        "required field missing — must equal payload.generic_idu "
+                        "(within-IDU grouping: ISUs are grouped within the target generic IDU only)"
+                    ))
+                elif generic_idu is not None and isu["source_generic_idu"] != generic_idu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_generic_idu",
+                        f"must equal payload.generic_idu ({generic_idu!r}), "
+                        f"got {isu['source_generic_idu']!r} — "
+                        "cross-IDU synthesis belongs to global synchronic, not here"
+                    ))
             else:
                 errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
     return errors
@@ -278,6 +374,12 @@ def _validate_global_synchronic(payload: dict) -> list[SchemaError]:
         for i, isu in enumerate(isus):
             if isinstance(isu, dict):
                 errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+                # AC3.1: source_event is required on each global-synchronic ISU (hard shape)
+                if "source_event" not in isu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_event",
+                        "required field missing (must name the event this ISU came from, e.g. 'event1')",
+                    ))
             else:
                 errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
     return errors
@@ -296,7 +398,7 @@ def _validate_hypothesis_evidence_extraction(payload: dict) -> list[SchemaError]
 
 
 def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
-    errors = _require_keys(payload, ["dv_focus", "disclaimer", "candidates"], "payload")
+    errors = _require_keys(payload, ["dv_focus", "disclaimer", "candidates", "replication_recommendation"], "payload")
     # Require disclaimer text
     disclaimer = payload.get("disclaimer", "")
     required_phrase = "generative conjectures"
@@ -304,6 +406,8 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
         errors.append(SchemaError("payload.disclaimer",
                                   f"must contain the verbatim disclaimer phrase '{required_phrase}'"))
     candidates = payload.get("candidates", [])
+    # AC2.2: claim_id must be unique across the entire artifact (all candidates)
+    seen_claim_ids: set[str] = set()
     if isinstance(candidates, list):
         for i, cand in enumerate(candidates):
             if not isinstance(cand, dict):
@@ -328,10 +432,79 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
                     if not isinstance(claim, dict):
                         errors.append(SchemaError(cl_prefix, "must be an object"))
                         continue
-                    errors.extend(_require_keys(claim, ["claim_text", "supports", "contradicts",
+                    # AC2.1: claim_id is required on every claim
+                    errors.extend(_require_keys(claim, ["claim_id", "claim_text", "supports",
+                                                         "contradicts",
                                                          "ambiguous", "n_transcripts",
                                                          "n_iv_levels_covered", "uncertainty_language",
-                                                         "negative_cases"], cl_prefix))
+                                                         "negative_cases",
+                                                         "rung", "assumptions", "confounders",
+                                                         "testable_implications"], cl_prefix))
+
+                    # causal-extension AC1.1: rung >= 2 requires non-empty assumptions
+                    rung = claim.get("rung")
+                    if rung is not None and isinstance(rung, int) and rung >= 2:
+                        assumptions = claim.get("assumptions", [])
+                        if not isinstance(assumptions, list) or len(assumptions) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.assumptions",
+                                f"must be a non-empty list when rung >= 2 (rung={rung}); "
+                                "state the causal assumptions licensing the higher-rung framing"
+                            ))
+
+                    # causal-extension AC1: validate rung value (must be 1, 2, or 3)
+                    if rung is not None and rung not in (1, 2, 3):
+                        errors.append(SchemaError(
+                            f"{cl_prefix}.rung",
+                            f"must be 1, 2, or 3 (Pearl rung), got {rung!r}"
+                        ))
+
+                    # causal-extension AC1.3/AC1.4: confounders shape validation
+                    confounders = claim.get("confounders")
+                    if confounders is not None:
+                        if not isinstance(confounders, list) or len(confounders) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.confounders",
+                                "must be a non-empty list of {variable, mechanism} objects"
+                            ))
+                        else:
+                            for ci, cf in enumerate(confounders):
+                                cf_prefix = f"{cl_prefix}.confounders[{ci}]"
+                                if not isinstance(cf, dict):
+                                    errors.append(SchemaError(
+                                        cf_prefix,
+                                        "must be an object with 'variable' and 'mechanism'"
+                                    ))
+                                else:
+                                    if "variable" not in cf:
+                                        errors.append(SchemaError(
+                                            f"{cf_prefix}.variable",
+                                            "required field missing"
+                                        ))
+                                    if "mechanism" not in cf:
+                                        errors.append(SchemaError(
+                                            f"{cf_prefix}.mechanism",
+                                            "required field missing"
+                                        ))
+
+                    # causal-extension AC1: testable_implications must be non-empty list
+                    ti = claim.get("testable_implications")
+                    if ti is not None:
+                        if not isinstance(ti, list) or len(ti) == 0:
+                            errors.append(SchemaError(
+                                f"{cl_prefix}.testable_implications",
+                                "must be a non-empty list of strings (DAGitty notation)"
+                            ))
+
+                    # AC2.2: claim_id must be unique across the entire artifact
+                    cid = claim.get("claim_id")
+                    if cid is not None:
+                        if cid in seen_claim_ids:
+                            errors.append(SchemaError(
+                                f"payload.candidates.claims",
+                                f"duplicate claim_id {cid!r} — claim_id must be unique within the artifact"
+                            ))
+                        seen_claim_ids.add(cid)
 
                     # Validate that claim has at least one of: non-empty supports, non-empty contradicts, or not_applicable field
                     supports = claim.get("supports", [])
@@ -375,7 +548,70 @@ def _validate_hypothesis_candidate_drafting(payload: dict) -> list[SchemaError]:
 
 
 def _validate_hypothesis_weak_evidence_review(payload: dict) -> list[SchemaError]:
-    return _require_keys(payload, ["review_items"], "payload")
+    """Validate weak_evidence_review payload.
+
+    Requires:
+    - review_items: list of review item objects
+    - claim_ids: list of claim IDs that the review covers (the roster)
+    - Every entry in claim_ids must have a corresponding review_item
+    - Every review_item must have a claim_id, checks dict, and outcome
+    - review_items must not be empty when claim_ids is non-empty (AC2.4)
+    """
+    errors = _require_keys(payload, ["review_items", "claim_ids"], "payload")
+
+    claim_ids = payload.get("claim_ids", [])
+    review_items = payload.get("review_items", [])
+
+    # Validate claim_ids is a list
+    if not isinstance(claim_ids, list):
+        errors.append(SchemaError("payload.claim_ids", "must be a list of claim ID strings"))
+        return errors
+
+    # Validate review_items is a list
+    if not isinstance(review_items, list):
+        errors.append(SchemaError("payload.review_items", "must be a list"))
+        return errors
+
+    # AC2.4: if claim_ids is non-empty, review_items must not be empty
+    if len(claim_ids) > 0 and len(review_items) == 0:
+        errors.append(SchemaError(
+            "payload.review_items",
+            "empty review_items with non-empty claim_ids: every claim must have a review item"
+        ))
+        return errors
+
+    # Validate each review item shape
+    reviewed_claim_ids: set[str] = set()
+    for i, item in enumerate(review_items):
+        item_prefix = f"payload.review_items[{i}]"
+        if not isinstance(item, dict):
+            errors.append(SchemaError(item_prefix, "must be an object"))
+            continue
+        errors.extend(_require_keys(item, ["claim_id", "checks", "outcome"], item_prefix))
+        cid = item.get("claim_id")
+        if cid is not None:
+            reviewed_claim_ids.add(cid)
+        # Validate outcome is valid
+        outcome = item.get("outcome")
+        if outcome is not None and outcome not in ("pass", "flagged"):
+            errors.append(SchemaError(
+                f"{item_prefix}.outcome",
+                f"must be 'pass' or 'flagged', got {outcome!r}"
+            ))
+        # Validate checks is a dict
+        checks = item.get("checks")
+        if checks is not None and not isinstance(checks, dict):
+            errors.append(SchemaError(f"{item_prefix}.checks", "must be an object"))
+
+    # AC2.3: every claim_id in the roster must have a review item
+    for cid in claim_ids:
+        if cid not in reviewed_claim_ids:
+            errors.append(SchemaError(
+                "payload.review_items",
+                f"no review item found for claim_id {cid!r} — every claim must be reviewed"
+            ))
+
+    return errors
 
 
 def _validate_irr_calibration_independent_analyst(payload: dict) -> list[SchemaError]:
@@ -388,7 +624,11 @@ def _validate_irr_calibration_alignment(payload: dict) -> list[SchemaError]:
 
 
 def _validate_irr_calibration_agreement_computation(payload: dict) -> list[SchemaError]:
-    return _require_keys(payload, ["stage", "participant_id", "metrics", "outcome"], "payload")
+    return _require_keys(
+        payload,
+        ["stage", "participant_id", "metrics", "outcome", "rater_kind", "caveat"],
+        "payload"
+    )
 
 
 def _validate_transcript_prep_hash_raw(payload: dict) -> list[SchemaError]:
@@ -524,6 +764,20 @@ def _validate_init_confirm_study_config(payload: dict) -> list[SchemaError]:
             for i, f in enumerate(dv):
                 if not isinstance(f, str):
                     errors.append(SchemaError(f"payload.dv_focuses[{i}]", "must be a string"))
+    # Optional strict_gates: list of known gate IDs
+    sg = payload.get("strict_gates")
+    if sg is not None:
+        if not isinstance(sg, list):
+            errors.append(SchemaError("payload.strict_gates", "must be a list of gate ID strings"))
+        else:
+            for i, gate_id in enumerate(sg):
+                if not isinstance(gate_id, str):
+                    errors.append(SchemaError(f"payload.strict_gates[{i}]", "must be a string gate ID"))
+                elif gate_id not in GATES:
+                    errors.append(SchemaError(
+                        f"payload.strict_gates[{i}]",
+                        f"unknown gate ID {gate_id!r}; valid IDs: {sorted(GATES.keys())}"
+                    ))
     return errors
 
 
@@ -754,6 +1008,55 @@ COMPLETENESS_GATES: dict[str, dict] = {
             # Do NOT use key_prefix="global" — no participant key is literally "global".
             ("gidu", "global_synchronic", "global_synchronic"),
         ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Gate registry (close-enforcement-2, Phase 1)
+# ---------------------------------------------------------------------------
+# Each entry: gate_id -> {stage, description, posture}
+# posture:
+#   "warn_or_abort"  — emit gate_warning audit event; abort only when strict
+#   "downgrade"      — force substep status to "flagged"; close still succeeds
+#
+# Note: irr_below_threshold is a declarative registry entry only in Phase 1;
+# the existing _check_irr_gate continues to emit "irr_warning" untouched.
+
+GATES: dict[str, dict] = {
+    "single_event_global_synchronic": {
+        "stage": "global_synchronic",
+        "description": "Global-synchronic scope covers < 2 events",
+        "posture": "warn_or_abort",
+    },
+    "undeclared_input": {
+        "stage": None,  # all cross-participant
+        "description": "inputs_consumed contains path not in resolved set",
+        "posture": "warn_or_abort",
+    },
+    "convergence_pending": {
+        "stage": "diachronic",
+        "description": "criteria_revision closed with more_revision_needed",
+        "posture": "downgrade",
+    },
+    "temporal_order_pending": {
+        "stage": "synchronic",
+        "description": "theme_grouping_within_idu flagged temporal_order_within_idu",
+        "posture": "downgrade",
+    },
+    "irr_below_threshold": {
+        "stage": None,  # cross-participant; handled by existing _check_irr_gate
+        "description": "IRR outcome is missing or low",
+        "posture": "warn_or_abort",
+    },
+    "weak_evidence_unreviewed": {
+        "stage": "hypothesis",
+        "description": "weak_evidence_review has flagged items lacking acknowledged_by",
+        "posture": "warn_or_abort",
+    },
+    "dag_section_missing": {
+        "stage": "hypothesis",
+        "description": "candidate_drafting markdown artifact missing per-hypothesis DAG section",
+        "posture": "warn_or_abort",
     },
 }
 

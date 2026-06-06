@@ -85,24 +85,44 @@ Output format:
 ...
 ```
 
+**Pattern JSON fields (required for `generic_diachronic.pattern_identification`):** Each
+pattern entry in your JSON output MUST include:
+
+- `common_idus`: non-empty list — IDU labels that appear in ≥ 2 participants for this
+  pattern (invariant elements — the core structural similarity that defines the pattern).
+- `optional_idus`: list (may be empty) — IDU labels appearing in some but not all
+  participants for this pattern (optional elements — variations within the pattern).
+- `covered_participant_keys`: non-empty list of participant key strings (e.g.
+  `["p1s1", "p3s1"]`) — the participants whose IDUs contributed to this pattern.
+- `utterance_refs`: non-empty array of span references tracing back to source transcripts.
+
+**Merge evaluation criterion (optimum small set):** When two candidate patterns are
+structurally similar (share the same experiential core), merge them into one pattern
+rather than listing them separately. Add a `merge_rationale` field explaining why the
+merge was appropriate. When the total pattern count for a score category exceeds 5, add a
+`high_count_justification` field explaining why the patterns are genuinely distinct rather
+than variants of a smaller set. The goal is the optimum small set of patterns that
+captures the data — prefer fewer, crisper patterns over many overlapping ones.
+
 ### Generic synchronic
 
 Same as generic diachronic but operating on `pNsN-synchronic.md` outputs, grouping ISUs
 across participants by score category.
 
-**ISU grouping rule**: ISUs are grouped **by experiential similarity regardless of which
-IDU group they came from**. Synchronic outputs nest ISUs inside `isu_groups` (one group
-per IDU); when comparing across participants, flatten all ISUs from all IDU groups and
-group them by semantic similarity. If two ISUs from different IDU groups describe the same
-structural experience (e.g., "feeling watched" appearing in an "initial thoughts" IDU for
-one participant and a "shift in attention" IDU for another), they may still form a common
-ISU pattern. Document the IDU-group provenance in the source citation so the reader can
-trace the original context.
+**ISU grouping rule (within-IDU scope)**: ISUs are grouped **strictly within the target
+generic IDU** (`payload.generic_idu`). Do NOT flatten ISUs from other IDU groups into this
+analysis — cross-IDU synthesis belongs to global synchronic, not here. Each ISU in your
+JSON output MUST include a `source_generic_idu` field (string) equal to the scope's
+generic IDU identifier (`payload.generic_idu`); the schema rejects any ISU where
+`source_generic_idu` is absent or mismatched. Document the source participant and
+suggestion in the citation for each ISU to enable cross-check with the original transcript.
 
 ### Global synchronic
 
-Read all `pNsN-synchronic.md` outputs AND `generic-synchronic.md`. Produce a further
-abstraction:
+Run `mpi_step.py inputs --scope gidu<G>-cat-<C> --stage global_synchronic --run-dir .`
+and read the resolved upstream generic-synchronic artifacts
+(`event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.{json,md}`).
+Produce a further abstraction:
 - For each generic ISU pattern, synthesise a global structural theme
 - Reference source participant and suggestion for every row
 
@@ -130,6 +150,41 @@ that appears across multiple participants in the same score category:
    - Rung 1 (Association): "Participants who score high are more likely to report X"
    - Rung 2 (Intervention): "If we intervene to change X, Y would change"
    - Rung 3 (Counterfactual): "Had the participant not received the suggestion, they would not have experienced X"
+
+   **Rung guard:** If rung ≥ 2, `assumptions` must be a non-empty list of strings stating the
+   causal assumptions that license the higher-rung framing (DoWhy identify-discipline analogue).
+   At rung 1, `assumptions` may be empty `[]`.
+
+   **Confounders** (always required, non-empty list of `{variable, mechanism}` objects): Enumerate
+   all plausible common causes of the IV and DV. ALWAYS include the common-method-variance (CMV)
+   latent factor — the IV score and DV experience description are both self-reports from the same
+   participant in the same interview session. CMV is a latent common cause of both. Write the
+   mechanism with participant-specific wording (e.g., "P3's automaticity rating and their description
+   of hand movement were both produced in the same interview session"). Include CMV even when you
+   believe it is unlikely to confound.
+
+   **Testable implications** (non-empty list of strings): State each in DAGitty
+   conditional-independence notation: `X _||_ Y | Z` ("X is independent of Y given Z").
+   Example: `"suggestibility _||_ session_fatigue | automaticity"`.
+
+   **Per-hypothesis mermaid DAG** (required in the markdown artifact): Draw a mermaid `graph LR`
+   DAG showing IV → mechanism components → DV focus. Add confounder nodes (including CMV) as
+   explicit latent nodes with two directed arrows — one into the IV node and one into the DV node.
+   Do NOT use `<->` (mermaid has no bidirected edge syntax — two directed arrows stand in for the
+   bidirected edge that DAGitty would use). Mark latent nodes with a distinct mermaid class using
+   `classDef latent` and either `:::latent` or `class <NodeName> latent`. One DAG per candidate
+   hypothesis, immediately after the claims table.
+
+   Example DAG structure:
+   ```mermaid
+   graph LR
+     IV[Suggestibility score] --> M[Mechanism component]
+     M --> DV[DV focus]
+     CMV[Common-method variance]:::latent --> IV
+     CMV --> DV
+     classDef latent fill:#f5f5f5,stroke:#999,stroke-dasharray:5 5
+   ```
+
 5. Assign confidence 1–5
 6. List source IDUs/ISUs (participant + IDU/ISU name)
 7. Suggest a quantitative follow-up test
@@ -154,6 +209,7 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
   "hypothesis": "<one-sentence hypothesis statement>",
   "claims": [
     {
+      "claim_id": "c1",
       "claim_text": "<specific claim being made>",
       "supports": [
         {
@@ -174,7 +230,16 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
       "n_transcripts": "<int>",
       "n_iv_levels_covered": "<int>",
       "uncertainty_language": "associated with|tends to|may|...",
-      "negative_cases": [{"transcript_id": "...", "note": "..."}]
+      "negative_cases": [{"transcript_id": "...", "note": "..."}],
+      "rung": 1,
+      "assumptions": [],
+      "confounders": [
+        {
+          "variable": "common_method_variance",
+          "mechanism": "IV score and DV experience description both self-reported by participant in same session — shared method creates spurious correlation"
+        }
+      ],
+      "testable_implications": ["DV _||_ session_order | IV"]
     }
   ],
   "sample_summary": {
@@ -182,6 +247,11 @@ Each candidate hypothesis in your JSON output MUST follow this shape:
   }
 }
 ```
+Each claim MUST carry a `claim_id`: a short deterministic string (`c1`, `c2`, …) unique
+within the candidate artifact. The `weak_evidence_review` references claims by `claim_id`;
+the schema rejects any candidate artifact missing `claim_id` or with duplicate `claim_id`
+values across the entire artifact (all candidates combined).
+
 A claim may not close without at least one of `supports` or `contradicts` being non-empty,
 OR an explicit `not_applicable` field with rationale at the claim level.
 
@@ -189,6 +259,74 @@ Every hypothesis output MUST carry this verbatim disclaimer as a top-level field
 ```json
 "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."
 ```
+
+Every hypothesis output MUST also carry a top-level `replication_recommendation` field:
+```json
+"replication_recommendation": "A second independent participant set would need to show the same direction of association between [IV] and [DV] to support this mechanism."
+```
+
+### Weak evidence review
+
+For `hypothesis.weak_evidence_review` (scope: `global`), you receive all
+`candidate_drafting` artifacts (one per DV focus). For every claim across all candidates:
+
+1. Look up the claim by `claim_id`.
+2. Apply the four checks:
+
+   **thin_support** — Flag if `n_transcripts < 3`. Fewer than three transcripts providing
+   support is insufficient for a cross-participant pattern claim.
+
+   **single_iv_level** — Flag if `n_iv_levels_covered < 2`. A claim spanning only one IV
+   score category does not demonstrate level-dependence.
+
+   **causal_language** — Flag if `uncertainty_language` contains causal verbs: "causes",
+   "leads to", "produces", "results in". Interview findings are observational (Pearl rung 1:
+   association); causal verbs imply intervention or counterfactual framing.
+
+   **rung_appropriateness** — Flag if the claim's `rung` value is inconsistent with its
+   evidence type. Qualitative cross-participant pattern data is observational (rung 1 —
+   association); a claim coded as rung 2 (intervention) or rung 3 (counterfactual) over
+   such evidence is structurally mislabelled. Rule: if `rung >= 2` AND all evidence in
+   `supports`/`contradicts`/`ambiguous` comes from observational interview transcripts
+   (i.e., no experimental manipulation is described), flag as
+   `rung_appropriateness: {"flagged": true, "reason": "<explanation>"}`.
+   If rung 1 or genuinely experimental evidence, pass as
+   `rung_appropriateness: {"flagged": false}`. Do NOT set `"stub": true`.
+
+3. Determine `outcome`: `"flagged"` if ANY check fired; `"pass"` otherwise.
+4. If flagged, note the analyst's rationale in `notes`. If an analyst has acknowledged
+   a flagged finding, record `acknowledged_by: "<analyst-id>"` in the review item.
+
+Your JSON output (`hypotheses/review_summary.json`) MUST carry:
+```json
+{
+  "claim_ids": ["c1", "c2", ...],
+  "review_items": [
+    {
+      "claim_id": "c1",
+      "checks": {
+        "thin_support": true,
+        "single_iv_level": false,
+        "causal_language": false,
+        "rung_appropriateness": {"flagged": false}
+      },
+      "outcome": "flagged",
+      "notes": "<rationale>",
+      "acknowledged_by": "<analyst-id or omit if unacknowledged>"
+    }
+  ]
+}
+```
+
+Do NOT include `inputs_consumed` in the `weak_evidence_review` output — the candidate
+artifact paths you read are not in the resolved upstream set for this substep (which points
+to the three analysis artifact sets), so echoing them would trigger the `undeclared_input`
+gate unnecessarily.
+
+Every `claim_id` listed in `claim_ids` must appear in `review_items` — the schema rejects
+incomplete coverage. A close with any `flagged` item lacking `acknowledged_by` triggers the
+`weak_evidence_unreviewed` gate (warn by default; strict if `study.strict_gates` includes
+`"weak_evidence_unreviewed"` or `--strict-weak-evidence-unreviewed` is passed to `mpi_step.py close`).
 
 ## Reasoning
 
@@ -208,6 +346,14 @@ missing, empty, or malformed, return `ERROR <reason>` and stop. Never generate p
 
 After producing your analysis, you MUST persist it yourself before returning. Return ONLY
 the one-line status string below — never the analysis content itself. The orchestrator reads from disk.
+
+**Consumed-input declaration (required for all LLM substeps):** Include `inputs_consumed: [<path>, ...]`
+in your JSON output listing the artifact paths you actually read. This enables `cmd_close` to verify
+your inputs are a subset of the resolved upstream set (the `undeclared_input` gate). To resolve the
+correct upstream paths for your scope and stage, run:
+```bash
+python scripts/mpi_step.py inputs --stage <stage> --scope <scope> --run-dir .
+```
 
 On success: `OK <scope> <stage>.<substep> <N>units <K>flagged`
 On failure: `ERROR <scope> <stage>.<substep>: <reason>`
@@ -267,6 +413,10 @@ Same pattern; artifact names end in `.isu_second_level_grouping.*` with scope `e
 ### Global synchronic substep
 
 **`global_synchronic`** (per generic-IDU × IV category, scope = `gidu<G>-cat-<C>`)
+
+Each ISU in your JSON output MUST include a `source_event` field naming which event
+(e.g. `"event1"`) the ISU came from. This is a hard schema requirement validated at close.
+
 ```bash
 Write analyses/gidu<G>-cat-<C>-global_synchronic.json
 Write analyses/gidu<G>-cat-<C>-global_synchronic.md
@@ -331,6 +481,10 @@ python scripts/mpi_step.py close \
 **`irr_calibration.independent_analyst`** — scope mirrors the primary substep being shadowed
 (e.g., `p1s1` for diachronic; `p1s1-idu1` for synchronic). Artifacts written to
 `analyses/independent/<scope>-<stage>.<substep>.{json,md,prompt.json}`.
+
+**Isolation requirement:** Before producing the alternate analysis, do NOT read any files
+under `analyses/` (primary analyst outputs). The prompt artifact for this substep MUST
+include an `isolation_statement` field confirming no primary-analyst artifacts were read.
 
 **`irr_calibration.alignment`** — scope: `global`; artifact `analyses/irr_calibration.alignment.*`.
 

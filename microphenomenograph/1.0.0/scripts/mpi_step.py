@@ -29,6 +29,7 @@ from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acqui
 from _mpi_schemas import (
     validate_units, validate_prompt_artifact,
     SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS, COMPLETENESS_GATES,
+    GATES, _scope_strip_to_event,
 )
 
 
@@ -74,6 +75,161 @@ def _git_is_nonempty_worktree(path: Path) -> bool:
     # Non-empty: has at least one file other than .git
     entries = [e for e in toplevel.iterdir() if e.name != ".git"]
     return len(entries) > 0
+
+
+# ---------------------------------------------------------------------------
+# Gate evaluation (close-enforcement-2, Phase 1)
+# ---------------------------------------------------------------------------
+
+# Sentinel return codes for _evaluate_gate
+GATE_ABORT = 1   # strict mode: abort the close
+GATE_WARN = 0    # warn mode: emit event, allow close to continue
+
+
+def _evaluate_gate(
+    gate_id: str,
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    *,
+    stage: str,
+    substep: str,
+    scope: str,
+    actor: str,
+    actor_kind: str,
+    extra_details: dict | None = None,
+) -> int:
+    """
+    Evaluate a named gate against the current close context.
+
+    - Reads `study.strict_gates` from manifest.
+    - Checks `getattr(args, f"strict_{gate_id.replace('-','_')}", False)`.
+    - If strict: prints ERROR to stderr; returns GATE_ABORT (1).
+    - If warn: emits `gate_warning` audit event with close_id + gate_id; returns GATE_WARN (0).
+
+    Only `warn_or_abort` posture gates should be passed here.
+    `downgrade` gates are handled separately in `_compute_effective_status`.
+    """
+    strict_gates = manifest.get("study", {}).get("strict_gates", []) or []
+    # Normalise gate_id for getattr: dashes → underscores
+    cli_attr = f"strict_{gate_id.replace('-', '_')}"
+    is_strict = (gate_id in strict_gates) or bool(getattr(args, cli_attr, False))
+
+    if is_strict:
+        print(f"ERROR gate_failed: {gate_id}", file=sys.stderr)
+        return GATE_ABORT
+
+    # Warn mode: emit gate_warning audit event
+    run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+    gate_event = {
+        "event_id": str(uuid.uuid4()),
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_id": run_id,
+        "span_id": str(uuid.uuid4()),
+        "actor": {"kind": actor_kind, "name": actor},
+        "event": {"kind": "event", "action": "gate_warning", "outcome": "warning"},
+        "mpi": {
+            "stage": stage,
+            "substep": substep,
+            "scope": scope,
+            "close_id": close_id,
+            "gate_id": gate_id,
+            **(extra_details or {}),
+        },
+        "reason": f"gate {gate_id} fired (warn mode)",
+    }
+    append_jsonl(audit_path, gate_event)
+    return GATE_WARN
+
+
+# ---------------------------------------------------------------------------
+# close-enforcement-2 Phase 4: Downgrade status helpers
+# ---------------------------------------------------------------------------
+
+def _compute_effective_status(args, units_payload: dict) -> str:
+    """
+    Compute the effective substep status after applying downgrade gates.
+
+    Downgrade gates (posture='downgrade') override args.status to 'flagged'
+    when the payload carries a triggering condition.  Close still succeeds;
+    downstream blocking is free because the prereq loop requires status=='done'.
+
+    AC4.1: criteria_revision with decision=='more_revision_needed' → 'flagged'.
+    AC4.2: theme_grouping_within_idu with temporal_order_within_idu==True → 'flagged'.
+    """
+    stage = args.stage
+    substep = args.substep
+
+    # AC4.1: convergence_pending downgrade
+    if stage == "diachronic" and substep == "criteria_revision":
+        decision = units_payload.get("convergence", {}).get("decision")
+        if decision == "more_revision_needed":
+            return "flagged"
+
+    # AC4.2: temporal_order_pending downgrade
+    if stage == "synchronic" and substep == "theme_grouping_within_idu":
+        if units_payload.get("temporal_order_within_idu") is True:
+            return "flagged"
+
+    return args.status
+
+
+def _emit_idu_split_after_synchronic(
+    run_dir: Path,
+    manifest: dict,
+    scope: str,
+    close_id: str,
+    audit_path: Path,
+    actor: str,
+    actor_kind: str,
+) -> None:
+    """
+    AC4.4: Emit idu_split_after_synchronic audit event(s) when a diachronic
+    criteria_revision re-close follows a synchronic temporal-order flag.
+
+    - scope is the transcript key (pNsN) from the criteria_revision close.
+    - Scans manifest["participants"] for keys matching '{scope}-idu*'.
+    - For each such key, checks if synchronic.theme_grouping_within_idu.status == 'flagged'.
+    - Emits one event per triggering close_id found.
+    """
+    run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+    idu_prefix = f"{scope}-idu"
+    participants = manifest.get("participants", {})
+
+    for p_key, p_data in participants.items():
+        if not p_key.startswith(idu_prefix):
+            continue
+        stages = p_data.get("stages", {})
+        sync_data = stages.get("synchronic", {})
+        substeps = sync_data.get("substeps", {})
+        tg = substeps.get("theme_grouping_within_idu", {})
+        if tg.get("status") == "flagged":
+            triggering_close_id = tg.get("close_id", "")
+            split_event = {
+                "event_id": str(uuid.uuid4()),
+                "@timestamp": datetime.now(timezone.utc).isoformat(),
+                "trace_id": run_id,
+                "span_id": str(uuid.uuid4()),
+                "actor": {"kind": actor_kind, "name": actor},
+                "event": {
+                    "kind": "event",
+                    "action": "idu_split_after_synchronic",
+                    "outcome": "success",
+                },
+                "mpi": {
+                    "triggering_close_id": triggering_close_id,
+                    "reclose_close_id": close_id,
+                    "scope": scope,
+                    "idu_scope": p_key,
+                },
+                "reason": (
+                    f"diachronic criteria_revision re-close {close_id} follows "
+                    f"synchronic temporal-order flag {triggering_close_id} in {p_key}"
+                ),
+            }
+            append_jsonl(audit_path, split_event)
 
 
 # ---------------------------------------------------------------------------
@@ -1167,6 +1323,148 @@ def _check_irr_gate(
     return 0
 
 
+def _check_single_event_global_synchronic_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    scope: str,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.2: Warn (or abort) when a global_synchronic close covers < 2 events.
+
+    Scope format: gidu<G>-cat-<C>. Counts distinct events in manifest that have
+    a done generic_synchronic.isu_second_level_grouping substep whose participant
+    key matches *-gidu<G> (exact segment match to avoid gidu1 / gidu10 confusion).
+
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    # Parse gidu segment from scope (e.g. "gidu1-cat-low" → "gidu1")
+    parts = scope.split("-cat-")
+    if len(parts) < 2:
+        # Unexpected scope format; skip gate
+        return 0
+    gidu_segment = parts[0].strip()  # e.g. "gidu1"
+
+    participants = manifest.get("participants", {})
+
+    # Collect distinct event IDs from participant keys whose scope ends with "-<gidu_segment>"
+    # (exact segment boundary: preceded by a dash or start of string)
+    # Pattern: event<E>-cat-<C>-gidu<G>  — split on "-gidu" suffix won't be robust;
+    # instead, check that the key ends exactly with "-<gidu_segment>"
+    suffix = f"-{gidu_segment}"
+    distinct_events: set[str] = set()
+    for pid, pdata in participants.items():
+        if not pid.endswith(suffix):
+            continue
+        # Verify exact segment match: the char before the suffix must be part of a "-cat-..."
+        # segment and not e.g. "-gidu10" vs "-gidu1" (the endswith check handles this since
+        # "-gidu10" does not end with "-gidu1" literally, but "-gidu10".endswith("-gidu1") is False)
+        # Check generic_synchronic.isu_second_level_grouping status
+        status = (
+            pdata.get("stages", {})
+                 .get("generic_synchronic", {})
+                 .get("substeps", {})
+                 .get("isu_second_level_grouping", {})
+                 .get("status")
+        )
+        if status != "done":
+            continue
+        # Extract the event ID prefix: participant key up to the first "-cat-"
+        cat_idx = pid.find("-cat-")
+        if cat_idx < 0:
+            continue
+        event_id = pid[:cat_idx]
+        distinct_events.add(event_id)
+
+    if len(distinct_events) < 2:
+        return _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope=scope, actor=actor, actor_kind=actor_kind,
+            extra_details={"event_count": len(distinct_events), "gidu": gidu_segment},
+        )
+    return 0
+
+
+def _check_weak_evidence_unreviewed_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    units_payload: dict,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.1/AC3.3: Warn (or abort) when a weak_evidence_review close has flagged
+    review items lacking acknowledged_by.
+
+    Fires only for hypothesis.weak_evidence_review closes.
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    review_items = units_payload.get("review_items", [])
+    if not isinstance(review_items, list):
+        return 0
+    unresolved = [
+        item.get("claim_id", f"item[{i}]")
+        for i, item in enumerate(review_items)
+        if isinstance(item, dict)
+        and item.get("outcome") == "flagged"
+        and not item.get("acknowledged_by")
+    ]
+    if unresolved:
+        return _evaluate_gate(
+            "weak_evidence_unreviewed",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="hypothesis", substep="weak_evidence_review",
+            scope=getattr(args, "scope", "global"),
+            actor=actor, actor_kind=actor_kind,
+            extra_details={"unresolved_claim_ids": unresolved},
+        )
+    return 0
+
+
+def _check_dag_section_missing_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.1: Warn (or abort) when a hypothesis.candidate_drafting markdown artifact
+    is missing the per-hypothesis DAG section (mermaid marker absent).
+
+    Fires only for hypothesis.candidate_drafting closes.
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    # Locate the .md artifact among args.artifact
+    md_path = None
+    for art in getattr(args, "artifact", []) or []:
+        if str(art).endswith(".md"):
+            md_path = Path(art)
+            break
+    if md_path is None or not md_path.exists():
+        return 0  # No markdown artifact — skip gate (artifact validation handles presence)
+
+    content = md_path.read_text(encoding="utf-8")
+    # Presence check: look for the mermaid code fence marker
+    if "```mermaid" not in content:
+        return _evaluate_gate(
+            "dag_section_missing",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="hypothesis", substep="candidate_drafting",
+            scope=getattr(args, "scope", "unknown"),
+            actor=actor, actor_kind=actor_kind,
+        )
+    return 0
+
+
 def _check_completeness_gate(
     run_dir: Path,
     manifest: dict,
@@ -1545,6 +1843,60 @@ def cmd_close(args: argparse.Namespace) -> int:
             if completeness_rc != 0:
                 return _abort("completeness_gate_unsatisfied")
 
+        # --- close-enforcement-2 Phase 2: undeclared_input gate ---
+        # If the artifact's units_payload carries inputs_consumed, verify it is a subset
+        # of the upstream paths resolved by _resolve_inputs for this (stage, scope).
+        # Absent inputs_consumed → skip (not a violation).
+        inputs_consumed = units_payload.get("inputs_consumed")
+        if inputs_consumed is not None:
+            resolved = _resolve_inputs(manifest, args.stage, args.scope)
+            if resolved is not None:
+                resolved_paths = {r["path"] for r in resolved}
+                consumed_set = set(inputs_consumed)
+                undeclared = consumed_set - resolved_paths
+                if undeclared:
+                    gate_rc = _evaluate_gate(
+                        "undeclared_input",
+                        run_dir, manifest, args, audit_path, close_id,
+                        stage=args.stage, substep=args.substep,
+                        scope=args.scope, actor=args.actor,
+                        actor_kind=getattr(args, "actor_kind", "subagent"),
+                        extra_details={"undeclared_paths": sorted(undeclared)},
+                    )
+                    if gate_rc != 0:
+                        return _abort("undeclared_input")
+
+        # AC3.2: single_event_global_synchronic gate — warn/abort if < 2 events done for gidu
+        if args.stage == "global_synchronic":
+            seg_rc = _check_single_event_global_synchronic_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                scope=args.scope, actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if seg_rc != 0:
+                return _abort("single_event_global_synchronic")
+
+        # AC3.1/AC3.3: weak_evidence_unreviewed gate — warn/abort on flagged items without acknowledged_by
+        if args.stage == "hypothesis" and args.substep == "weak_evidence_review":
+            weu_rc = _check_weak_evidence_unreviewed_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                units_payload=units_payload,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if weu_rc != 0:
+                return _abort("weak_evidence_unreviewed")
+
+        # AC3.1: dag_section_missing gate — warn/abort when candidate_drafting markdown lacks DAG
+        if args.stage == "hypothesis" and args.substep == "candidate_drafting":
+            dag_rc = _check_dag_section_missing_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if dag_rc != 0:
+                return _abort("dag_section_missing")
+
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
             run_dir, args.stage, args.substep, args.scope, close_id,
@@ -1613,8 +1965,11 @@ def cmd_close(args: argparse.Namespace) -> int:
         stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
         stage_entry.setdefault("substeps", {})
 
+        # close-enforcement-2 Phase 4: compute effective status (downgrade gates)
+        effective_status = _compute_effective_status(args, units_payload)
+
         stage_entry["substeps"][args.substep] = {
-            "status": args.status,
+            "status": effective_status,
             "output_paths": artifacts,
             "close_id": close_id,
             "parent_head_sha": parent_head_sha,
@@ -1637,6 +1992,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             manifest["study"]["dv_focuses_provenance"] = (
                 "researcher_specified" if dv_focuses_val is not None else "emergent"
             )
+            # close-enforcement-2 Phase 1: write strict_gates (defaults to [] if absent)
+            manifest["study"]["strict_gates"] = units_payload.get("strict_gates", [])
 
         # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
         manifest_path = run_dir / ".mpi" / "project.json"
@@ -1777,6 +2134,19 @@ def cmd_close(args: argparse.Namespace) -> int:
                 (run_dir / "analyses" / "_superseded").iterdir()
             )) if (run_dir / "analyses" / "_superseded").exists() else 0
 
+            # AC4.4: Emit idu_split_after_synchronic if any IDU has flagged theme_grouping.
+            # Must be called BEFORE cascade reset (cascade only resets 'done', not 'flagged',
+            # but reading the manifest before cascade is safer — flagged entries survive either way).
+            _emit_idu_split_after_synchronic(
+                run_dir=run_dir,
+                manifest=reload_manifest,
+                scope=args.scope,
+                close_id=close_id,
+                audit_path=audit_path,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+
             updated_manifest = _cascade_reset(
                 run_dir=run_dir,
                 scope=args.scope,
@@ -1908,6 +2278,128 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# inputs verb: resolve upstream artifact paths from manifest (close-enforcement-2, Phase 2)
+# ---------------------------------------------------------------------------
+
+def _resolve_inputs(manifest: dict, stage: str, scope: str) -> list[dict]:
+    """
+    Resolve upstream artifact paths + SHAs for the given (stage, scope) pair.
+
+    Returns a list of dicts: [{"path": <str>, "sha256": <str>}, ...].
+    Returns None if stage is unknown (caller should return 1).
+
+    Resolution rules:
+    - generic_diachronic (scope: event<E>-cat-<C>):
+        upstream = diachronic.idu_naming_ordering artifacts for transcripts in event_groups[event_id]
+                 + synchronic.isu_second_level_grouping artifacts for pNsN-iduK participant keys
+    - generic_synchronic (scope: event<E>-cat-<C>-gidu<G>):
+        upstream = generic_diachronic.cross_iv_contrast artifacts for scope event<E>-cat-<C>
+    - global_synchronic (scope: gidu<G>-cat-<C>):
+        upstream = generic_synchronic.isu_second_level_grouping artifacts for all scopes
+                   ending with -gidu<G>
+    - hypothesis (scope: dv-<focus> or global):
+        upstream = fan-in of all three cross-participant analysis artifact sets:
+                   global_synchronic.global_synchronic (gidu<G>-cat-<C> participants)
+                   + generic_synchronic.isu_second_level_grouping (event<E>-cat-<C>-gidu<G> participants)
+                   + generic_diachronic.cross_iv_contrast (event<E>-cat-<C> participants)
+    """
+    participants = manifest.get("participants", {})
+    event_groups = manifest.get("study", {}).get("event_groups", {}) or {}
+
+    def _collect_artifacts(participant_key: str, stg: str, substep: str) -> list[dict]:
+        """Collect output_paths + artifact_shas for a specific participant/stage/substep."""
+        p = participants.get(participant_key, {})
+        sub_data = p.get("stages", {}).get(stg, {}).get("substeps", {}).get(substep, {})
+        paths = sub_data.get("output_paths", []) or []
+        shas = sub_data.get("artifact_shas", {}) or {}
+        return [{"path": path, "sha256": shas.get(path, "")} for path in paths]
+
+    if stage == "generic_diachronic":
+        # scope: event<E>-cat-<C>
+        # Strip category suffix to get event_id
+        event_id = _scope_strip_to_event(scope)
+        transcript_ids = event_groups.get(event_id, [])
+        result = []
+        for tid in transcript_ids:
+            # diachronic.idu_naming_ordering for the transcript participant
+            result.extend(_collect_artifacts(tid, "diachronic", "idu_naming_ordering"))
+            # synchronic.isu_second_level_grouping for all pNsN-iduK participant keys
+            for pkey in participants:
+                if pkey.startswith(tid + "-idu"):
+                    result.extend(_collect_artifacts(pkey, "synchronic", "isu_second_level_grouping"))
+        return result
+
+    elif stage == "generic_synchronic":
+        # scope: event<E>-cat-<C>-gidu<G>
+        # upstream = generic_diachronic.cross_iv_contrast for scope event<E>-cat-<C>
+        # Derive event<E>-cat-<C> by stripping the gidu suffix
+        # "event1-cat-low-gidu1" -> "event1-cat-low"
+        # Find the "-gidu" marker
+        gidu_idx = scope.rfind("-gidu")
+        if gidu_idx < 0:
+            return []
+        event_cat_scope = scope[:gidu_idx]
+        return _collect_artifacts(event_cat_scope, "generic_diachronic", "cross_iv_contrast")
+
+    elif stage == "global_synchronic":
+        # scope: gidu<G>-cat-<C>
+        # upstream = all generic_synchronic.isu_second_level_grouping whose participant key
+        # ends with -gidu<G> (i.e. matches *-gidu<G>)
+        # Parse gidu ID: scope is "gidu<G>-cat-<C>", so split on "-cat-" to get gidu part
+        parts = scope.split("-cat-")
+        gidu_suffix = "-" + parts[0]  # e.g. "-gidu1"
+        result = []
+        for pkey in participants:
+            if pkey.endswith(gidu_suffix):
+                result.extend(_collect_artifacts(pkey, "generic_synchronic", "isu_second_level_grouping"))
+        return result
+
+    elif stage == "hypothesis":
+        # Fan-in: all three cross-participant analysis artifact sets for the study.
+        # global_synchronic  (keys: gidu<G>-cat-<C> — start with "gidu")
+        # generic_synchronic (keys: event<E>-cat-<C>-gidu<G> — contain "-cat-" AND "-gidu")
+        # generic_diachronic (keys: event<E>-cat-<C> — contain "-cat-", no "-gidu")
+        result = []
+        for pkey in participants:
+            if pkey.startswith("gidu"):
+                # global_synchronic artifacts
+                result.extend(_collect_artifacts(pkey, "global_synchronic", "global_synchronic"))
+            elif "-cat-" in pkey and "-gidu" in pkey:
+                # generic_synchronic artifacts (event<E>-cat-<C>-gidu<G> keys)
+                result.extend(_collect_artifacts(pkey, "generic_synchronic", "isu_second_level_grouping"))
+            elif "-cat-" in pkey:
+                # generic_diachronic artifacts (event<E>-cat-<C> keys)
+                result.extend(_collect_artifacts(pkey, "generic_diachronic", "cross_iv_contrast"))
+        return result
+
+    else:
+        return None  # unknown stage
+
+
+def cmd_inputs(args: argparse.Namespace) -> int:
+    """
+    Resolve upstream artifact paths + SHAs for a given (stage, scope) pair.
+
+    Prints JSON to stdout: {"resolved": [{"path": "...", "sha256": "..."}, ...]}
+    Returns 0 on success, 1 if stage/scope is unknown.
+    """
+    run_dir = Path(getattr(args, "run_dir", ".")).resolve()
+    try:
+        manifest = _load_manifest(run_dir)
+    except FileNotFoundError as e:
+        print(f"ERROR manifest_not_found: {e}", file=sys.stderr)
+        return 1
+
+    resolved = _resolve_inputs(manifest, args.stage, args.scope)
+    if resolved is None:
+        print(f"ERROR unknown stage for inputs resolution: {args.stage!r}", file=sys.stderr)
+        return 1
+
+    print(json.dumps({"resolved": resolved}))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # verify subcommand (implemented in Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -1993,6 +2485,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
 
+    # close-enforcement-2 Phase 1 (AC1.5): sweep gate_warning events and report as WARN
+    # These are informational and do NOT cause verify to return non-zero.
+    for ev in events:
+        if ev.get("event", {}).get("action") == "gate_warning":
+            mpi = ev.get("mpi", {})
+            gate_id = mpi.get("gate_id", "<unknown>")
+            stage = mpi.get("stage", "<unknown>")
+            substep = mpi.get("substep", "<unknown>")
+            scope = mpi.get("scope", "<unknown>")
+            print(f"WARN gate_warning: {gate_id} at {stage}.{substep} scope={scope}")
+
     print("OK all done substeps verified")
     return 0
 
@@ -2052,6 +2555,27 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Path to the MPI run directory (default: cwd).")
     p_close.add_argument("--strict-irr", action="store_true",
                          help="Block cross-participant stages if IRR is missing or low.")
+    # close-enforcement-2 Phase 1: per-gate strict flags
+    # dest names follow strict_{gate_id} pattern (underscores) for getattr lookup in _evaluate_gate
+    p_close.add_argument("--strict-single-event-global-synchronic", action="store_true",
+                         dest="strict_single_event_global_synchronic",
+                         help="Block global_synchronic close when scope covers < 2 events.")
+    p_close.add_argument("--strict-undeclared-input", action="store_true",
+                         dest="strict_undeclared_input",
+                         help="Block close when inputs_consumed is not a subset of resolved inputs.")
+    p_close.add_argument("--strict-weak-evidence-unreviewed", action="store_true",
+                         dest="strict_weak_evidence_unreviewed",
+                         help="Block hypothesis.weak_evidence_review close when flagged items "
+                              "lack acknowledged_by.")
+    p_close.add_argument("--strict-dag-section-missing", action="store_true",
+                         dest="strict_dag_section_missing",
+                         help="Block hypothesis.candidate_drafting close when markdown "
+                              "artifact is missing per-hypothesis mermaid DAG section.")
+    # NOTE: convergence_pending and temporal_order_pending are downgrade-posture gates:
+    # _compute_effective_status always downgrades the close to 'flagged', which blocks
+    # downstream substeps unconditionally. They take no --strict-* flag — downgrade is
+    # already stronger than warn, and aborting would break the close_id audit chain the
+    # design requires (close succeeds, substep flagged).
 
     # render
     p_render = sub.add_parser("render", help="Regenerate reasoning.log from audit.jsonl.")
@@ -2077,6 +2601,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_ah.add_argument("--reason", required=True)
     p_ah.add_argument("--run-dir", default=".", metavar="DIR")
 
+    # inputs (close-enforcement-2, Phase 2)
+    p_inputs = sub.add_parser("inputs", help="Resolve upstream artifact paths + SHAs for a given stage/scope.")
+    p_inputs.add_argument("--stage", required=True, help="Pipeline stage (e.g. generic_diachronic).")
+    p_inputs.add_argument("--scope", required=True, help="Substep scope (e.g. event1-cat-low).")
+    p_inputs.add_argument("--run-dir", default=".", metavar="DIR",
+                          help="Path to the MPI run directory (default: cwd).")
+
     # acquire-lease (Task 4: AC20.6)
     p_al = sub.add_parser("acquire-lease", help="Acquire a run-level exclusive lease (.mpi/run.lease).")
     p_al.add_argument("--run-dir", default=".", metavar="DIR")
@@ -2094,6 +2625,7 @@ def main(argv: list[str] | None = None) -> int:
     dispatch = {
         "init": cmd_init,
         "close": cmd_close,
+        "inputs": cmd_inputs,
         "render": cmd_render,
         "verify": cmd_verify,
         "unlock": cmd_unlock,

@@ -97,6 +97,13 @@ Also: `Participant 11, Suggestion 1 modified (Scored 0/5) [...]` → p=11, s=1, 
 - If the header does not match even the permissive regex, produce a named error:
   `ERROR: <filename>: invalid header format. Expected "Participant N[,] Suggestion N (Scored N/5)[...]", got: "<first line>"`
   Do NOT silently produce wrong values. Do NOT continue processing this file.
+- If the regex matches but the parsed score (`N` in `Scored N/5`) is outside the valid
+  range 0–5 (e.g. `Scored 7/5`), produce a named error and skip the file:
+  `ERROR: <filename>: invalid_score_range: score N is outside valid range 0–5.
+  Expected "Scored N/5" where N ∈ {0, 1, 2, 3, 4, 5}.`
+  Do NOT silently clamp or coerce out-of-range scores. Do NOT continue processing this
+  file. This check runs after the header regex matches (the regex passes because `\d+`
+  matches any non-negative integer; the range check is a second-pass validation).
 
 ## Manifest location
 
@@ -177,6 +184,16 @@ This means running init twice never resets completed work.
    - On parse failure: print error and skip this file (do not abort entire run).
 7. Build the participant entry (new or merge with existing per idempotency rules).
 8. Write manifest directly to `.mpi/project.json` (atomic write, not via `mpi_step.py close`).
+8a. **Participant-count adequacy advisory.** After scanning all transcripts, count the number
+    of unique participant IDs. If the count is outside the range 6–12 (per the manual's
+    recommended sample size), emit an advisory note (never an error, never blocks):
+    ```
+    NOTE: Participant count is N (recommended range: 6–12 per MPI manual). Analysis can
+    proceed, but results may be less reliable at smaller or larger sample sizes.
+    ```
+    Counts 6–12 (inclusive) are silent. This advisory is informational only and does not
+    affect manifest writing or any subsequent close.
+
 9. **Confirm event grouping with user.** Present the auto-detected event grouping (derived from
    suggestion numbers in `Participant N, Suggestion M (Scored K/5)` headers — suggestion M → `eventM`):
    ```
@@ -218,7 +235,7 @@ when `study.config_provenance == "llm_proposed_user_confirmed"`).
 |---------|-------|-----------|-------|
 | `init.scan_transcripts` | orchestrator | `<manifest>.json` (initial write) | No prompt artifact. Payload includes `transcript_ids` (list) and `raw_sha256_map` (dict); manifest persistence deferred to Phase 2. |
 | `init.propose_study_config` | orchestrator (LLM optional) | `init.propose_study_config.{json,md}` + `.prompt.json` when LLM path | Skipped entirely when `study.config_provenance` is `preregistered` or `user_specified`. |
-| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` | Writes `study.event_groups` (event-to-transcript-ID mapping), `study.dv_focuses` (null unless researcher-specified), and `study.config_provenance` immutably to the manifest. The `confirm_study_config.json` payload must include `event_groups` (required) and may include `dv_focuses` (list or null) and `config_provenance` (string). |
+| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` | Writes `study.event_groups` (event-to-transcript-ID mapping), `study.dv_focuses` (null unless researcher-specified), `study.config_provenance`, and `study.strict_gates` immutably to the manifest. The `confirm_study_config.json` payload must include `event_groups` (required) and may include `dv_focuses` (list or null), `config_provenance` (string), and `strict_gates` (optional list of gate IDs to enforce strictly; defaults to `[]` when absent; valid IDs: `single_event_global_synchronic`, `undeclared_input`, `convergence_pending`, `temporal_order_pending`, `irr_below_threshold`). |
 
 **Commit message format:** `mpi: orchestrator init.<substep> (<N>transcripts scanned)` or similar.
 

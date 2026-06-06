@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -3083,6 +3084,7 @@ class TestStrictIRRGate:
                 "confidence": 4,
                 "flag_for_review": False,
                 "isu_second_level_of_abstraction": "Level 2",
+                "source_generic_idu": "Test IDU",  # required: must match payload.generic_idu
                 "utterance_refs": [
                     {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
                 ],
@@ -3141,6 +3143,7 @@ class TestStrictIRRGate:
                 "confidence": 4,
                 "flag_for_review": False,
                 "isu_second_level_of_abstraction": "Level 2",
+                "source_generic_idu": "Test IDU",  # required: must match payload.generic_idu
                 "utterance_refs": [
                     {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
                 ],
@@ -3677,7 +3680,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3708,7 +3711,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3773,7 +3776,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3823,7 +3826,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -3891,7 +3894,7 @@ class TestPrereqScopeResolutionClose:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# output")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4754,7 +4757,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4786,7 +4789,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4821,7 +4824,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4852,7 +4855,7 @@ class TestDVFocusGate:
         art_json = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.json")
         art_md = _write_artifact(run_dir, "global-hypothesis.weak_evidence_review.md", "# x")
         prompt_art = _write_prompt_artifact(run_dir, "global", "hypothesis", "weak_evidence_review")
-        units = _write_units_json(run_dir, "units.json", {"review_items": []})
+        units = _write_units_json(run_dir, "units.json", {"review_items": [], "claim_ids": []})
 
         rc = mpi_step.main([
             "close",
@@ -4925,3 +4928,1692 @@ class TestDVFocusGate:
         assert rc == 0, "confirm_study_config close should succeed"
         manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
         assert manifest["study"].get("dv_focuses_provenance") == "emergent"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: close-enforcement-2 — Gate registry + manifest strictness (AC1.1–AC1.5)
+# ---------------------------------------------------------------------------
+
+class TestGateRegistry:
+    """AC1.1–AC1.5: GATES registry, warn/strict posture, CLI flags, verify sweep."""
+
+    def test_gates_dict_has_required_keys(self):
+        """GATES registry exists in _mpi_schemas and has all expected gate IDs with posture."""
+        from _mpi_schemas import GATES
+        expected_gate_ids = {
+            "single_event_global_synchronic",
+            "undeclared_input",
+            "convergence_pending",
+            "temporal_order_pending",
+            "irr_below_threshold",
+        }
+        assert set(GATES.keys()) >= expected_gate_ids, (
+            f"Missing gate IDs: {expected_gate_ids - set(GATES.keys())}"
+        )
+        for gate_id, gate_def in GATES.items():
+            assert "posture" in gate_def, f"Gate '{gate_id}' missing 'posture' field"
+            assert gate_def["posture"] in ("warn_or_abort", "downgrade"), (
+                f"Gate '{gate_id}' has invalid posture {gate_def['posture']!r}"
+            )
+            assert "description" in gate_def, f"Gate '{gate_id}' missing 'description'"
+
+    def test_warn_gate_emits_gate_warning_event_close_succeeds(self, tmp_path):
+        """AC1.1: warn-mode gate emits gate_warning audit event and returns GATE_WARN (0)."""
+        from mpi_step import _evaluate_gate, GATE_WARN
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        run_id = (run_dir / ".mpi" / "run_id").read_text().strip()
+        close_id = str(uuid.uuid4())
+
+        # Manifest with no strict_gates (warn-only mode)
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = []
+
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=False,
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={"event_count": 1},
+        )
+
+        assert rc == GATE_WARN, f"Expected GATE_WARN (0), got {rc}"
+
+        # Verify audit has gate_warning event
+        events = [json.loads(l) for l in audit_path.read_text().splitlines() if l.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"]
+        assert len(gw_events) == 1, f"Expected exactly 1 gate_warning event, got {len(gw_events)}"
+        gw = gw_events[0]
+        assert gw["mpi"]["close_id"] == close_id
+        assert gw["mpi"]["gate_id"] == "single_event_global_synchronic"
+
+    def test_strict_gate_in_manifest_aborts(self, tmp_path):
+        """AC1.2: gate listed in study.strict_gates causes _evaluate_gate to return GATE_ABORT."""
+        from mpi_step import _evaluate_gate, GATE_ABORT
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        # Manifest with the gate in strict_gates
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = ["single_event_global_synchronic"]
+
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=False,
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={},
+        )
+
+        assert rc != 0, f"Expected non-zero (GATE_ABORT) when gate in strict_gates, got {rc}"
+
+    def test_strict_cli_flag_beats_manifest_omission(self, tmp_path):
+        """AC1.3: --strict-<gate_id> CLI flag aborts even when manifest doesn't list the gate."""
+        from mpi_step import _evaluate_gate, GATE_ABORT
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        # Manifest does NOT list the gate
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = []
+
+        # But CLI flag IS set
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=True,  # <-- strict via CLI
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={},
+        )
+
+        assert rc != 0, f"Expected non-zero (GATE_ABORT) when --strict-<gate_id> set via CLI, got {rc}"
+
+    def test_strict_irr_alias_unchanged(self, tmp_path):
+        """AC1.4: --strict-irr still triggers irr_warning action (not gate_warning) — alias preserved."""
+        run_dir = TestStrictIRRGate()._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+        # No IRR record → irr_warning should be emitted when strict-irr set
+
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test strict-irr alias",
+            "--run-dir", str(run_dir),
+            "--strict-irr",
+        ])
+
+        assert rc != 0, "Expected non-zero rc with --strict-irr and no IRR record"
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(l) for l in audit_path.read_text().splitlines() if l.strip()]
+        # Must have irr_warning (existing action), NOT gate_warning
+        irr_warnings = [e for e in events if e.get("event", {}).get("action") == "irr_warning"]
+        gate_warnings = [e for e in events if e.get("event", {}).get("action") == "gate_warning"]
+        assert irr_warnings, "Must have irr_warning event (alias preserved)"
+        assert not gate_warnings, "Should NOT have gate_warning event for IRR (alias, not registry path)"
+
+    def test_cmd_verify_reports_gate_warning_events(self, tmp_path):
+        """AC1.5: cmd_verify prints WARN for gate_warning events and returns 0."""
+        import io
+        from contextlib import redirect_stdout
+        run_dir = _init_run_dir(tmp_path)
+
+        # Seed audit.jsonl with a gate_warning event (no real close needed)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        run_id = (run_dir / ".mpi" / "run_id").read_text().strip()
+        gate_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": "2026-06-05T00:00:00Z",
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "subagent", "name": "mpi-cross-analyst"},
+            "event": {"kind": "event", "action": "gate_warning", "outcome": "warning"},
+            "mpi": {
+                "stage": "global_synchronic",
+                "substep": "global_synchronic",
+                "scope": "gidu1-cat-low",
+                "close_id": "test-close-id-456",
+                "gate_id": "single_event_global_synchronic",
+            },
+            "reason": "test gate warning",
+        }
+        append_jsonl(audit_path, gate_event)
+
+        # Capture stdout to check WARN lines
+        import io
+        buf = io.StringIO()
+        import argparse
+        args = argparse.Namespace(run_dir=str(run_dir))
+        with redirect_stdout(buf):
+            rc = mpi_step.cmd_verify(args)
+
+        output = buf.getvalue()
+        assert rc == 0, f"cmd_verify should return 0 for warn-only audit log, got {rc}"
+        assert "WARN" in output, f"Expected WARN line in output, got: {output!r}"
+        assert "gate_warning" in output, f"Expected 'gate_warning' in WARN line, got: {output!r}"
+        assert "single_event_global_synchronic" in output
+
+    def test_strict_gates_written_to_manifest_at_confirm_study_config(self, tmp_path):
+        """AC1.2 setup: confirm_study_config with strict_gates in payload writes study.strict_gates."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Close scan_transcripts first
+        scan_art = _write_artifact(run_dir, "init-scan_transcripts.json")
+        scan_units = _write_units_json(run_dir, "scan_units.json", {
+            "transcript_ids": ["p1s1"],
+            "raw_sha256_map": {"p1s1": "abc..."},
+        })
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "scan_transcripts", "--scope", "run",
+            "--artifact", str(scan_art), "--units-json", str(scan_units),
+            "--reason", "scan", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "scan_transcripts should succeed"
+
+        # confirm_study_config with strict_gates
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+        units = _write_units_json(run_dir, "confirm_units.json", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["single_event_global_synchronic"],
+        })
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "confirmed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "confirm_study_config should succeed"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert "strict_gates" in manifest["study"], "study.strict_gates should be written to manifest"
+        assert manifest["study"]["strict_gates"] == ["single_event_global_synchronic"]
+
+
+class TestValidateConfirmStudyConfig:
+    """AC1.2 guard: strict_gates validation in _validate_init_confirm_study_config."""
+
+    def test_strict_gates_known_id_accepted(self):
+        """Known gate IDs in strict_gates should not produce schema errors."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["single_event_global_synchronic", "undeclared_input"],
+        })
+        assert errors == [], f"Expected no errors for known gate IDs, got: {errors}"
+
+    def test_strict_gates_unknown_id_rejected(self):
+        """Unknown gate ID in strict_gates should produce a SchemaError."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["nonexistent_gate"],
+        })
+        assert errors, "Expected SchemaError for unknown gate ID"
+        assert any("strict_gates" in e.field for e in errors), (
+            f"Expected error field to reference strict_gates, got: {[e.field for e in errors]}"
+        )
+
+    def test_strict_gates_empty_list_accepted(self):
+        """Empty strict_gates list should be valid."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": [],
+        })
+        assert errors == [], f"Expected no errors for empty strict_gates, got: {errors}"
+
+    def test_strict_gates_absent_accepted(self):
+        """Absent strict_gates field should be valid (defaults to empty)."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            # strict_gates absent
+        })
+        assert errors == [], f"Expected no errors when strict_gates absent, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 tests: inputs verb + consumed-input verification (AC2.1, AC2.2)
+# ---------------------------------------------------------------------------
+
+class TestInputsVerb:
+    """AC2.1: cmd_inputs resolves upstream artifact paths from manifest."""
+
+    def test_inputs_generic_diachronic_resolves_upstream_transcripts(self, tmp_path):
+        """AC2.1: generic_diachronic scope resolves diachronic/synchronic artifacts for event transcripts."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with event_groups and done diachronic/synchronic substeps
+        # with output_paths and artifact_shas
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1", "p2s1"]
+                }
+            },
+            "participants": {
+                "p1s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {
+                                    "status": "done",
+                                    "close_id": "cid1",
+                                    "output_paths": ["analyses/p1s1-diachronic.idu_naming_ordering.json",
+                                                     "analyses/p1s1-diachronic.idu_naming_ordering.md"],
+                                    "artifact_shas": {
+                                        "analyses/p1s1-diachronic.idu_naming_ordering.json": "sha_p1s1_dia",
+                                        "analyses/p1s1-diachronic.idu_naming_ordering.md": "sha_p1s1_dia_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p1s1-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid2",
+                                    "output_paths": ["analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json"],
+                                    "artifact_shas": {
+                                        "analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json": "sha_p1s1_sync",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p2s1": {
+                    "stages": {
+                        "diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "idu_naming_ordering": {
+                                    "status": "done",
+                                    "close_id": "cid3",
+                                    "output_paths": ["analyses/p2s1-diachronic.idu_naming_ordering.json"],
+                                    "artifact_shas": {
+                                        "analyses/p2s1-diachronic.idu_naming_ordering.json": "sha_p2s1_dia",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "p2s1-idu1": {
+                    "stages": {
+                        "synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid4",
+                                    "output_paths": ["analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json"],
+                                    "artifact_shas": {
+                                        "analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json": "sha_p2s1_sync",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="event1-cat-low",
+            stage="generic_diachronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        assert "resolved" in result, f"Output missing 'resolved' key: {result}"
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # Must include diachronic idu_naming_ordering artifacts for both transcripts
+        assert "analyses/p1s1-diachronic.idu_naming_ordering.json" in resolved_paths
+        assert "analyses/p1s1-diachronic.idu_naming_ordering.md" in resolved_paths
+        assert "analyses/p2s1-diachronic.idu_naming_ordering.json" in resolved_paths
+        # Must include synchronic isu_second_level_grouping artifacts
+        assert "analyses/p1s1-idu1-synchronic.isu_second_level_grouping.json" in resolved_paths
+        assert "analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json" in resolved_paths
+
+        # SHAs must be populated
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map["analyses/p1s1-diachronic.idu_naming_ordering.json"] == "sha_p1s1_dia"
+        assert sha_map["analyses/p2s1-idu1-synchronic.isu_second_level_grouping.json"] == "sha_p2s1_sync"
+
+    def test_inputs_global_synchronic_resolves_generic_synchronic_artifacts(self, tmp_path):
+        """AC2.1: global_synchronic scope resolves generic_synchronic.isu_second_level_grouping artifacts for matching gidu."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with generic_synchronic done for gidu1 across two events
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"],
+                    "event2": ["p1s2"],
+                }
+            },
+            "participants": {
+                # event1-cat-low-gidu1: matches gidu1
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid10",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json",
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json": "sha_e1_gs",
+                                        "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md": "sha_e1_gs_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                # event2-cat-low-gidu1: matches gidu1
+                "event2-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid11",
+                                    "output_paths": [
+                                        "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json": "sha_e2_gs",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                # event1-cat-low-gidu2: different gidu — should NOT be included for gidu1-cat-low
+                "event1-cat-low-gidu2": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "isu_second_level_grouping": {
+                                    "status": "done",
+                                    "close_id": "cid12",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json": "sha_e1_gs2",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="gidu1-cat-low",
+            stage="global_synchronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # gidu1 scope: event1-gidu1 and event2-gidu1 included
+        assert "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json" in resolved_paths
+        assert "analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md" in resolved_paths
+        assert "analyses/event2-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json" in resolved_paths
+        # gidu2 must NOT be included
+        assert "analyses/event1-cat-low-gidu2-generic_synchronic.isu_second_level_grouping.json" not in resolved_paths
+
+        # SHAs must be present
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map.get("analyses/event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json") == "sha_e1_gs"
+
+    def test_inputs_generic_synchronic_resolves_cross_iv_contrast_artifacts(self, tmp_path):
+        """AC2.1: generic_synchronic scope resolves generic_diachronic.cross_iv_contrast artifacts."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Build manifest with generic_diachronic.cross_iv_contrast done at event1-cat-low
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                }
+            },
+            "participants": {
+                "event1-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "substeps": {
+                                "cross_iv_contrast": {
+                                    "status": "done",
+                                    "close_id": "cid20",
+                                    "output_paths": [
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json",
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md",
+                                    ],
+                                    "artifact_shas": {
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json": "sha_gdia_json",
+                                        "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md": "sha_gdia_md",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        args = argparse.Namespace(
+            scope="event1-cat-low-gidu1",
+            stage="generic_synchronic",
+            run_dir=str(run_dir),
+        )
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cmd_inputs(args)
+
+        assert rc == 0, f"cmd_inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        assert "resolved" in result, f"Output missing 'resolved' key: {result}"
+        resolved_paths = {r["path"] for r in result["resolved"]}
+
+        # Must include cross_iv_contrast artifacts from the generic_diachronic stage
+        assert "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json" in resolved_paths
+        assert "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md" in resolved_paths
+
+        # SHAs must be populated correctly
+        sha_map = {r["path"]: r["sha256"] for r in result["resolved"]}
+        assert sha_map["analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"] == "sha_gdia_json"
+        assert sha_map["analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.md"] == "sha_gdia_md"
+
+    def test_inputs_cli_smoke_via_main(self, tmp_path):
+        """AC2.1 CLI smoke: `mpi_step.py inputs --stage --scope` wired through main() dispatch."""
+        from mpi_step import main
+
+        run_dir = _init_run_dir(tmp_path)
+
+        # Minimal manifest — empty participants is fine; generic_diachronic with no event_groups returns []
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {"event_groups": {}},
+            "participants": {}
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = main(["inputs", "--stage", "generic_diachronic", "--scope", "event1-cat-low",
+                       "--run-dir", str(run_dir)])
+
+        assert rc == 0, f"main inputs returned non-zero: {rc}"
+        result = json.loads(out.getvalue())
+        # Empty participants → empty resolved list, but JSON structure must be correct
+        assert "resolved" in result
+        assert isinstance(result["resolved"], list)
+
+    def test_inputs_unknown_stage_returns_nonzero(self, tmp_path):
+        """AC2.1 guard: unknown stage returns non-zero exit code."""
+        from mpi_step import cmd_inputs
+        import argparse
+
+        run_dir = _init_run_dir(tmp_path)
+
+        args = argparse.Namespace(
+            scope="event1-cat-low",
+            stage="nonexistent_stage",
+            run_dir=str(run_dir),
+        )
+
+        rc = cmd_inputs(args)
+        assert rc != 0, "cmd_inputs should return non-zero for unknown stage"
+
+
+class TestUndeclaredInputGate:
+    """AC2.2: undeclared_input gate in cmd_close."""
+
+    def _make_manifest_with_generic_sync_done(self, run_dir: Path, artifact_path: str, artifact_sha: str) -> None:
+        """Write a manifest with done upstream substeps for closing generic_synchronic.isu_second_level_grouping.
+
+        Scope: event1-cat-low-gidu1
+        Prerequisites for isu_second_level_grouping:
+        - generic_synchronic.worksheet_assembly at event1-cat-low-gidu1 must be done
+        Also populates event1-cat-low generic_diachronic.cross_iv_contrast (used as resolved input).
+        """
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": {
+                    "event1": ["p1s1"]
+                },
+                "strict_gates": [],
+            },
+            "participants": {
+                "event1-cat-low": {
+                    "stages": {
+                        "generic_diachronic": {
+                            "status": "done",
+                            "substeps": {
+                                "cross_iv_contrast": {
+                                    "status": "done",
+                                    "close_id": "cid-upstream",
+                                    "output_paths": [artifact_path],
+                                    "artifact_shas": {artifact_path: artifact_sha},
+                                }
+                            }
+                        }
+                    }
+                },
+                # worksheet_assembly prerequisite for isu_second_level_grouping
+                "event1-cat-low-gidu1": {
+                    "stages": {
+                        "generic_synchronic": {
+                            "substeps": {
+                                "worksheet_assembly": {
+                                    "status": "done",
+                                    "close_id": "cid-ws",
+                                    "output_paths": [],
+                                    "artifact_shas": {},
+                                },
+                                "select_generic_idus_of_interest": {
+                                    "status": "done",
+                                    "close_id": "cid-sel",
+                                    "output_paths": [],
+                                    "artifact_shas": {},
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    def test_inputs_consumed_subset_closes_clean(self, tmp_path):
+        """AC2.2: inputs_consumed containing only resolved paths allows close to succeed."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        # Write the upstream artifact file so it exists on disk (SHAs won't be checked here)
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # Units JSON includes inputs_consumed pointing to the resolved upstream artifact
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test clean subset",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed when inputs_consumed ⊆ resolved; got rc={rc}"
+
+    def test_inputs_consumed_superset_warns(self, tmp_path, capsys):
+        """AC2.2: inputs_consumed with a path not in resolved set triggers gate_warning; close succeeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # Include a bogus path NOT in the resolved set
+        bogus_path = "analyses/bogus_not_in_resolved.md"
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path, bogus_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test superset warns",
+            "--run-dir", str(run_dir),
+        ])
+        # Close should succeed (warn-by-default, not strict)
+        assert rc == 0, f"Close should succeed (warn mode) with undeclared input; got rc={rc}"
+
+        # Audit must have a gate_warning event for undeclared_input
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"
+                     and e.get("mpi", {}).get("gate_id") == "undeclared_input"]
+        assert len(gw_events) >= 1, (
+            f"Expected gate_warning with gate_id=undeclared_input in audit, got events: "
+            f"{[e.get('event', {}).get('action') for e in events]}"
+        )
+
+    def test_inputs_consumed_superset_strict_blocks(self, tmp_path, capsys):
+        """AC2.2: inputs_consumed path not in resolved set + --strict-undeclared-input aborts close."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        bogus_path = "analyses/bogus_not_in_resolved_strict.md"
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            "inputs_consumed": [upstream_path, bogus_path],
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test superset strict",
+            "--run-dir", str(run_dir),
+            "--strict-undeclared-input",
+        ])
+        assert rc != 0, f"Close should abort with --strict-undeclared-input when path not in resolved set; got rc={rc}"
+        stderr_out = capsys.readouterr().err
+        assert "undeclared_input" in stderr_out, (
+            f"Expected 'undeclared_input' in stderr, got: {stderr_out}"
+        )
+
+    def test_inputs_consumed_absent_skips_check(self, tmp_path):
+        """AC2.2: absent inputs_consumed field skips the gate entirely (not a violation)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        upstream_path = "analyses/event1-cat-low-generic_diachronic.cross_iv_contrast.json"
+        upstream_sha = "abcdef1234567890"
+        self._make_manifest_with_generic_sync_done(run_dir, upstream_path, upstream_sha)
+
+        (run_dir / "analyses").mkdir(exist_ok=True)
+        (run_dir / upstream_path).write_text('{"ok": true}')
+
+        # No inputs_consumed field
+        units_payload = {
+            "event": "event1",
+            "iv_category": "low",
+            "generic_idu": "gidu1",
+            "isus": [],
+            # inputs_consumed intentionally absent
+        }
+        art_json = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.json")
+        art_md = _write_artifact(run_dir, "event1-cat-low-gidu1-generic_synchronic.isu_second_level_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "event1-cat-low-gidu1", "generic_synchronic", "isu_second_level_grouping")
+        units = _write_units_json(run_dir, "units.json", units_payload)
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "event1-cat-low-gidu1",
+            "--stage", "generic_synchronic",
+            "--substep", "isu_second_level_grouping",
+            "--scope", "event1-cat-low-gidu1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test no inputs_consumed",
+            "--run-dir", str(run_dir),
+            "--strict-undeclared-input",  # even with strict, absent means skip
+        ])
+        assert rc == 0, f"Close should succeed when inputs_consumed absent; got rc={rc}"
+
+        # Audit must NOT have a gate_warning for undeclared_input
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"
+                     and e.get("mpi", {}).get("gate_id") == "undeclared_input"]
+        assert len(gw_events) == 0, (
+            f"Expected no undeclared_input gate_warning when inputs_consumed absent, got: {gw_events}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 tests: Global-synchronic wiring + gates
+# AC3.1 — source_event required field on global-synchronic ISUs (hard schema)
+# AC3.2 — single_event_global_synchronic gate
+# ---------------------------------------------------------------------------
+
+class TestGlobalSynchronicSourceEvent:
+    """AC3.1: source_event is a required field on each global-synchronic ISU."""
+
+    def _valid_isu_base(self) -> dict:
+        """Return a fully-valid global-synchronic ISU (all required fields for require_second_level=True)."""
+        return {
+            "isu_name": "Sense of automaticity",
+            "criteria": "Participant describes hand as moving on its own",
+            "confidence": 4,
+            "flag_for_review": False,
+            "utterance_refs": [
+                {
+                    "transcript_id": "p1s1",
+                    "utterance_number": 3,
+                    "byte_start": 10,
+                    "byte_end": 50,
+                    "raw_excerpt": "my hand just moved by itself",
+                }
+            ],
+            "isu_second_level_of_abstraction": "involuntary movement",
+            "source_event": "event1",
+        }
+
+    def test_missing_source_event_rejected(self):
+        """AC3.1: global_synchronic ISU without source_event produces a SchemaError."""
+        from _mpi_schemas import validate_units, SchemaError
+
+        isu = self._valid_isu_base()
+        del isu["source_event"]  # remove the required field
+
+        payload = {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [isu],
+        }
+        errors = validate_units("global_synchronic", "global_synchronic", payload)
+        assert len(errors) > 0, "Expected SchemaError for missing source_event, got none"
+        error_fields = [e.field for e in errors]
+        assert any("source_event" in f for f in error_fields), (
+            f"Expected error mentioning 'source_event', got fields: {error_fields}"
+        )
+
+    def test_source_event_present_accepted(self):
+        """AC3.1: global_synchronic ISU with source_event passes schema validation."""
+        from _mpi_schemas import validate_units
+
+        isu = self._valid_isu_base()  # has source_event: "event1"
+
+        payload = {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [isu],
+        }
+        errors = validate_units("global_synchronic", "global_synchronic", payload)
+        # Filter to errors relating to source_event only
+        source_event_errors = [e for e in errors if "source_event" in e.field]
+        assert len(source_event_errors) == 0, (
+            f"Expected no source_event errors, got: {source_event_errors}"
+        )
+
+
+class TestSingleEventGate:
+    """AC3.2: single_event_global_synchronic gate warns when < 2 events done for gidu, strict blocks."""
+
+    def _make_global_sync_manifest(self, run_dir: Path, event_groups: dict, done_scopes: list[str]) -> None:
+        """Write a manifest suitable for global_synchronic close.
+
+        done_scopes: list of participant keys (e.g. "event1-cat-low-gidu1") that have
+        generic_synchronic.isu_second_level_grouping = done.
+        """
+        participants = {}
+        for scope_key in done_scopes:
+            participants[scope_key] = {
+                "stages": {
+                    "generic_synchronic": {
+                        "substeps": {
+                            "isu_second_level_grouping": {
+                                "status": "done",
+                                "close_id": f"cid-{scope_key}",
+                                "output_paths": [],
+                                "artifact_shas": {},
+                            }
+                        }
+                    }
+                }
+            }
+
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": event_groups,
+                "strict_gates": [],
+            },
+            "participants": participants,
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    def test_single_event_scope_warns(self, tmp_path, capsys):
+        """AC3.2: single-event gidu scope emits gate_warning but close succeeds (warn mode)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # One event, one done scope for gidu1
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"]},
+            done_scopes=["event1-cat-low-gidu1"],
+        )
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test single event warns",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed in warn mode for single-event scope; got rc={rc}"
+
+        # Audit must contain gate_warning for single_event_global_synchronic
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "single_event_global_synchronic"
+        ]
+        assert len(gw_events) >= 1, (
+            f"Expected gate_warning with gate_id=single_event_global_synchronic; "
+            f"got actions: {[e.get('event', {}).get('action') for e in events]}"
+        )
+
+    def test_single_event_scope_strict_blocks(self, tmp_path, capsys):
+        """AC3.2 + AC1.2: --strict-single-event-global-synchronic aborts close when < 2
+        events, and the abort happens BEFORE manifest mutation (manifest unchanged)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"]},
+            done_scopes=["event1-cat-low-gidu1"],
+        )
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_before = manifest_path.read_text()
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test single event strict",
+            "--run-dir", str(run_dir),
+            "--strict-single-event-global-synchronic",
+        ])
+        assert rc != 0, (
+            f"Close should abort with --strict-single-event-global-synchronic "
+            f"when < 2 events done; got rc={rc}"
+        )
+        stderr_out = capsys.readouterr().err
+        assert "single_event_global_synchronic" in stderr_out, (
+            f"Expected 'single_event_global_synchronic' in stderr; got: {stderr_out}"
+        )
+        # AC1.2: strict abort precedes manifest mutation — manifest byte-identical
+        assert manifest_path.read_text() == manifest_before, (
+            "Manifest was mutated despite strict-gate abort; "
+            "abort must happen before the manifest-write block"
+        )
+
+    def test_two_event_scope_closes_clean(self, tmp_path):
+        """AC3.2: two distinct events done for gidu1 → no gate_warning, close succeeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Two events, each with a done scope for gidu1
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"], "event2": ["p2s1"]},
+            done_scopes=["event1-cat-low-gidu1", "event2-cat-low-gidu1"],
+        )
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test two events clean",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed with 2 events done for gidu1; got rc={rc}"
+
+        # Audit must NOT have a gate_warning for single_event_global_synchronic
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "single_event_global_synchronic"
+        ]
+        assert len(gw_events) == 0, (
+            f"Expected no single_event_global_synchronic gate_warning with 2 events; "
+            f"got: {gw_events}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Diachronic/synchronic enforcement (AC4.1–AC4.5)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helpers for Phase 4 tests
+# ---------------------------------------------------------------------------
+
+def _close_diachronic_criteria_grouping(run_dir: Path, participant: str = "p1s1") -> int:
+    """Close diachronic.criteria_grouping for a participant (prerequisite for revision)."""
+    art_json = _write_artifact(run_dir, f"{participant}-diachronic.criteria_grouping.json")
+    art_md = _write_artifact(run_dir, f"{participant}-diachronic.criteria_grouping.md", "# out")
+    prompt_art = _write_prompt_artifact(run_dir, participant, "diachronic", "criteria_grouping")
+    units = _write_units_json(run_dir, f"{participant}_cg_units.json", {
+        "analysis_type": "diachronic",
+        "participant": participant,
+        "idus": [{
+            "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+            "criteria": "The utterances talk about testing.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1"],
+            "hinge_to_next": None,
+            "utterance_refs": [{
+                "transcript_id": participant,
+                "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                "raw_excerpt": "hello test",
+            }],
+        }],
+    })
+    return mpi_step.main([
+        "close", "--actor", "mpi-analyst", "--participant", participant,
+        "--stage", "diachronic", "--substep", "criteria_grouping",
+        "--scope", participant,
+        "--artifact", str(art_json), "--artifact", str(art_md),
+        "--prompt-artifact", str(prompt_art),
+        "--units-json", str(units),
+        "--reason", "criteria grouping done", "--run-dir", str(run_dir),
+    ])
+
+
+def _make_criteria_revision_units(decision: str, participant: str = "p1s1") -> dict:
+    """Return a valid criteria_revision units payload with the given decision."""
+    return {
+        "analysis_type": "diachronic",
+        "participant": participant,
+        "idus": [{
+            "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+            "criteria": "The utterances talk about testing.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1"],
+            "hinge_to_next": None,
+            "utterance_refs": [{
+                "transcript_id": participant,
+                "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                "raw_excerpt": "hello test",
+            }],
+        }],
+        "convergence": {
+            "decision": decision,
+            "reason": "Test reason for convergence decision.",
+        },
+    }
+
+
+def _make_theme_grouping_units(temporal_order: bool, flag_isu: bool = False,
+                                participant: str = "p1s1") -> dict:
+    """Return a valid theme_grouping_within_idu payload."""
+    isu = {
+        "isu_name": "Test ISU",
+        "criteria": "The utterances talk about testing.",
+        "confidence": 4,
+        "flag_for_review": flag_isu,
+        "utterance_refs": [{
+            "transcript_id": participant,
+            "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+            "raw_excerpt": "hello test",
+        }],
+    }
+    payload = {
+        "analysis_type": "synchronic",
+        "participant": participant,
+        "idu_name": "Test IDU",
+        "isus": [isu],
+    }
+    if temporal_order is not None:
+        payload["temporal_order_within_idu"] = temporal_order
+    return payload
+
+
+class TestConvergenceDowngrade:
+    """AC4.1: criteria_revision with more_revision_needed → status flagged; blocking."""
+
+    def test_more_revision_needed_sets_flagged(self, tmp_path):
+        """AC4.1: criteria_revision with decision=more_revision_needed → manifest status flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0, "criteria_grouping close must succeed first"
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("more_revision_needed"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",  # caller passes done; code should downgrade to flagged
+            "--reason", "revision needed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed (downgrade, not abort); rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"]["p1s1"]["stages"]["diachronic"]
+                  ["substeps"]["criteria_revision"]["status"])
+        assert status == "flagged", (
+            f"Expected status='flagged' for more_revision_needed, got {status!r}"
+        )
+
+    def test_converged_sets_done(self, tmp_path):
+        """AC4.1: criteria_revision with decision=converged → manifest status done."""
+        run_dir = _init_run_dir(tmp_path)
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "converged", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed; rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"]["p1s1"]["stages"]["diachronic"]
+                  ["substeps"]["criteria_revision"]["status"])
+        assert status == "done", (
+            f"Expected status='done' for converged, got {status!r}"
+        )
+
+    def test_idu_naming_blocked_while_criteria_revision_flagged(self, tmp_path):
+        """AC4.1: idu_naming_ordering is blocked when criteria_revision is flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        # Close criteria_grouping
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        # Close criteria_revision with more_revision_needed → flagged
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("more_revision_needed"))
+        rc_cr = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "revision needed", "--run-dir", str(run_dir),
+        ])
+        assert rc_cr == 0
+
+        # Attempt idu_naming_ordering — should be blocked
+        art_json2 = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.json")
+        art_md2 = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.md", "# out")
+        prompt_art2 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "idu_naming_ordering")
+        units2 = _write_units_json(run_dir, "ino_units.json", {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [{
+                "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+                "criteria": "The utterances talk about testing.",
+                "confidence": 4, "flag_for_review": False,
+                "utterance_numbers": ["1"],
+                "hinge_to_next": None,
+                "utterance_refs": [{
+                    "transcript_id": "p1s1",
+                    "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                    "raw_excerpt": "hello test",
+                }],
+            }],
+        })
+        rc_ino = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "idu_naming_ordering",
+            "--scope", "p1s1",
+            "--artifact", str(art_json2), "--artifact", str(art_md2),
+            "--prompt-artifact", str(prompt_art2),
+            "--units-json", str(units2),
+            "--status", "done",
+            "--reason", "idu naming", "--run-dir", str(run_dir),
+        ])
+        assert rc_ino != 0, (
+            "idu_naming_ordering close should be blocked when criteria_revision is flagged"
+        )
+
+
+class TestTemporalOrderDowngrade:
+    """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=true → flagged; blocking."""
+
+    def _setup_for_synchronic(self, run_dir: Path, participant: str = "p1s1") -> None:
+        """Set up manifest with all diachronic done so synchronic can proceed."""
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["participants"].setdefault(participant, {"stages": {}})
+        manifest["participants"][participant]["stages"]["diachronic"] = {
+            "status": "done",
+            "substeps": {
+                "criteria_grouping": {"status": "done", "close_id": "fake-cg", "output_paths": [], "artifact_shas": {}},
+                "criteria_revision": {"status": "done", "close_id": "fake-cr", "output_paths": [], "artifact_shas": {}},
+                "idu_naming_ordering": {"status": "done", "close_id": "fake-ino", "output_paths": [], "artifact_shas": {}},
+            }
+        }
+        import json as _json
+        manifest_path.write_text(_json.dumps(manifest, indent=2) + "\n")
+
+    def test_temporal_order_true_sets_flagged(self, tmp_path):
+        """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=true → status flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        # temporal_order_within_idu=true requires ≥1 flag_for_review=true ISU
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(
+                                       temporal_order=True, flag_isu=True))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "temporal order found", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed (downgrade, not abort); rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"][scope]["stages"]["synchronic"]
+                  ["substeps"]["theme_grouping_within_idu"]["status"])
+        assert status == "flagged", (
+            f"Expected status='flagged' for temporal_order_within_idu=true, got {status!r}"
+        )
+
+    def test_temporal_order_false_sets_done(self, tmp_path):
+        """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=false → status done."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(temporal_order=False))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "no temporal order", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed; rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"][scope]["stages"]["synchronic"]
+                  ["substeps"]["theme_grouping_within_idu"]["status"])
+        assert status == "done", (
+            f"Expected status='done' for temporal_order_within_idu=false, got {status!r}"
+        )
+
+    def test_isu_naming_blocked_while_theme_grouping_flagged(self, tmp_path):
+        """AC4.2: isu_naming is blocked when theme_grouping_within_idu is flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        # Close theme_grouping with temporal_order=true → flagged
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(temporal_order=True, flag_isu=True))
+        rc_tg = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "temporal order found", "--run-dir", str(run_dir),
+        ])
+        assert rc_tg == 0
+
+        # Attempt isu_naming — should be blocked
+        art_json2 = _write_artifact(run_dir, f"{scope}-synchronic.isu_naming.json")
+        art_md2 = _write_artifact(run_dir, f"{scope}-synchronic.isu_naming.md", "# out")
+        prompt_art2 = _write_prompt_artifact(run_dir, scope, "synchronic", "isu_naming")
+        units2 = _write_units_json(run_dir, "in_units.json",
+                                    _make_theme_grouping_units(temporal_order=False))
+        rc_in = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "isu_naming",
+            "--scope", scope,
+            "--artifact", str(art_json2), "--artifact", str(art_md2),
+            "--prompt-artifact", str(prompt_art2),
+            "--units-json", str(units2),
+            "--status", "done",
+            "--reason", "isu naming", "--run-dir", str(run_dir),
+        ])
+        assert rc_in != 0, (
+            "isu_naming close should be blocked when theme_grouping_within_idu is flagged"
+        )
+
+
+class TestCoPresenceSchema:
+    """AC4.3: temporal_order_within_idu=true requires ≥1 ISU with flag_for_review=true."""
+
+    def test_temporal_order_true_requires_flag_for_review(self):
+        """AC4.3: temporal_order_within_idu=true with all ISUs flag_for_review=false → SchemaError."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=True, flag_isu=False)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors, (
+            "Expected SchemaError for temporal_order_within_idu=true with no flagged ISU"
+        )
+        assert any("temporal_order_within_idu" in str(e) for e in errors), (
+            f"Expected error referencing temporal_order_within_idu; got: {errors}"
+        )
+
+    def test_temporal_order_true_with_flagged_isu_accepted(self):
+        """AC4.3: temporal_order_within_idu=true with ≥1 flag_for_review=true ISU → no error."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=True, flag_isu=True)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no schema errors when co-presence rule satisfied; got: {errors}"
+        )
+
+    def test_temporal_order_false_no_co_presence_required(self):
+        """AC4.3: temporal_order_within_idu=false with all flag_for_review=false → no error."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=False, flag_isu=False)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no errors when temporal_order_within_idu=false; got: {errors}"
+        )
+
+    def test_temporal_order_absent_no_co_presence_required(self):
+        """AC4.3: no temporal_order_within_idu field → no error (optional field)."""
+        from _mpi_schemas import validate_units
+        payload = {
+            "analysis_type": "synchronic",
+            "participant": "p1s1",
+            "idu_name": "Test IDU",
+            "isus": [{
+                "isu_name": "Test ISU",
+                "criteria": "The utterances talk about testing.",
+                "confidence": 4,
+                "flag_for_review": False,
+                "utterance_refs": [{
+                    "transcript_id": "p1s1",
+                    "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                    "raw_excerpt": "hello test",
+                }],
+            }],
+        }
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no errors when temporal_order_within_idu absent; got: {errors}"
+        )
+
+
+class TestIduSplitAuditEvent:
+    """AC4.4: diachronic re-close after synchronic temporal-order flag → idu_split_after_synchronic event."""
+
+    def _setup_manifest_with_flagged_synchronic(
+        self, run_dir: Path, transcript_scope: str = "p1s1",
+        idu_scope: str = "p1s1-idu1",
+        flagged_close_id: str = "fake-tg-close-id"
+    ) -> None:
+        """Set up manifest with criteria_grouping done and a flagged theme_grouping_within_idu."""
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Transcript level: criteria_grouping done, criteria_revision done
+        manifest["participants"][transcript_scope] = {
+            "stages": {
+                "diachronic": {
+                    "status": "done",
+                    "substeps": {
+                        "criteria_grouping": {
+                            "status": "done", "close_id": "fake-cg-id",
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                        "criteria_revision": {
+                            "status": "done", "close_id": "fake-cr-id-prev",
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                    }
+                }
+            }
+        }
+        # IDU level: theme_grouping_within_idu is flagged (temporal order found)
+        manifest["participants"][idu_scope] = {
+            "stages": {
+                "synchronic": {
+                    "status": "flagged",
+                    "substeps": {
+                        "theme_grouping_within_idu": {
+                            "status": "flagged",
+                            "close_id": flagged_close_id,
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                    }
+                }
+            }
+        }
+        import json as _json
+        manifest_path.write_text(_json.dumps(manifest, indent=2) + "\n")
+        # Commit the manifest change so git is clean
+        import subprocess as _sp
+        _sp.run(["git", "add", "-A"], cwd=run_dir, capture_output=True)
+        _sp.run(["git", "commit", "-m", "setup manifest for idu split test"],
+                cwd=run_dir, capture_output=True)
+
+    def test_reclose_after_temporal_flag_emits_idu_split_event(self, tmp_path):
+        """AC4.4: criteria_revision re-close after synchronic temporal flag → idu_split_after_synchronic."""
+        run_dir = _init_run_dir(tmp_path)
+        flagged_close_id = "flagged-tg-close-1234"
+        self._setup_manifest_with_flagged_synchronic(
+            run_dir, "p1s1", "p1s1-idu1", flagged_close_id
+        )
+
+        # Now close criteria_revision again (re-close)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "re-close after split", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Criteria revision re-close should succeed; rc={rc}"
+
+        # Check audit for idu_split_after_synchronic event
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        split_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "idu_split_after_synchronic"
+        ]
+        assert len(split_events) >= 1, (
+            f"Expected idu_split_after_synchronic event in audit; "
+            f"actions seen: {[e.get('event', {}).get('action') for e in events]}"
+        )
+        # Verify it links the triggering close_id
+        found_link = any(
+            e.get("mpi", {}).get("triggering_close_id") == flagged_close_id
+            for e in split_events
+        )
+        assert found_link, (
+            f"Expected triggering_close_id={flagged_close_id!r} in split event; "
+            f"got mpi blocks: {[e.get('mpi') for e in split_events]}"
+        )
+
+    def test_no_idu_split_event_without_prior_flag(self, tmp_path):
+        """AC4.4: criteria_revision re-close with no flagged synchronic substeps → no idu_split_after_synchronic."""
+        run_dir = _init_run_dir(tmp_path)
+        # Set up without any flagged IDU synchronic substep
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "converged", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        split_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "idu_split_after_synchronic"
+        ]
+        assert len(split_events) == 0, (
+            f"Expected no idu_split_after_synchronic event without prior flag; "
+            f"got {len(split_events)} events"
+        )

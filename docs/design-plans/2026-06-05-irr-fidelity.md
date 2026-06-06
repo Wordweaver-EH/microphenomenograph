@@ -9,7 +9,7 @@ The two corrections ship as a single two-phase plan because they live in the sam
 ## Definition of Done
 
 - The `irr.py` alignment-map inversion is fixed at both sites (`compute_coincidence` line ~222, `compute_irr` line ~705) so LLM-proposed label alignments are actually applied; regression tests with disjoint primary/alternate label sets assert α = 1.0 under full alignment (unit level in `scripts/test_irr.py`, integration level through `compute_irr` in `tests/test_irr_calibration.py`).
-- Same-model IRR is honestly relabeled as **intra-model consistency**: a `rater_kind` field (`same_model` | `heterogeneous_model`) is recorded in every IRR record and required by the `agreement_computation` schema; `mpi-irr/SKILL.md` and the IRR record output carry the caveat that same-model agreement cannot detect systematic model bias.
+- Same-model IRR is honestly relabeled as **intra-model consistency**: a `rater_kind` field (`intra_model` | `heterogeneous_model`) is recorded in every IRR record and required by the `agreement_computation` schema; `mpi-irr/SKILL.md` and the IRR record output carry the caveat that same-model agreement cannot detect systematic model bias.
 - Optional heterogeneous-model alternate analyst support: `alternate_model` recorded in the manifest/IRR record when used; no hard requirement (calibration must remain runnable without second-model infra).
 - The alternate analyst is structurally discouraged from contamination: SKILL.md instructs no reading of `analyses/`; the isolation claim is auditable (prose + record field, not orchestration changes).
 - Existing tests pass; no close-protocol or manifest contract changes beyond the new IRR record fields.

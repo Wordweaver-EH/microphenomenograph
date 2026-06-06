@@ -31,9 +31,24 @@ participant's experience. Follow this procedure:
    If a participant revisits an earlier moment, the utterances still belong to that earlier IDU.
 4. **Split vs merge**: Split when the experiential content clearly shifts. Merge when
    utterances are elaborating the same moment. When uncertain, prefer fewer IDUs.
-5. **Naming**: IDU names are 2–5 words, title-cased, naming the experiential content
+5. **Temporal linkage phrases signal IDU boundaries.** Before applying the prefer-fewer-IDUs
+   heuristic (rule 4), scan for explicit temporal-linkage phrases such as "and then",
+   "after that", "at the beginning", "right at the end", "and then suddenly", "before
+   that". When a phrase of this type appears in a participant utterance, treat it as a
+   strong boundary signal: the experiential content described before the phrase belongs to
+   a different IDU than the content described after it, and each segment should receive its
+   own criteria sentence. This rule outranks the prefer-fewer-IDUs heuristic — do not merge
+   across a linkage-phrase boundary even if the content seems superficially similar.
+   Examples from the manual: "and then I noticed…" (start of new IDU), "right at the
+   beginning…" (signals return to earlier moment).
+6. **Naming**: IDU names are 2–5 words, title-cased, naming the experiential content
    (e.g., "Initial Contact with Hands", "Shift to Involuntary Movement").
-6. **Moment number**: Assign sequential integers starting from 1, reflecting the
+   **Defer naming until convergence.** At the `criteria_grouping` substep, `idu_name` and
+   `moment` may be left blank or omitted — they are not required until `idu_naming_ordering`.
+   Focus at `criteria_grouping` on grouping utterances and writing criteria sentences; do
+   not commit to names prematurely. At `idu_naming_ordering`, every IDU MUST have `idu_name`
+   and `moment` populated.
+7. **Moment number**: Assign sequential integers starting from 1, reflecting the
    experiential temporal order. Moment 1 = the first thing the participant experienced,
    Moment 2 = the second, etc. **Critical**: participants often describe earlier experiences
    later in the interview — non-contiguous transcript utterances (e.g., lines 4 and 37–40)
@@ -41,9 +56,9 @@ participant's experience. Follow this procedure:
    assign Moment numbers in the order those groups appear in the participant's *experience*,
    not in their utterance line order. For example, utterance line #4 could be Moment 4
    while lines #8–22 are Moments 1–3 (the participant described earlier experiences later).
-7. **Utterance numbers**: Cite the actual utterance line numbers (not sequential IDU
+8. **Utterance numbers**: Cite the actual utterance line numbers (not sequential IDU
    numbers). Cross-check each number against the transcript.
-8. **Hinge**: After assigning all IDUs, write a one-sentence transition criterion for each
+9. **Hinge**: After assigning all IDUs, write a one-sentence transition criterion for each
    adjacent IDU pair (IDU_n → IDU_{n+1}) describing what changed experientially at that
    boundary (e.g., "Unhelpful thoughts no longer present"). There are N−1 hinges for N IDUs.
    Base hinge language on the participant's own words where possible. For a single-IDU
@@ -51,8 +66,8 @@ participant's experience. Follow this procedure:
    **Routing**: Hinges inherit review routing from their bracketing IDUs — if either the
    preceding or following IDU is routed to the review queue, the hinge between them is
    also included in that review queue entry (appended to the IDU entry, not a separate item).
-9. **Do NOT invent content**: If an utterance is ambiguous, assign it to the most plausible
-   IDU and note the ambiguity in your reasoning.
+10. **Do NOT invent content**: If an utterance is ambiguous, assign it to the most plausible
+    IDU and note the ambiguity in your reasoning.
 
 ### Synchronic analysis rules (ISUs)
 
@@ -66,8 +81,10 @@ asking: "what aspects of experience are described within this IDU?"
    a 2nd-level grouping name (e.g., ISUs "Warmth" and "Pressure" → 2nd level "Tactile
    Qualities"). Leave empty if no grouping applies.
 4. **Temporal order within an IDU**: If ISUs within one IDU appear to be temporally
-   ordered, this may indicate the IDU should be split into two diachronic units. Flag
-   this with `flag_for_review: true` and note it in reasoning.
+   ordered, this indicates the IDU should be split. You MUST set BOTH `flag_for_review: true`
+   AND `temporal_order_within_idu: true` on the artifact. `cmd_close` will automatically
+   downgrade this substep to `flagged` status and block `isu_naming` until a
+   `diachronic.criteria_revision` re-close resolves the split.
 5. **Criteria**: "The utterances talk about [X]." Same pattern as diachronic.
 
 ## Instructions

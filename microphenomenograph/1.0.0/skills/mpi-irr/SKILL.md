@@ -11,6 +11,9 @@ Automatic inter-rater reliability (IRR) check for model quality. Runs after the 
 transcript's diachronic and synchronic stages complete. Warning-by-default; opt-in
 `--strict-irr` blocks cross-participant stages.
 
+When both analysts are the same model, the resulting score is intra-model consistency —
+it measures stability, not validity, because both instances share systematic biases.
+
 Two IRR checks per run:
 1. After `diachronic.idu_naming_ordering` closes for each calibration transcript
 2. After `synchronic.isu_second_level_grouping` (last IDU) closes for each calibration transcript
@@ -34,6 +37,35 @@ Valid strategies:
 
 If `stratified` is requested but any stratum has zero transcripts, init refuses with
 `stratified_unavailable` and prompts the user to pick an alternative.
+
+## Rater kind and caveats
+
+Every IRR record carries a `rater_kind` field:
+
+| `rater_kind` | Condition | Interpretation |
+|---|---|---|
+| `intra_model` | Both analysts are the same model (or `alternate_model` absent/equal to `primary_model`) | Intra-model consistency / test-retest reliability. Measures stability, not validity. Correlated errors inflate agreement (Correlated Errors in LLMs, ICML 2025). Treat α ≥ threshold as necessary but not sufficient. |
+| `heterogeneous_model` | `alternate_model` differs from `primary_model` | Heterogeneous-model IRR. Reduces shared systematic bias. More indicative of genuine consensus, but model-specific biases may still inflate scores. |
+
+Thresholds (α ≥ 0.667 tentative, ≥ 0.8 acceptable) are borrowed from Krippendorff's conventions for **human** analysts after training. No LLM-specific threshold exists in the literature; treat these as conventions, not evidence.
+
+**Pre-fix records:** Any IRR record produced before the alignment-map fix (irr-fidelity plan 1) is not comparable to post-fix records — α was computed on unaligned labels. Re-run calibration if a pre-fix record exists in `.mpi/irr_calibration.jsonl`.
+
+## Alternate-analyst isolation
+
+The alternate analyst MUST NOT read any files under `analyses/` (primary analyst outputs).
+Isolation is required for the two runs to be genuinely independent.
+
+When writing the `irr_calibration.independent_analyst` prompt artifact, the analyst MUST
+include an explicit isolation statement confirming that no primary-analyst artifacts were
+read before producing this alternate analysis. Example:
+```json
+{
+  "isolation_statement": "I did not read any files under analyses/ before producing this alternate analysis."
+}
+```
+
+This field is auditable: the prompt artifact is retained with the close record.
 
 ## Calibration workflow
 

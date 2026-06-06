@@ -26,6 +26,27 @@ from pathlib import Path
 
 DEFAULT_CALIBRATION_MODE = "stratified"
 
+RATER_KIND_INTRA = "intra_model"
+RATER_KIND_HETERO = "heterogeneous_model"
+
+CAVEAT_INTRA_MODEL = (
+    "This agreement score is intra-model consistency (test-retest reliability): "
+    "both analysts are the same model and share systematic biases, so agreement "
+    "measures stability, not validity. Correlated errors inflate agreement "
+    "(Correlated Errors in LLMs, ICML 2025). Treat alpha >= threshold as "
+    "necessary but not sufficient for quality. Thresholds (0.667/0.8) are "
+    "borrowed from human-analyst Krippendorff conventions; no LLM-specific "
+    "threshold exists in the literature."
+)
+
+CAVEAT_HETEROGENEOUS_MODEL = (
+    "This agreement score reflects heterogeneous-model inter-rater reliability: "
+    "the two analysts are different models, reducing shared systematic bias. "
+    "Agreement is more indicative of genuine consensus than intra-model runs, "
+    "but model-specific biases may still inflate scores. Thresholds (0.667/0.8) "
+    "are borrowed from human-analyst Krippendorff conventions."
+)
+
 
 # ---------------------------------------------------------------------------
 # CSV loaders (absorbing kappa.py logic)
@@ -213,13 +234,13 @@ def compute_coincidence(
         unmatched_primary: [category_label, ...]
         unmatched_alternate: [category_label, ...]
     """
-    # Build alignment mapping: primary category → alternate category
+    # Build alignment mapping: alternate category → primary category
     alignment_map = {}
     for entry in alignment:
         primary_cat = entry.get("primary")
         alternate_cat = entry.get("alternate")
         if primary_cat and alternate_cat:
-            alignment_map[primary_cat] = alternate_cat
+            alignment_map[alternate_cat] = primary_cat
 
     # Collect all unique categories (union)
     all_categories = set(primary_assignments.values()) | set(alternate_assignments.values())
@@ -682,6 +703,14 @@ def compute_irr(
     if stage not in {"diachronic", "synchronic"}:
         raise ValueError(f"stage must be 'diachronic' or 'synchronic', got {stage!r}")
 
+    # Derive rater_kind and caveat
+    if alternate_model and alternate_model != primary_model:
+        rater_kind = RATER_KIND_HETERO
+        caveat = CAVEAT_HETEROGENEOUS_MODEL
+    else:
+        rater_kind = RATER_KIND_INTRA
+        caveat = CAVEAT_INTRA_MODEL
+
     # Compute pre-alignment α (before alignment is applied)
     categories_pre, matrix_pre = compute_coincidence(
         primary, alternate, [], unmatched_primary, unmatched_alternate
@@ -702,7 +731,7 @@ def compute_irr(
     # Apply alignment to alternate labels
     alignment_map = {}
     for entry in alignment:
-        alignment_map[entry.get("primary")] = entry.get("alternate")
+        alignment_map[entry.get("alternate")] = entry.get("primary")
 
     labels_alternate_aligned = []
     for label in labels_alternate:
@@ -879,6 +908,8 @@ def compute_irr(
             "alpha_u_block_length": block_length,
         },
         "outcome": outcome,
+        "rater_kind": rater_kind,
+        "caveat": caveat,
         "notes": "",
     }
 
