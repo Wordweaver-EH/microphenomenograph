@@ -990,6 +990,11 @@ GATES: dict[str, dict] = {
         "description": "IRR outcome is missing or low",
         "posture": "warn_or_abort",
     },
+    "weak_evidence_unreviewed": {
+        "stage": "hypothesis",
+        "description": "weak_evidence_review has flagged items lacking acknowledged_by",
+        "posture": "warn_or_abort",
+    },
 }
 
 # ---------------------------------------------------------------------------

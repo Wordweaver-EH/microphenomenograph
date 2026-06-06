@@ -216,6 +216,62 @@ Every hypothesis output MUST carry this verbatim disclaimer as a top-level field
 "disclaimer": "These are generative conjectures inferred from qualitative pattern variation across IV levels in a small sample. They are not causal estimates from a hypothesis test and should not be reported as such."
 ```
 
+### Weak evidence review
+
+For `hypothesis.weak_evidence_review` (scope: `global`), you receive all
+`candidate_drafting` artifacts (one per DV focus). For every claim across all candidates:
+
+1. Look up the claim by `claim_id`.
+2. Apply the four checks:
+
+   **thin_support** — Flag if `n_transcripts < 3`. Fewer than three transcripts providing
+   support is insufficient for a cross-participant pattern claim.
+
+   **single_iv_level** — Flag if `n_iv_levels_covered < 2`. A claim spanning only one IV
+   score category does not demonstrate level-dependence.
+
+   **causal_language** — Flag if `uncertainty_language` contains causal verbs: "causes",
+   "leads to", "produces", "results in". Interview findings are observational (Pearl rung 1:
+   association); causal verbs imply intervention or counterfactual framing.
+
+   **rung_appropriateness** — Stub: record whether the claim's rung label is consistent
+   with its evidence type. Mark `"stub": true` for now; plan 5 gives this teeth.
+
+3. Determine `outcome`: `"flagged"` if ANY check fired; `"pass"` otherwise.
+4. If flagged, note the analyst's rationale in `notes`. If an analyst has acknowledged
+   a flagged finding, record `acknowledged_by: "<analyst-id>"` in the review item.
+
+Your JSON output (`hypotheses/review_summary.json`) MUST carry:
+```json
+{
+  "claim_ids": ["c1", "c2", ...],
+  "review_items": [
+    {
+      "claim_id": "c1",
+      "checks": {
+        "thin_support": true,
+        "single_iv_level": false,
+        "causal_language": false,
+        "rung_appropriateness": {"stub": true}
+      },
+      "outcome": "flagged",
+      "notes": "<rationale>",
+      "acknowledged_by": "<analyst-id or omit if unacknowledged>"
+    }
+  ]
+}
+```
+
+Do NOT include `inputs_consumed` in the `weak_evidence_review` output — the candidate
+artifact paths you read are not in the resolved upstream set for this substep (which points
+to the three analysis artifact sets), so echoing them would trigger the `undeclared_input`
+gate unnecessarily.
+
+Every `claim_id` listed in `claim_ids` must appear in `review_items` — the schema rejects
+incomplete coverage. A close with any `flagged` item lacking `acknowledged_by` triggers the
+`weak_evidence_unreviewed` gate (warn by default; strict if `study.strict_gates` includes
+`"weak_evidence_unreviewed"` or `--strict-weak-evidence-unreviewed` is passed to `mpi_step.py close`).
+
 ## Reasoning
 
 Before your output, write a `## Reasoning` section explaining:

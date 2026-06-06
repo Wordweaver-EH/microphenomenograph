@@ -1390,6 +1390,44 @@ def _check_single_event_global_synchronic_gate(
     return 0
 
 
+def _check_weak_evidence_unreviewed_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    units_payload: dict,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.1/AC3.3: Warn (or abort) when a weak_evidence_review close has flagged
+    review items lacking acknowledged_by.
+
+    Fires only for hypothesis.weak_evidence_review closes.
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    review_items = units_payload.get("review_items", [])
+    if not isinstance(review_items, list):
+        return 0
+    unresolved = [
+        item.get("claim_id", f"item[{i}]")
+        for i, item in enumerate(review_items)
+        if isinstance(item, dict)
+        and item.get("outcome") == "flagged"
+        and not item.get("acknowledged_by")
+    ]
+    if unresolved:
+        return _evaluate_gate(
+            "weak_evidence_unreviewed",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="hypothesis", substep="weak_evidence_review",
+            scope=getattr(args, "scope", "global"),
+            actor=actor, actor_kind=actor_kind,
+            extra_details={"unresolved_claim_ids": unresolved},
+        )
+    return 0
+
+
 def _check_completeness_gate(
     run_dir: Path,
     manifest: dict,
@@ -1800,6 +1838,17 @@ def cmd_close(args: argparse.Namespace) -> int:
             )
             if seg_rc != 0:
                 return _abort("single_event_global_synchronic")
+
+        # AC3.1/AC3.3: weak_evidence_unreviewed gate — warn/abort on flagged items without acknowledged_by
+        if args.stage == "hypothesis" and args.substep == "weak_evidence_review":
+            weu_rc = _check_weak_evidence_unreviewed_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                units_payload=units_payload,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if weu_rc != 0:
+                return _abort("weak_evidence_unreviewed")
 
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
@@ -2467,6 +2516,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--strict-undeclared-input", action="store_true",
                          dest="strict_undeclared_input",
                          help="Block close when inputs_consumed is not a subset of resolved inputs.")
+    p_close.add_argument("--strict-weak-evidence-unreviewed", action="store_true",
+                         dest="strict_weak_evidence_unreviewed",
+                         help="Block hypothesis.weak_evidence_review close when flagged items "
+                              "lack acknowledged_by.")
     # NOTE: convergence_pending and temporal_order_pending are downgrade-posture gates:
     # _compute_effective_status always downgrades the close to 'flagged', which blocks
     # downstream substeps unconditionally. They take no --strict-* flag — downgrade is

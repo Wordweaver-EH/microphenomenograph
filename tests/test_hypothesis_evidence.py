@@ -3,7 +3,10 @@
 Phase 2: AC2.1, AC2.2, AC2.3, AC2.4 — claim_id + review coverage schema.
 Phase 3: AC3.1, AC3.2, AC3.3, AC3.4 — review gate and agent instructions.
 """
+import json
 import sys
+import types
+import uuid
 from pathlib import Path
 
 import pytest
@@ -11,7 +14,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent / "microphenomenograph" / "1.0.0"
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-from _mpi_schemas import validate_units  # noqa: E402
+from _mpi_schemas import validate_units, GATES  # noqa: E402
 
 
 class TestAC2_ClaimIdCoverage:
@@ -245,3 +248,266 @@ class TestAC2_ClaimIdCoverage:
         }
         errors = validate_units("hypothesis", "weak_evidence_review", payload)
         assert not errors, f"Expected no errors for empty-empty; got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: AC3.1, AC3.2, AC3.3, AC3.4 — Review gate and agent instructions
+# ---------------------------------------------------------------------------
+
+CROSS_ANALYST_AGENT = PLUGIN_ROOT / "agents" / "mpi-cross-analyst.md"
+
+
+def _make_args(**kwargs) -> types.SimpleNamespace:
+    """Build a minimal args namespace for _check_weak_evidence_unreviewed_gate.
+
+    _evaluate_gate reads:
+    - getattr(args, 'strict_weak_evidence_unreviewed', False) for the CLI flag
+    All other gate attributes are passed as explicit keyword args.
+    """
+    defaults = {
+        "stage": "hypothesis",
+        "substep": "weak_evidence_review",
+        "scope": "global",
+        "actor": "test-actor",
+        "actor_kind": "subagent",
+        "strict_weak_evidence_unreviewed": False,
+    }
+    defaults.update(kwargs)
+    return types.SimpleNamespace(**defaults)
+
+
+def _make_manifest(strict_gates=None) -> dict:
+    """Build a minimal manifest for gate tests."""
+    study = {}
+    if strict_gates is not None:
+        study["strict_gates"] = strict_gates
+    return {"study": study}
+
+
+class TestAC3_ReviewGate:
+    """AC3: weak_evidence_unreviewed gate — warn/abort on flagged items lacking acknowledged_by."""
+
+    def test_AC3_4_gate_in_registry(self):
+        """AC3.4: weak_evidence_unreviewed gate is in GATES registry with warn_or_abort posture."""
+        assert "weak_evidence_unreviewed" in GATES, (
+            "Expected 'weak_evidence_unreviewed' gate in GATES registry"
+        )
+        gate = GATES["weak_evidence_unreviewed"]
+        assert gate["posture"] == "warn_or_abort", (
+            f"Expected posture 'warn_or_abort', got {gate['posture']!r}"
+        )
+        assert gate["stage"] == "hypothesis", (
+            f"Expected stage 'hypothesis', got {gate['stage']!r}"
+        )
+
+    def test_AC3_4_cross_analyst_md_has_weak_evidence_review_section(self):
+        """AC3.4: mpi-cross-analyst.md contains the Weak evidence review section
+        with all three check names."""
+        assert CROSS_ANALYST_AGENT.exists(), f"Expected {CROSS_ANALYST_AGENT}"
+        content = CROSS_ANALYST_AGENT.read_text(encoding="utf-8")
+
+        assert "Weak evidence review" in content, (
+            "Expected '### Weak evidence review' section in mpi-cross-analyst.md"
+        )
+        assert "thin_support" in content, (
+            "Expected 'thin_support' check mentioned in mpi-cross-analyst.md"
+        )
+        assert "single_iv_level" in content, (
+            "Expected 'single_iv_level' check mentioned in mpi-cross-analyst.md"
+        )
+        assert "causal_language" in content, (
+            "Expected 'causal_language' check mentioned in mpi-cross-analyst.md"
+        )
+        assert "n_transcripts < 3" in content, (
+            "Expected 'n_transcripts < 3' threshold mentioned in mpi-cross-analyst.md"
+        )
+
+    def test_AC3_1_flagged_unacknowledged_triggers_warn(self, tmp_path):
+        """AC3.1: _check_weak_evidence_unreviewed_gate returns GATE_WARN (0) and emits
+        gate_warning audit event when a flagged item lacks acknowledged_by (warn mode)."""
+        from mpi_step import _check_weak_evidence_unreviewed_gate
+
+        # Set up tmp run dir with required files
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        run_id_file = mpi_dir / "run_id"
+        run_id_file.write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        units_payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {
+                        "thin_support": True,
+                        "single_iv_level": False,
+                        "causal_language": False,
+                        "rung_appropriateness": {"stub": True},
+                    },
+                    "outcome": "flagged",
+                    "notes": "Thin support: only 2 transcripts",
+                    # No acknowledged_by — should trigger gate
+                }
+            ],
+        }
+
+        args = _make_args(strict_weak_evidence_unreviewed=False)
+        manifest = _make_manifest()
+
+        rc = _check_weak_evidence_unreviewed_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            units_payload=units_payload,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc == 0, f"Expected GATE_WARN (0) in warn mode, got {rc}"
+        assert audit_path.exists(), "Expected audit.jsonl to be written"
+
+        audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        events = [json.loads(line) for line in audit_lines if line.strip()]
+        gate_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "weak_evidence_unreviewed"
+        ]
+        assert gate_events, (
+            f"Expected gate_warning event with gate_id='weak_evidence_unreviewed' in audit; "
+            f"got events: {events}"
+        )
+
+    def test_AC3_2_all_flagged_acknowledged_closes_clean(self, tmp_path):
+        """AC3.2: _check_weak_evidence_unreviewed_gate returns 0 and emits NO
+        weak_evidence_unreviewed gate_warning when all flagged items carry acknowledged_by."""
+        from mpi_step import _check_weak_evidence_unreviewed_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        units_payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {
+                        "thin_support": True,
+                        "single_iv_level": False,
+                        "causal_language": False,
+                        "rung_appropriateness": {"stub": True},
+                    },
+                    "outcome": "flagged",
+                    "notes": "Thin support acknowledged",
+                    "acknowledged_by": "analyst-1",  # acknowledged — should NOT trigger gate
+                }
+            ],
+        }
+
+        args = _make_args(strict_weak_evidence_unreviewed=False)
+        manifest = _make_manifest()
+
+        rc = _check_weak_evidence_unreviewed_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            units_payload=units_payload,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc == 0, f"Expected 0 (no gate fire) when all flagged items acknowledged, got {rc}"
+
+        # No weak_evidence_unreviewed gate_warning in audit (file may not exist at all)
+        if audit_path.exists():
+            audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+            events = [json.loads(line) for line in audit_lines if line.strip()]
+            gate_events = [
+                e for e in events
+                if e.get("mpi", {}).get("gate_id") == "weak_evidence_unreviewed"
+            ]
+            assert not gate_events, (
+                f"Expected no weak_evidence_unreviewed gate events when all flagged items "
+                f"have acknowledged_by; got: {gate_events}"
+            )
+
+    def test_AC3_3_strict_flag_blocks_unacknowledged(self, tmp_path):
+        """AC3.3: --strict-weak-evidence-unreviewed blocks (returns GATE_ABORT=1)
+        when a flagged item lacks acknowledged_by."""
+        from mpi_step import _check_weak_evidence_unreviewed_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        units_payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {"thin_support": True},
+                    "outcome": "flagged",
+                    # No acknowledged_by
+                }
+            ],
+        }
+
+        args = _make_args(strict_weak_evidence_unreviewed=True)  # CLI flag set
+        manifest = _make_manifest()
+
+        rc = _check_weak_evidence_unreviewed_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            units_payload=units_payload,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc != 0, (
+            "Expected GATE_ABORT (non-zero) with --strict-weak-evidence-unreviewed "
+            "and unacknowledged flagged item"
+        )
+
+    def test_AC3_3_strict_gates_manifest_blocks_unacknowledged(self, tmp_path):
+        """AC3.3 variant: study.strict_gates including 'weak_evidence_unreviewed'
+        blocks the close even without the CLI flag."""
+        from mpi_step import _check_weak_evidence_unreviewed_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        units_payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {"thin_support": True},
+                    "outcome": "flagged",
+                    # No acknowledged_by
+                }
+            ],
+        }
+
+        args = _make_args(strict_weak_evidence_unreviewed=False)  # No CLI flag
+        manifest = _make_manifest(strict_gates=["weak_evidence_unreviewed"])  # manifest strict
+
+        rc = _check_weak_evidence_unreviewed_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            units_payload=units_payload,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc != 0, (
+            "Expected GATE_ABORT (non-zero) when study.strict_gates includes "
+            "'weak_evidence_unreviewed' and item is flagged without acknowledged_by"
+        )
