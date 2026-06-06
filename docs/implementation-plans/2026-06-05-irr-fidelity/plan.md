@@ -140,12 +140,12 @@ unmatched_alternate = ["Y", "Z"]
 
 Assertions:
 1. After `compute_coincidence(primary, alternate, alignment, [], unmatched_alternate)`:
-   - "X" is NOT in `sorted_categories` (it was remapped to "A")
    - "Y" IS in `sorted_categories` (unaligned, stays distinct)
    - "Z" IS in `sorted_categories` (unaligned, stays distinct)
-   - `matrix[("A","A")]` > 0 (utterances 1-3: primary A, aligned-alternate A)
-   - `matrix[("B","Y")]` > 0 (utterances 4-5: primary B, alternate Y unaligned)
-   - `matrix[("B","Z")]` > 0 (utterance 6: primary B, alternate Z unaligned)
+   - `matrix[("A","A")]` == 3.0 (utterances 1-3: primary A, X remapped to A)
+   - `matrix[("B","Y")]` == 2.0 (utterances 4-5: primary B, alternate Y unaligned)
+   - `matrix[("B","Z")]` == 1.0 (utterance 6: primary B, alternate Z unaligned)
+   - X stays in `sorted_categories` as a zero-marginal phantom (the category set is built before remapping); assert all `matrix[(c,"X")]` and `matrix[("X",c)]` sum to 0.0 across all c
 
 ---
 
@@ -308,7 +308,8 @@ record = compute_irr(
 Assertions:
 - `record["rater_kind"] == "heterogeneous_model"`
 - `record["caveat"] == CAVEAT_HETEROGENEOUS_MODEL`
-- `"intra" not in record["caveat"]` (caveat is the hetero string, not the intra one)
+
+Note: Do NOT assert `"intra" not in record["caveat"]` — `CAVEAT_HETEROGENEOUS_MODEL` contains the phrase "intra-model runs" for comparison purposes, so that substring check would fail. The equality assertion `record["caveat"] == CAVEAT_HETEROGENEOUS_MODEL` is the definitive check.
 
 ---
 
