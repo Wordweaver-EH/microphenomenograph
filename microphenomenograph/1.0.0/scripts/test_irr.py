@@ -340,6 +340,76 @@ def test_compute_irr_invalid_stage_raises():
         print(f"[PASS] compute_irr invalid stage raises: {str(e)}")
 
 
+def test_alignment_disjoint_labels_full_agreement():
+    """AC1.1, AC1.3: Disjoint label sets with full alignment yield alpha=1.0; without alignment alpha<<1.0."""
+    # 10 utterances; primary uses A/B; alternate uses X/Y for same structure
+    primary = {"1": "A", "2": "A", "3": "A", "4": "A", "5": "A",
+               "6": "B", "7": "B", "8": "B", "9": "B", "10": "B"}
+    alternate = {"1": "X", "2": "X", "3": "X", "4": "X", "5": "X",
+                 "6": "Y", "7": "Y", "8": "Y", "9": "Y", "10": "Y"}
+    # Full alignment: X->A, Y->B
+    alignment = [{"primary": "A", "alternate": "X", "confidence": 0.9, "rationale": "same"},
+                 {"primary": "B", "alternate": "Y", "confidence": 0.9, "rationale": "same"}]
+
+    # AC1.1: With alignment, alpha should be ~= 1.0
+    categories, matrix = compute_coincidence(primary, alternate, alignment, [], [])
+    alpha_with = alpha_nominal(categories, matrix)
+    assert abs(alpha_with - 1.0) < 0.001, (
+        f"AC1.1: With full disjoint alignment, alpha should be ~=1.0, got {alpha_with}. "
+        f"This suggests the alignment map is not being applied correctly."
+    )
+
+    # AC1.3: Without alignment, alpha should be <<1.0 (all alternate labels are wrong namespace)
+    categories0, matrix0 = compute_coincidence(primary, alternate, [], [], [])
+    alpha_without = alpha_nominal(categories0, matrix0)
+    assert alpha_without < 0.2, (
+        f"AC1.3: Without alignment, alpha should be <<1.0 (disjoint namespaces), got {alpha_without}."
+    )
+
+    print(f"[PASS] test_alignment_disjoint_labels_full_agreement: alpha_with={alpha_with:.4f}, alpha_without={alpha_without:.4f}")
+
+
+def test_alignment_partial_keeps_unaligned_distinct():
+    """AC1.4: Partial alignment remaps only aligned categories; unaligned alternate labels stay distinct."""
+    # 6 utterances; primary {A,B}; alternate {X,Y,Z}
+    # Only X is aligned to A; Y and Z are unaligned
+    primary = {"1": "A", "2": "A", "3": "A", "4": "B", "5": "B", "6": "B"}
+    alternate = {"1": "X", "2": "X", "3": "X", "4": "Y", "5": "Y", "6": "Z"}
+    alignment = [{"primary": "A", "alternate": "X", "confidence": 0.9, "rationale": ""}]
+    unmatched_alternate = ["Y", "Z"]
+
+    categories, matrix = compute_coincidence(primary, alternate, alignment, [], unmatched_alternate)
+    sorted_categories = categories
+
+    # Y and Z should remain in sorted_categories (unaligned, stays distinct)
+    assert "Y" in sorted_categories, f"AC1.4: Y should remain in sorted_categories, got {sorted_categories}"
+    assert "Z" in sorted_categories, f"AC1.4: Z should remain in sorted_categories, got {sorted_categories}"
+
+    # Utterances 1-3: primary A, alternate X remapped to A -> matrix[(A,A)] == 3.0
+    assert matrix[("A", "A")] == 3.0, (
+        f"AC1.4: matrix[(A,A)] should be 3.0 (X remapped to A), got {matrix[('A','A')]}"
+    )
+
+    # Utterances 4-5: primary B, alternate Y unaligned -> matrix[(B,Y)] == 2.0
+    assert matrix[("B", "Y")] == 2.0, (
+        f"AC1.4: matrix[(B,Y)] should be 2.0 (Y unaligned), got {matrix[('B','Y')]}"
+    )
+
+    # Utterance 6: primary B, alternate Z unaligned -> matrix[(B,Z)] == 1.0
+    assert matrix[("B", "Z")] == 1.0, (
+        f"AC1.4: matrix[(B,Z)] should be 1.0 (Z unaligned), got {matrix[('B','Z')]}"
+    )
+
+    # X stays in sorted_categories as a zero-marginal phantom (category set built before remapping)
+    assert "X" in sorted_categories, f"AC1.4: X should remain in sorted_categories as zero-marginal phantom, got {sorted_categories}"
+    x_total = sum(matrix.get((c, "X"), 0.0) for c in sorted_categories) + sum(matrix.get(("X", c), 0.0) for c in sorted_categories)
+    assert x_total == 0.0, (
+        f"AC1.4: All matrix entries involving X should sum to 0.0 (X is phantom after remapping), got {x_total}"
+    )
+
+    print(f"[PASS] test_alignment_partial_keeps_unaligned_distinct: categories={sorted_categories}")
+
+
 if __name__ == "__main__":
     tests = [
         test_identical_inputs,
@@ -350,6 +420,8 @@ if __name__ == "__main__":
         test_ari_partial_agreement,
         test_block_bootstrap_vs_naive_for_alpha_u,
         test_utt_sort_key_numeric_ordering,
+        test_alignment_disjoint_labels_full_agreement,
+        test_alignment_partial_keeps_unaligned_distinct,
     ]
 
     failed = 0

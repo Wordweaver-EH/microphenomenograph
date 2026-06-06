@@ -213,13 +213,13 @@ def compute_coincidence(
         unmatched_primary: [category_label, ...]
         unmatched_alternate: [category_label, ...]
     """
-    # Build alignment mapping: primary category → alternate category
+    # Build alignment mapping: alternate category → primary category
     alignment_map = {}
     for entry in alignment:
         primary_cat = entry.get("primary")
         alternate_cat = entry.get("alternate")
         if primary_cat and alternate_cat:
-            alignment_map[primary_cat] = alternate_cat
+            alignment_map[alternate_cat] = primary_cat
 
     # Collect all unique categories (union)
     all_categories = set(primary_assignments.values()) | set(alternate_assignments.values())
@@ -702,7 +702,7 @@ def compute_irr(
     # Apply alignment to alternate labels
     alignment_map = {}
     for entry in alignment:
-        alignment_map[entry.get("primary")] = entry.get("alternate")
+        alignment_map[entry.get("alternate")] = entry.get("primary")
 
     labels_alternate_aligned = []
     for label in labels_alternate:

@@ -399,6 +399,39 @@ def test_compute_irr_alpha_u_ordering():
     )
 
 
+def test_compute_irr_with_disjoint_alignment():
+    """AC1.2: End-to-end through compute_irr with disjoint full-alignment fixture yields alpha~=1.0 and outcome=='passed'."""
+    primary = {"1": "A", "2": "A", "3": "A", "4": "A", "5": "A",
+               "6": "B", "7": "B", "8": "B", "9": "B", "10": "B"}
+    alternate = {"1": "X", "2": "X", "3": "X", "4": "X", "5": "X",
+                 "6": "Y", "7": "Y", "8": "Y", "9": "Y", "10": "Y"}
+    alignment = [{"primary": "A", "alternate": "X", "confidence": 0.9, "rationale": "same"},
+                 {"primary": "B", "alternate": "Y", "confidence": 0.9, "rationale": "same"}]
+
+    record = compute_irr(primary, alternate, alignment, [], [], n_utterances=10, bootstrap_seed=42, n_bootstrap=500)
+
+    # AC1.2 headline: alpha.point ~= 1.0
+    alpha_point = record["metrics"]["alpha"]["point"]
+    assert abs(alpha_point - 1.0) < 0.001, (
+        f"AC1.2: With disjoint full alignment, metrics.alpha.point should be ~=1.0, got {alpha_point}. "
+        f"Alignment map inversion bug likely not fixed."
+    )
+
+    # AC1.2 outcome: passed
+    assert record["outcome"] == "passed", (
+        f"AC1.2: outcome should be 'passed' for perfect agreement, got {record['outcome']!r}"
+    )
+
+    # Control: same call without alignment -> alpha_point < 0.5 (discriminates aligned from unaligned)
+    record_no_align = compute_irr(primary, alternate, [], [], [], n_utterances=10, bootstrap_seed=42, n_bootstrap=500)
+    alpha_no_align = record_no_align["metrics"]["alpha"]["point"]
+    assert alpha_no_align < 0.5, (
+        f"AC1.2 control: Without alignment, alpha.point should be < 0.5 (disjoint namespaces), got {alpha_no_align}"
+    )
+
+    print(f"[PASS] test_compute_irr_with_disjoint_alignment: alpha_aligned={alpha_point:.4f}, alpha_unaligned={alpha_no_align:.4f}")
+
+
 if __name__ == "__main__":
     tests = [
         test_irr_jsonl_schema,
@@ -409,6 +442,7 @@ if __name__ == "__main__":
         test_stratified_aggregate,
         test_default_calibration_mode,
         test_compute_irr_alpha_u_ordering,
+        test_compute_irr_with_disjoint_alignment,
     ]
 
     failed = 0
