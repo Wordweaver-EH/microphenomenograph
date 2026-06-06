@@ -227,7 +227,27 @@ for j, claim in enumerate(claims):
         seen_claim_ids.add(cid)
 ```
 
-Note: The uniqueness check is across the candidate's claims. The design says "unique within the artifact" — implement as unique within each candidate (a candidate = one hypothesis with multiple claims). If multiple candidates exist, each is independently checked; claim IDs like `c1` can repeat across candidates but not within one.
+**IMPORTANT — artifact scope for uniqueness:** The design says "unique within the artifact" — an artifact is one `dv-<focus>.candidates.json` file = the whole payload (all candidates). Therefore `seen_claim_ids` must be hoisted to payload scope (across all candidates), not per-candidate. A `c1` in `candidates[0]` and `c1` in `candidates[1]` must be rejected. This is required so the flat `claim_ids` roster in `weak_evidence_review` can unambiguously cross-reference claim IDs.
+
+Hoist `seen_claim_ids` OUTSIDE the `for i, cand in enumerate(candidates):` loop:
+```python
+# AC2.2: claim_id must be unique across the entire artifact (all candidates)
+seen_claim_ids: set[str] = set()
+for i, cand in enumerate(candidates):
+    ...
+    for j, claim in enumerate(claims):
+        ...
+        cid = claim.get("claim_id")
+        if cid is not None:
+            if cid in seen_claim_ids:
+                errors.append(SchemaError(
+                    f"payload.candidates.claims",
+                    f"duplicate claim_id {cid!r} — claim_id must be unique within the artifact"
+                ))
+            seen_claim_ids.add(cid)
+```
+
+The AC2.2 test must also build the duplicate ACROSS two candidates (not within one) to test the cross-candidate boundary.
 
 #### Change 2: Extend `_validate_hypothesis_weak_evidence_review`
 
@@ -392,6 +412,35 @@ def test_AC2_valid_full_coverage_accepted(self):
 def test_AC2_1_claim_id_present_passes_basic_schema(self):
     """Success: candidate_drafting claim with claim_id passes schema."""
 ```
+
+#### Change 4: Update fixture `tests/fixtures/cross_analyst/dv-automaticity.candidates.json`
+
+**THIS IS REQUIRED TO AVOID NEW TEST FAILURES.** The existing E2E test `TestAC23_1_HypothesisCandidateFixtureClose::test_hypothesis_candidate_fixture_close` in `tests/test_mpi_cross_analyst_contract.py` closes this fixture via `mpi_step.py close`. After adding `claim_id` as a required field on every claim, that close will fail with a schema error unless the fixture is updated.
+
+**Current state (tests/fixtures/cross_analyst/dv-automaticity.candidates.json):**
+```json
+"claims": [
+  {
+    "claim_text": "Participants in the high-suggestibility condition reported less deliberate effort during movement.",
+    ...
+  }
+]
+```
+
+**Required change:** Add `"claim_id": "c1"` as the first field of every claim object in the fixture:
+```json
+"claims": [
+  {
+    "claim_id": "c1",
+    "claim_text": "Participants in the high-suggestibility condition reported less deliberate effort during movement.",
+    ...
+  }
+]
+```
+
+Update the fixture in-place. The negative tests in `test_hypothesis_candidate_missing_disclaimer_rejected` and `test_hypothesis_candidate_missing_raw_span_refs_rejected` strip/mutate the fixture JSON dynamically — they do NOT need separate claim_id handling as long as the base fixture is valid.
+
+No `review_summary` fixture exists in `tests/fixtures/cross_analyst/` — there is no E2E close test for `hypothesis.weak_evidence_review` in the existing suite, so no review fixture update is needed for baseline preservation.
 
 ---
 
@@ -573,7 +622,9 @@ incomplete coverage. A close with any `flagged` item lacking `acknowledged_by` t
 
 **Setup pattern:** Mirror `_setup_cross_run_dir` from `test_mpi_cross_analyst_contract.py` — create a tmp git repo with `.mpi/project.json` manifest pre-seeded with completed prerequisites (all generic_diachronic/generic_synchronic/global_synchronic done), then call `mpi_step.main()` or use subprocess to invoke `mpi_step.py close`. Alternatively, call `_check_weak_evidence_unreviewed_gate` directly if the function is importable.
 
-**Approach:** Import `mpi_step._check_weak_evidence_unreviewed_gate` directly for unit-level gate testing, and use full `mpi_step.main` close invocations for integration tests.
+**Primary harness:** Import `mpi_step._check_weak_evidence_unreviewed_gate` directly for unit-level gate testing (pass hand-built `args` namespace, `manifest`, `units_payload`, tmp `audit_path`; assert return code + audit file content). This avoids the full-close prerequisite complexity (the `weak_evidence_review` close requires all `candidate_drafting` `all_match` in manifest, the IRR gate check, and completeness gate — satisfying all three in a tmp fixture is error-prone and mixes failure causes). Direct unit tests give clean isolation.
+
+If full-close integration tests are added for AC3.3, the fixture must satisfy ALL upstream gates: seed `hypothesis.candidate_drafting` status as `done` for every DV-focus participant, seed IRR calibration records (or ensure `_check_irr_gate` skips for warn mode), and seed `global_synchronic` done for all relevant keys in `COMPLETENESS_GATES["hypothesis"]`.
 
 ```python
 def test_AC3_1_flagged_unacknowledged_triggers_warn(tmp_path):
@@ -623,6 +674,14 @@ def test_AC3_4_weak_evidence_unreviewed_gate_in_registry():
     assert GATES["weak_evidence_unreviewed"]["posture"] == "warn_or_abort"
     assert GATES["weak_evidence_unreviewed"]["stage"] == "hypothesis"
 ```
+
+---
+
+## Note on `inputs_consumed` in `weak_evidence_review`
+
+The `mpi-cross-analyst.md` review section instructs the LLM to include `inputs_consumed: [candidate artifact paths]`. However, `_resolve_inputs(hypothesis, ...)` returns the three ANALYSIS artifact sets (generic_diachronic + generic_synchronic + global_synchronic), not the `candidate_drafting` artifacts. So if the LLM echoes candidate-artifact paths in `inputs_consumed`, the `undeclared_input` gate will fire (warn-default). This is benign — it is warn-by-default and does not block the close.
+
+To avoid confusion in tests: the AC3.2 "closes clean, no warning" test must filter the audit log by `gate_id == "weak_evidence_unreviewed"` specifically, not assert the absence of ALL gate events. Alternatively, instruct the review agent to omit `inputs_consumed` entirely (absent `inputs_consumed` skips the undeclared_input gate). The plan notes this trade-off; the implementation can choose either; record the choice in the agent instructions.
 
 ---
 
