@@ -1288,6 +1288,26 @@ class TestInitDedicatedRepo:
         manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
         assert manifest["study"]["run_repo_mode"] == "dedicated"
 
+    def test_init_writes_gitignore_for_close_lock(self, tmp_path):
+        # AC4.3 / AC30 regression guard: cmd_init must write .mpi/.gitignore so
+        # that the persistent close.lock file doesn't appear as an untracked file
+        # in git-status after every close, which would break the cascade clean-tree
+        # assertion.
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        _git(["init"], cwd=run_dir)
+        _setup_git_identity(run_dir)
+        rc = mpi_step.main(["init", "--run", str(run_dir)])
+        assert rc == 0
+        gi = run_dir / ".mpi" / ".gitignore"
+        assert gi.exists(), ".mpi/.gitignore was not written by cmd_init"
+        assert "close.lock" in gi.read_text(), \
+            ".mpi/.gitignore does not include close.lock"
+        # Verify git actually honours the ignore so the run tree stays clean.
+        r = _git(["check-ignore", ".mpi/close.lock"], cwd=run_dir)
+        assert r.returncode == 0, \
+            f"git check-ignore returned {r.returncode}; close.lock is not ignored"
+
 
 class TestInitActiveRepoNesting:
     def test_init_inside_nonempty_repo_fails_by_default(self, tmp_path):
