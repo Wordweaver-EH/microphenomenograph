@@ -136,6 +136,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     mpi_dir = run_dir / ".mpi"
     mpi_dir.mkdir(exist_ok=True)
 
+    # Write .gitignore for transient runtime files so the run repo stays clean
+    # between closes.  close.lock persists after release by design (AC4.3); without
+    # this entry it would appear as an untracked file in git-status after every close.
+    gitignore_path = mpi_dir / ".gitignore"
+    if not gitignore_path.exists():
+        atomic_write(gitignore_path, "# Transient runtime files — not tracked by git\nclose.lock\n")
+
     run_id = load_or_create_run_id(mpi_dir / "run_id")
 
     # Write initial manifest if absent

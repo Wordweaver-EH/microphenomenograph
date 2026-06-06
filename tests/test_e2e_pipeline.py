@@ -1031,6 +1031,9 @@ class TestAC30_CrossParticipantCascade:
         mpi_dir.mkdir()
         (mpi_dir / "run_id").write_text("cross-cascade-run-id", encoding="utf-8")
         (mpi_dir / "audit.jsonl").touch()
+        # Mirror what cmd_init does: git-ignore the persistent close lock so it
+        # doesn't dirty the working tree after every close (AC4 regression guard).
+        (mpi_dir / ".gitignore").write_text("close.lock\n", encoding="utf-8")
 
         analyses = run_dir / "analyses"
         analyses.mkdir()
