@@ -101,8 +101,10 @@ trace the original context.
 
 ### Global synchronic
 
-Read all `pNsN-synchronic.md` outputs AND `generic-synchronic.md`. Produce a further
-abstraction:
+Run `mpi_step.py inputs --scope gidu<G>-cat-<C> --stage global_synchronic --run-dir .`
+and read the resolved upstream generic-synchronic artifacts
+(`event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.{json,md}`).
+Produce a further abstraction:
 - For each generic ISU pattern, synthesise a global structural theme
 - Reference source participant and suggestion for every row
 
@@ -275,6 +277,10 @@ Same pattern; artifact names end in `.isu_second_level_grouping.*` with scope `e
 ### Global synchronic substep
 
 **`global_synchronic`** (per generic-IDU × IV category, scope = `gidu<G>-cat-<C>`)
+
+Each ISU in your JSON output MUST include a `source_event` field naming which event
+(e.g. `"event1"`) the ISU came from. This is a hard schema requirement validated at close.
+
 ```bash
 Write analyses/gidu<G>-cat-<C>-global_synchronic.json
 Write analyses/gidu<G>-cat-<C>-global_synchronic.md

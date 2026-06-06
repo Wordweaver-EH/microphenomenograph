@@ -9,10 +9,15 @@ Produce global synchronic synthesis. Requires `generic_synchronic: done` in mani
 
 Invoke `mpi-cross-analyst` with:
 - Task type: `global_synchronic`
-- All `analyses/pNsN-synchronic.md` files
-- `analyses/generic-synchronic.md`
+- Scope: `gidu<G>-cat-<C>`
 
-Every row in the output MUST reference source participant and suggestion.
+**Resolving inputs:** Run the following to get the correct per-scope upstream generic-synchronic artifact paths before invoking the analyst:
+```bash
+python scripts/mpi_step.py inputs --scope gidu<G>-cat-<C> --stage global_synchronic --run-dir .
+```
+Pass the resolved `event<E>-cat-<C>-gidu<G>-generic_synchronic.isu_second_level_grouping.{json,md}` artifacts as inputs to the analyst.
+
+Every row in the output MUST reference source participant and suggestion. Each ISU MUST include a `source_event` field naming which event (e.g. `"event1"`) the ISU came from.
 **Verifies:** microphenomenograph.AC5.2
 
 Write `analyses/global-synchronic.md`.

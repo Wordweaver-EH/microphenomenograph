@@ -12,14 +12,6 @@ GLOBAL_SYNC_SKILL = PLUGIN_ROOT / "skills" / "mpi-global-synchronic" / "SKILL.md
 CROSS_ANALYST_AGENT = PLUGIN_ROOT / "agents" / "mpi-cross-analyst.md"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Dead 'generic-synchronic.md' references in mpi-global-synchronic/SKILL.md and "
-        "mpi-cross-analyst.md are removed in Phase 3 (close-enforcement-2). "
-        "This test is the red-green gate for AC2.3."
-    ),
-    strict=False,
-)
 def test_no_literal_generic_synchronic_artifact_in_global_synchronic_skill():
     """AC2.3: Neither mpi-global-synchronic/SKILL.md nor mpi-cross-analyst.md should contain
     a literal reference to the non-existent cross-stage artifact 'generic-synchronic.md'.

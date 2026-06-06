@@ -1235,6 +1235,73 @@ def _check_irr_gate(
     return 0
 
 
+def _check_single_event_global_synchronic_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    scope: str,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.2: Warn (or abort) when a global_synchronic close covers < 2 events.
+
+    Scope format: gidu<G>-cat-<C>. Counts distinct events in manifest that have
+    a done generic_synchronic.isu_second_level_grouping substep whose participant
+    key matches *-gidu<G> (exact segment match to avoid gidu1 / gidu10 confusion).
+
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    # Parse gidu segment from scope (e.g. "gidu1-cat-low" → "gidu1")
+    parts = scope.split("-cat-")
+    if len(parts) < 2:
+        # Unexpected scope format; skip gate
+        return 0
+    gidu_segment = parts[0].strip()  # e.g. "gidu1"
+
+    participants = manifest.get("participants", {})
+
+    # Collect distinct event IDs from participant keys whose scope ends with "-<gidu_segment>"
+    # (exact segment boundary: preceded by a dash or start of string)
+    # Pattern: event<E>-cat-<C>-gidu<G>  — split on "-gidu" suffix won't be robust;
+    # instead, check that the key ends exactly with "-<gidu_segment>"
+    suffix = f"-{gidu_segment}"
+    distinct_events: set[str] = set()
+    for pid, pdata in participants.items():
+        if not pid.endswith(suffix):
+            continue
+        # Verify exact segment match: the char before the suffix must be part of a "-cat-..."
+        # segment and not e.g. "-gidu10" vs "-gidu1" (the endswith check handles this since
+        # "-gidu10" does not end with "-gidu1" literally, but "-gidu10".endswith("-gidu1") is False)
+        # Check generic_synchronic.isu_second_level_grouping status
+        status = (
+            pdata.get("stages", {})
+                 .get("generic_synchronic", {})
+                 .get("substeps", {})
+                 .get("isu_second_level_grouping", {})
+                 .get("status")
+        )
+        if status != "done":
+            continue
+        # Extract the event ID prefix: participant key up to the first "-cat-"
+        cat_idx = pid.find("-cat-")
+        if cat_idx < 0:
+            continue
+        event_id = pid[:cat_idx]
+        distinct_events.add(event_id)
+
+    if len(distinct_events) < 2:
+        return _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope=scope, actor=actor, actor_kind=actor_kind,
+            extra_details={"event_count": len(distinct_events), "gidu": gidu_segment},
+        )
+    return 0
+
+
 def _check_completeness_gate(
     run_dir: Path,
     manifest: dict,
@@ -1636,7 +1703,15 @@ def cmd_close(args: argparse.Namespace) -> int:
                     if gate_rc != 0:
                         return _abort("undeclared_input")
 
-        # Phase 3 will wire single_event_global_synchronic here.
+        # AC3.2: single_event_global_synchronic gate — warn/abort if < 2 events done for gidu
+        if args.stage == "global_synchronic":
+            seg_rc = _check_single_event_global_synchronic_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                scope=args.scope, actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if seg_rc != 0:
+                return _abort("single_event_global_synchronic")
 
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(

@@ -5828,3 +5828,250 @@ class TestUndeclaredInputGate:
         assert len(gw_events) == 0, (
             f"Expected no undeclared_input gate_warning when inputs_consumed absent, got: {gw_events}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 tests: Global-synchronic wiring + gates
+# AC3.1 — source_event required field on global-synchronic ISUs (hard schema)
+# AC3.2 — single_event_global_synchronic gate
+# ---------------------------------------------------------------------------
+
+class TestGlobalSynchronicSourceEvent:
+    """AC3.1: source_event is a required field on each global-synchronic ISU."""
+
+    def _valid_isu_base(self) -> dict:
+        """Return a fully-valid global-synchronic ISU (all required fields for require_second_level=True)."""
+        return {
+            "isu_name": "Sense of automaticity",
+            "criteria": "Participant describes hand as moving on its own",
+            "confidence": 4,
+            "flag_for_review": False,
+            "utterance_refs": [
+                {
+                    "transcript_id": "p1s1",
+                    "utterance_number": 3,
+                    "byte_start": 10,
+                    "byte_end": 50,
+                    "raw_excerpt": "my hand just moved by itself",
+                }
+            ],
+            "isu_second_level_of_abstraction": "involuntary movement",
+            "source_event": "event1",
+        }
+
+    def test_missing_source_event_rejected(self):
+        """AC3.1: global_synchronic ISU without source_event produces a SchemaError."""
+        from _mpi_schemas import validate_units, SchemaError
+
+        isu = self._valid_isu_base()
+        del isu["source_event"]  # remove the required field
+
+        payload = {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [isu],
+        }
+        errors = validate_units("global_synchronic", "global_synchronic", payload)
+        assert len(errors) > 0, "Expected SchemaError for missing source_event, got none"
+        error_fields = [e.field for e in errors]
+        assert any("source_event" in f for f in error_fields), (
+            f"Expected error mentioning 'source_event', got fields: {error_fields}"
+        )
+
+    def test_source_event_present_accepted(self):
+        """AC3.1: global_synchronic ISU with source_event passes schema validation."""
+        from _mpi_schemas import validate_units
+
+        isu = self._valid_isu_base()  # has source_event: "event1"
+
+        payload = {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [isu],
+        }
+        errors = validate_units("global_synchronic", "global_synchronic", payload)
+        # Filter to errors relating to source_event only
+        source_event_errors = [e for e in errors if "source_event" in e.field]
+        assert len(source_event_errors) == 0, (
+            f"Expected no source_event errors, got: {source_event_errors}"
+        )
+
+
+class TestSingleEventGate:
+    """AC3.2: single_event_global_synchronic gate warns when < 2 events done for gidu, strict blocks."""
+
+    def _make_global_sync_manifest(self, run_dir: Path, event_groups: dict, done_scopes: list[str]) -> None:
+        """Write a manifest suitable for global_synchronic close.
+
+        done_scopes: list of participant keys (e.g. "event1-cat-low-gidu1") that have
+        generic_synchronic.isu_second_level_grouping = done.
+        """
+        participants = {}
+        for scope_key in done_scopes:
+            participants[scope_key] = {
+                "stages": {
+                    "generic_synchronic": {
+                        "substeps": {
+                            "isu_second_level_grouping": {
+                                "status": "done",
+                                "close_id": f"cid-{scope_key}",
+                                "output_paths": [],
+                                "artifact_shas": {},
+                            }
+                        }
+                    }
+                }
+            }
+
+        manifest = {
+            "version": "2.0",
+            "run_id": "test-run-id",
+            "study": {
+                "event_groups": event_groups,
+                "strict_gates": [],
+            },
+            "participants": participants,
+        }
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    def test_single_event_scope_warns(self, tmp_path, capsys):
+        """AC3.2: single-event gidu scope emits gate_warning but close succeeds (warn mode)."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # One event, one done scope for gidu1
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"]},
+            done_scopes=["event1-cat-low-gidu1"],
+        )
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test single event warns",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed in warn mode for single-event scope; got rc={rc}"
+
+        # Audit must contain gate_warning for single_event_global_synchronic
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "single_event_global_synchronic"
+        ]
+        assert len(gw_events) >= 1, (
+            f"Expected gate_warning with gate_id=single_event_global_synchronic; "
+            f"got actions: {[e.get('event', {}).get('action') for e in events]}"
+        )
+
+    def test_single_event_scope_strict_blocks(self, tmp_path, capsys):
+        """AC3.2: --strict-single-event-global-synchronic aborts close when < 2 events."""
+        run_dir = _init_run_dir(tmp_path)
+
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"]},
+            done_scopes=["event1-cat-low-gidu1"],
+        )
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test single event strict",
+            "--run-dir", str(run_dir),
+            "--strict-single-event-global-synchronic",
+        ])
+        assert rc != 0, (
+            f"Close should abort with --strict-single-event-global-synchronic "
+            f"when < 2 events done; got rc={rc}"
+        )
+        stderr_out = capsys.readouterr().err
+        assert "single_event_global_synchronic" in stderr_out, (
+            f"Expected 'single_event_global_synchronic' in stderr; got: {stderr_out}"
+        )
+
+    def test_two_event_scope_closes_clean(self, tmp_path):
+        """AC3.2: two distinct events done for gidu1 → no gate_warning, close succeeds."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Two events, each with a done scope for gidu1
+        self._make_global_sync_manifest(
+            run_dir,
+            event_groups={"event1": ["p1s1"], "event2": ["p2s1"]},
+            done_scopes=["event1-cat-low-gidu1", "event2-cat-low-gidu1"],
+        )
+
+        art_json = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.json")
+        art_md = _write_artifact(run_dir, "gidu1-cat-low-global_synchronic.global_synchronic.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "gidu1-cat-low", "global_synchronic", "global_synchronic")
+        units = _write_units_json(run_dir, "units.json", {
+            "generic_idu": "gidu1",
+            "iv_category": "low",
+            "isus": [],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "gidu1-cat-low",
+            "--stage", "global_synchronic",
+            "--substep", "global_synchronic",
+            "--scope", "gidu1-cat-low",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test two events clean",
+            "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed with 2 events done for gidu1; got rc={rc}"
+
+        # Audit must NOT have a gate_warning for single_event_global_synchronic
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        gw_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "single_event_global_synchronic"
+        ]
+        assert len(gw_events) == 0, (
+            f"Expected no single_event_global_synchronic gate_warning with 2 events; "
+            f"got: {gw_events}"
+        )

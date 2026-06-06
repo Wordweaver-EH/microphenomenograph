@@ -278,6 +278,12 @@ def _validate_global_synchronic(payload: dict) -> list[SchemaError]:
         for i, isu in enumerate(isus):
             if isinstance(isu, dict):
                 errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+                # AC3.1: source_event is required on each global-synchronic ISU (hard shape)
+                if "source_event" not in isu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_event",
+                        "required field missing (must name the event this ISU came from, e.g. 'event1')",
+                    ))
             else:
                 errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
     return errors
