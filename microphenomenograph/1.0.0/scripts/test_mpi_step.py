@@ -6075,3 +6075,535 @@ class TestSingleEventGate:
             f"Expected no single_event_global_synchronic gate_warning with 2 events; "
             f"got: {gw_events}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Diachronic/synchronic enforcement (AC4.1–AC4.5)
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helpers for Phase 4 tests
+# ---------------------------------------------------------------------------
+
+def _close_diachronic_criteria_grouping(run_dir: Path, participant: str = "p1s1") -> int:
+    """Close diachronic.criteria_grouping for a participant (prerequisite for revision)."""
+    art_json = _write_artifact(run_dir, f"{participant}-diachronic.criteria_grouping.json")
+    art_md = _write_artifact(run_dir, f"{participant}-diachronic.criteria_grouping.md", "# out")
+    prompt_art = _write_prompt_artifact(run_dir, participant, "diachronic", "criteria_grouping")
+    units = _write_units_json(run_dir, f"{participant}_cg_units.json", {
+        "analysis_type": "diachronic",
+        "participant": participant,
+        "idus": [{
+            "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+            "criteria": "The utterances talk about testing.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1"],
+            "hinge_to_next": None,
+            "utterance_refs": [{
+                "transcript_id": participant,
+                "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                "raw_excerpt": "hello test",
+            }],
+        }],
+    })
+    return mpi_step.main([
+        "close", "--actor", "mpi-analyst", "--participant", participant,
+        "--stage", "diachronic", "--substep", "criteria_grouping",
+        "--scope", participant,
+        "--artifact", str(art_json), "--artifact", str(art_md),
+        "--prompt-artifact", str(prompt_art),
+        "--units-json", str(units),
+        "--reason", "criteria grouping done", "--run-dir", str(run_dir),
+    ])
+
+
+def _make_criteria_revision_units(decision: str, participant: str = "p1s1") -> dict:
+    """Return a valid criteria_revision units payload with the given decision."""
+    return {
+        "analysis_type": "diachronic",
+        "participant": participant,
+        "idus": [{
+            "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+            "criteria": "The utterances talk about testing.",
+            "confidence": 4, "flag_for_review": False,
+            "utterance_numbers": ["1"],
+            "hinge_to_next": None,
+            "utterance_refs": [{
+                "transcript_id": participant,
+                "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                "raw_excerpt": "hello test",
+            }],
+        }],
+        "convergence": {
+            "decision": decision,
+            "reason": "Test reason for convergence decision.",
+        },
+    }
+
+
+def _make_theme_grouping_units(temporal_order: bool, flag_isu: bool = False,
+                                participant: str = "p1s1") -> dict:
+    """Return a valid theme_grouping_within_idu payload."""
+    isu = {
+        "isu_name": "Test ISU",
+        "criteria": "The utterances talk about testing.",
+        "confidence": 4,
+        "flag_for_review": flag_isu,
+        "utterance_refs": [{
+            "transcript_id": participant,
+            "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+            "raw_excerpt": "hello test",
+        }],
+    }
+    payload = {
+        "analysis_type": "synchronic",
+        "participant": participant,
+        "idu_name": "Test IDU",
+        "isus": [isu],
+    }
+    if temporal_order is not None:
+        payload["temporal_order_within_idu"] = temporal_order
+    return payload
+
+
+class TestConvergenceDowngrade:
+    """AC4.1: criteria_revision with more_revision_needed → status flagged; blocking."""
+
+    def test_more_revision_needed_sets_flagged(self, tmp_path):
+        """AC4.1: criteria_revision with decision=more_revision_needed → manifest status flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0, "criteria_grouping close must succeed first"
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("more_revision_needed"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",  # caller passes done; code should downgrade to flagged
+            "--reason", "revision needed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed (downgrade, not abort); rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"]["p1s1"]["stages"]["diachronic"]
+                  ["substeps"]["criteria_revision"]["status"])
+        assert status == "flagged", (
+            f"Expected status='flagged' for more_revision_needed, got {status!r}"
+        )
+
+    def test_converged_sets_done(self, tmp_path):
+        """AC4.1: criteria_revision with decision=converged → manifest status done."""
+        run_dir = _init_run_dir(tmp_path)
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "converged", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed; rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"]["p1s1"]["stages"]["diachronic"]
+                  ["substeps"]["criteria_revision"]["status"])
+        assert status == "done", (
+            f"Expected status='done' for converged, got {status!r}"
+        )
+
+    def test_idu_naming_blocked_while_criteria_revision_flagged(self, tmp_path):
+        """AC4.1: idu_naming_ordering is blocked when criteria_revision is flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        # Close criteria_grouping
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        # Close criteria_revision with more_revision_needed → flagged
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("more_revision_needed"))
+        rc_cr = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "revision needed", "--run-dir", str(run_dir),
+        ])
+        assert rc_cr == 0
+
+        # Attempt idu_naming_ordering — should be blocked
+        art_json2 = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.json")
+        art_md2 = _write_artifact(run_dir, "p1s1-diachronic.idu_naming_ordering.md", "# out")
+        prompt_art2 = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "idu_naming_ordering")
+        units2 = _write_units_json(run_dir, "ino_units.json", {
+            "analysis_type": "diachronic",
+            "participant": "p1s1",
+            "idus": [{
+                "idu_number": 1, "idu_name": "Test IDU", "moment": 1,
+                "criteria": "The utterances talk about testing.",
+                "confidence": 4, "flag_for_review": False,
+                "utterance_numbers": ["1"],
+                "hinge_to_next": None,
+                "utterance_refs": [{
+                    "transcript_id": "p1s1",
+                    "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                    "raw_excerpt": "hello test",
+                }],
+            }],
+        })
+        rc_ino = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "idu_naming_ordering",
+            "--scope", "p1s1",
+            "--artifact", str(art_json2), "--artifact", str(art_md2),
+            "--prompt-artifact", str(prompt_art2),
+            "--units-json", str(units2),
+            "--status", "done",
+            "--reason", "idu naming", "--run-dir", str(run_dir),
+        ])
+        assert rc_ino != 0, (
+            "idu_naming_ordering close should be blocked when criteria_revision is flagged"
+        )
+
+
+class TestTemporalOrderDowngrade:
+    """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=true → flagged; blocking."""
+
+    def _setup_for_synchronic(self, run_dir: Path, participant: str = "p1s1") -> None:
+        """Set up manifest with all diachronic done so synchronic can proceed."""
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["participants"].setdefault(participant, {"stages": {}})
+        manifest["participants"][participant]["stages"]["diachronic"] = {
+            "status": "done",
+            "substeps": {
+                "criteria_grouping": {"status": "done", "close_id": "fake-cg", "output_paths": [], "artifact_shas": {}},
+                "criteria_revision": {"status": "done", "close_id": "fake-cr", "output_paths": [], "artifact_shas": {}},
+                "idu_naming_ordering": {"status": "done", "close_id": "fake-ino", "output_paths": [], "artifact_shas": {}},
+            }
+        }
+        import json as _json
+        manifest_path.write_text(_json.dumps(manifest, indent=2) + "\n")
+
+    def test_temporal_order_true_sets_flagged(self, tmp_path):
+        """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=true → status flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        # temporal_order_within_idu=true requires ≥1 flag_for_review=true ISU
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(
+                                       temporal_order=True, flag_isu=True))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "temporal order found", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed (downgrade, not abort); rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"][scope]["stages"]["synchronic"]
+                  ["substeps"]["theme_grouping_within_idu"]["status"])
+        assert status == "flagged", (
+            f"Expected status='flagged' for temporal_order_within_idu=true, got {status!r}"
+        )
+
+    def test_temporal_order_false_sets_done(self, tmp_path):
+        """AC4.2: theme_grouping_within_idu with temporal_order_within_idu=false → status done."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(temporal_order=False))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "no temporal order", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Close should succeed; rc={rc}"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        status = (manifest["participants"][scope]["stages"]["synchronic"]
+                  ["substeps"]["theme_grouping_within_idu"]["status"])
+        assert status == "done", (
+            f"Expected status='done' for temporal_order_within_idu=false, got {status!r}"
+        )
+
+    def test_isu_naming_blocked_while_theme_grouping_flagged(self, tmp_path):
+        """AC4.2: isu_naming is blocked when theme_grouping_within_idu is flagged."""
+        run_dir = _init_run_dir(tmp_path)
+        self._setup_for_synchronic(run_dir, "p1s1")
+
+        scope = "p1s1-idu1"
+        # Close theme_grouping with temporal_order=true → flagged
+        art_json = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.json")
+        art_md = _write_artifact(run_dir, f"{scope}-synchronic.theme_grouping_within_idu.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, scope, "synchronic", "theme_grouping_within_idu")
+        units = _write_units_json(run_dir, "tg_units.json",
+                                   _make_theme_grouping_units(temporal_order=True, flag_isu=True))
+        rc_tg = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "theme_grouping_within_idu",
+            "--scope", scope,
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "temporal order found", "--run-dir", str(run_dir),
+        ])
+        assert rc_tg == 0
+
+        # Attempt isu_naming — should be blocked
+        art_json2 = _write_artifact(run_dir, f"{scope}-synchronic.isu_naming.json")
+        art_md2 = _write_artifact(run_dir, f"{scope}-synchronic.isu_naming.md", "# out")
+        prompt_art2 = _write_prompt_artifact(run_dir, scope, "synchronic", "isu_naming")
+        units2 = _write_units_json(run_dir, "in_units.json",
+                                    _make_theme_grouping_units(temporal_order=False))
+        rc_in = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", scope,
+            "--stage", "synchronic", "--substep", "isu_naming",
+            "--scope", scope,
+            "--artifact", str(art_json2), "--artifact", str(art_md2),
+            "--prompt-artifact", str(prompt_art2),
+            "--units-json", str(units2),
+            "--status", "done",
+            "--reason", "isu naming", "--run-dir", str(run_dir),
+        ])
+        assert rc_in != 0, (
+            "isu_naming close should be blocked when theme_grouping_within_idu is flagged"
+        )
+
+
+class TestCoPresenceSchema:
+    """AC4.3: temporal_order_within_idu=true requires ≥1 ISU with flag_for_review=true."""
+
+    def test_temporal_order_true_requires_flag_for_review(self):
+        """AC4.3: temporal_order_within_idu=true with all ISUs flag_for_review=false → SchemaError."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=True, flag_isu=False)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors, (
+            "Expected SchemaError for temporal_order_within_idu=true with no flagged ISU"
+        )
+        assert any("temporal_order_within_idu" in str(e) for e in errors), (
+            f"Expected error referencing temporal_order_within_idu; got: {errors}"
+        )
+
+    def test_temporal_order_true_with_flagged_isu_accepted(self):
+        """AC4.3: temporal_order_within_idu=true with ≥1 flag_for_review=true ISU → no error."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=True, flag_isu=True)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no schema errors when co-presence rule satisfied; got: {errors}"
+        )
+
+    def test_temporal_order_false_no_co_presence_required(self):
+        """AC4.3: temporal_order_within_idu=false with all flag_for_review=false → no error."""
+        from _mpi_schemas import validate_units
+        payload = _make_theme_grouping_units(temporal_order=False, flag_isu=False)
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no errors when temporal_order_within_idu=false; got: {errors}"
+        )
+
+    def test_temporal_order_absent_no_co_presence_required(self):
+        """AC4.3: no temporal_order_within_idu field → no error (optional field)."""
+        from _mpi_schemas import validate_units
+        payload = {
+            "analysis_type": "synchronic",
+            "participant": "p1s1",
+            "idu_name": "Test IDU",
+            "isus": [{
+                "isu_name": "Test ISU",
+                "criteria": "The utterances talk about testing.",
+                "confidence": 4,
+                "flag_for_review": False,
+                "utterance_refs": [{
+                    "transcript_id": "p1s1",
+                    "utterance_number": 1, "byte_start": 0, "byte_end": 10,
+                    "raw_excerpt": "hello test",
+                }],
+            }],
+        }
+        errors = validate_units("synchronic", "theme_grouping_within_idu", payload)
+        assert errors == [], (
+            f"Expected no errors when temporal_order_within_idu absent; got: {errors}"
+        )
+
+
+class TestIduSplitAuditEvent:
+    """AC4.4: diachronic re-close after synchronic temporal-order flag → idu_split_after_synchronic event."""
+
+    def _setup_manifest_with_flagged_synchronic(
+        self, run_dir: Path, transcript_scope: str = "p1s1",
+        idu_scope: str = "p1s1-idu1",
+        flagged_close_id: str = "fake-tg-close-id"
+    ) -> None:
+        """Set up manifest with criteria_grouping done and a flagged theme_grouping_within_idu."""
+        manifest_path = run_dir / ".mpi" / "project.json"
+        manifest = json.loads(manifest_path.read_text())
+
+        # Transcript level: criteria_grouping done, criteria_revision done
+        manifest["participants"][transcript_scope] = {
+            "stages": {
+                "diachronic": {
+                    "status": "done",
+                    "substeps": {
+                        "criteria_grouping": {
+                            "status": "done", "close_id": "fake-cg-id",
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                        "criteria_revision": {
+                            "status": "done", "close_id": "fake-cr-id-prev",
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                    }
+                }
+            }
+        }
+        # IDU level: theme_grouping_within_idu is flagged (temporal order found)
+        manifest["participants"][idu_scope] = {
+            "stages": {
+                "synchronic": {
+                    "status": "flagged",
+                    "substeps": {
+                        "theme_grouping_within_idu": {
+                            "status": "flagged",
+                            "close_id": flagged_close_id,
+                            "output_paths": [], "artifact_shas": {},
+                        },
+                    }
+                }
+            }
+        }
+        import json as _json
+        manifest_path.write_text(_json.dumps(manifest, indent=2) + "\n")
+        # Commit the manifest change so git is clean
+        import subprocess as _sp
+        _sp.run(["git", "add", "-A"], cwd=run_dir, capture_output=True)
+        _sp.run(["git", "commit", "-m", "setup manifest for idu split test"],
+                cwd=run_dir, capture_output=True)
+
+    def test_reclose_after_temporal_flag_emits_idu_split_event(self, tmp_path):
+        """AC4.4: criteria_revision re-close after synchronic temporal flag → idu_split_after_synchronic."""
+        run_dir = _init_run_dir(tmp_path)
+        flagged_close_id = "flagged-tg-close-1234"
+        self._setup_manifest_with_flagged_synchronic(
+            run_dir, "p1s1", "p1s1-idu1", flagged_close_id
+        )
+
+        # Now close criteria_revision again (re-close)
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "re-close after split", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, f"Criteria revision re-close should succeed; rc={rc}"
+
+        # Check audit for idu_split_after_synchronic event
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        split_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "idu_split_after_synchronic"
+        ]
+        assert len(split_events) >= 1, (
+            f"Expected idu_split_after_synchronic event in audit; "
+            f"actions seen: {[e.get('event', {}).get('action') for e in events]}"
+        )
+        # Verify it links the triggering close_id
+        found_link = any(
+            e.get("mpi", {}).get("triggering_close_id") == flagged_close_id
+            for e in split_events
+        )
+        assert found_link, (
+            f"Expected triggering_close_id={flagged_close_id!r} in split event; "
+            f"got mpi blocks: {[e.get('mpi') for e in split_events]}"
+        )
+
+    def test_no_idu_split_event_without_prior_flag(self, tmp_path):
+        """AC4.4: criteria_revision re-close with no flagged synchronic substeps → no idu_split_after_synchronic."""
+        run_dir = _init_run_dir(tmp_path)
+        # Set up without any flagged IDU synchronic substep
+        rc_cg = _close_diachronic_criteria_grouping(run_dir, "p1s1")
+        assert rc_cg == 0
+
+        art_json = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.json")
+        art_md = _write_artifact(run_dir, "p1s1-diachronic.criteria_revision.md", "# out")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "diachronic", "criteria_revision")
+        units = _write_units_json(run_dir, "cr_units.json",
+                                   _make_criteria_revision_units("converged"))
+        rc = mpi_step.main([
+            "close", "--actor", "mpi-analyst", "--participant", "p1s1",
+            "--stage", "diachronic", "--substep", "criteria_revision",
+            "--scope", "p1s1",
+            "--artifact", str(art_json), "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--status", "done",
+            "--reason", "converged", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0
+
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(ln) for ln in audit_path.read_text().splitlines() if ln.strip()]
+        split_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "idu_split_after_synchronic"
+        ]
+        assert len(split_events) == 0, (
+            f"Expected no idu_split_after_synchronic event without prior flag; "
+            f"got {len(split_events)} events"
+        )

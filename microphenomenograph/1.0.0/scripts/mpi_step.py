@@ -145,6 +145,94 @@ def _evaluate_gate(
 
 
 # ---------------------------------------------------------------------------
+# close-enforcement-2 Phase 4: Downgrade status helpers
+# ---------------------------------------------------------------------------
+
+def _compute_effective_status(args, units_payload: dict) -> str:
+    """
+    Compute the effective substep status after applying downgrade gates.
+
+    Downgrade gates (posture='downgrade') override args.status to 'flagged'
+    when the payload carries a triggering condition.  Close still succeeds;
+    downstream blocking is free because the prereq loop requires status=='done'.
+
+    AC4.1: criteria_revision with decision=='more_revision_needed' → 'flagged'.
+    AC4.2: theme_grouping_within_idu with temporal_order_within_idu==True → 'flagged'.
+    """
+    stage = args.stage
+    substep = args.substep
+
+    # AC4.1: convergence_pending downgrade
+    if stage == "diachronic" and substep == "criteria_revision":
+        decision = units_payload.get("convergence", {}).get("decision")
+        if decision == "more_revision_needed":
+            return "flagged"
+
+    # AC4.2: temporal_order_pending downgrade
+    if stage == "synchronic" and substep == "theme_grouping_within_idu":
+        if units_payload.get("temporal_order_within_idu") is True:
+            return "flagged"
+
+    return args.status
+
+
+def _emit_idu_split_after_synchronic(
+    run_dir: Path,
+    manifest: dict,
+    scope: str,
+    close_id: str,
+    audit_path: Path,
+    actor: str,
+    actor_kind: str,
+) -> None:
+    """
+    AC4.4: Emit idu_split_after_synchronic audit event(s) when a diachronic
+    criteria_revision re-close follows a synchronic temporal-order flag.
+
+    - scope is the transcript key (pNsN) from the criteria_revision close.
+    - Scans manifest["participants"] for keys matching '{scope}-idu*'.
+    - For each such key, checks if synchronic.theme_grouping_within_idu.status == 'flagged'.
+    - Emits one event per triggering close_id found.
+    """
+    run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+    idu_prefix = f"{scope}-idu"
+    participants = manifest.get("participants", {})
+
+    for p_key, p_data in participants.items():
+        if not p_key.startswith(idu_prefix):
+            continue
+        stages = p_data.get("stages", {})
+        sync_data = stages.get("synchronic", {})
+        substeps = sync_data.get("substeps", {})
+        tg = substeps.get("theme_grouping_within_idu", {})
+        if tg.get("status") == "flagged":
+            triggering_close_id = tg.get("close_id", "")
+            split_event = {
+                "event_id": str(uuid.uuid4()),
+                "@timestamp": datetime.now(timezone.utc).isoformat(),
+                "trace_id": run_id,
+                "span_id": str(uuid.uuid4()),
+                "actor": {"kind": actor_kind, "name": actor},
+                "event": {
+                    "kind": "event",
+                    "action": "idu_split_after_synchronic",
+                    "outcome": "success",
+                },
+                "mpi": {
+                    "triggering_close_id": triggering_close_id,
+                    "reclose_close_id": close_id,
+                    "scope": scope,
+                    "idu_scope": p_key,
+                },
+                "reason": (
+                    f"diachronic criteria_revision re-close {close_id} follows "
+                    f"synchronic temporal-order flag {triggering_close_id} in {p_key}"
+                ),
+            }
+            append_jsonl(audit_path, split_event)
+
+
+# ---------------------------------------------------------------------------
 # init subcommand
 # ---------------------------------------------------------------------------
 
@@ -1781,9 +1869,8 @@ def cmd_close(args: argparse.Namespace) -> int:
         stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
         stage_entry.setdefault("substeps", {})
 
-        # close-enforcement-2 Phase 1: effective_status hook (Phase 4 will add downgrade logic)
-        effective_status = args.status
-        # Downgrade gates will override effective_status here in Phase 4.
+        # close-enforcement-2 Phase 4: compute effective status (downgrade gates)
+        effective_status = _compute_effective_status(args, units_payload)
 
         stage_entry["substeps"][args.substep] = {
             "status": effective_status,
@@ -1950,6 +2037,19 @@ def cmd_close(args: argparse.Namespace) -> int:
             superseded_before = len(list(
                 (run_dir / "analyses" / "_superseded").iterdir()
             )) if (run_dir / "analyses" / "_superseded").exists() else 0
+
+            # AC4.4: Emit idu_split_after_synchronic if any IDU has flagged theme_grouping.
+            # Must be called BEFORE cascade reset (cascade only resets 'done', not 'flagged',
+            # but reading the manifest before cascade is safer — flagged entries survive either way).
+            _emit_idu_split_after_synchronic(
+                run_dir=run_dir,
+                manifest=reload_manifest,
+                scope=args.scope,
+                close_id=close_id,
+                audit_path=audit_path,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
 
             updated_manifest = _cascade_reset(
                 run_dir=run_dir,

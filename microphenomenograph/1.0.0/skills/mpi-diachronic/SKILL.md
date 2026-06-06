@@ -127,7 +127,7 @@ The `mpi-analyst` subagent owns persistence for all three LLM substeps.
 | Substep | Actor | Artifacts | Notes |
 |---------|-------|-----------|-------|
 | `diachronic.criteria_grouping` | mpi-analyst (LLM) | `pNsN-diachronic.criteria_grouping.{json,md,prompt.json}` | First substep; no prerequisites |
-| `diachronic.criteria_revision` | mpi-analyst (LLM) | `pNsN-diachronic.criteria_revision.{json,md,prompt.json}` | JSON must include `convergence: {decision, reason}`; orchestrator re-dispatches while `decision == "more_revision_needed"`, capped at 5 passes |
+| `diachronic.criteria_revision` | mpi-analyst (LLM) | `pNsN-diachronic.criteria_revision.{json,md,prompt.json}` | JSON must include `convergence: {decision, reason}`; if `decision == "more_revision_needed"`, `cmd_close` automatically sets substep status to `flagged` (blocking `idu_naming_ordering` until a converged re-close); orchestrator re-dispatches, capped at 5 passes |
 | `diachronic.idu_naming_ordering` | mpi-analyst (LLM) | `pNsN-diachronic.idu_naming_ordering.{json,md,prompt.json}` | Final diachronic substep; its close triggers synchronic eligibility |
 
 **Commit message format:** `mpi: mpi-analyst diachronic.<substep> pNsN (<N>units <K>flagged)`

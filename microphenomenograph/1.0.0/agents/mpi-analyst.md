@@ -66,8 +66,10 @@ asking: "what aspects of experience are described within this IDU?"
    a 2nd-level grouping name (e.g., ISUs "Warmth" and "Pressure" → 2nd level "Tactile
    Qualities"). Leave empty if no grouping applies.
 4. **Temporal order within an IDU**: If ISUs within one IDU appear to be temporally
-   ordered, this may indicate the IDU should be split into two diachronic units. Flag
-   this with `flag_for_review: true` and note it in reasoning.
+   ordered, this indicates the IDU should be split. You MUST set BOTH `flag_for_review: true`
+   AND `temporal_order_within_idu: true` on the artifact. `cmd_close` will automatically
+   downgrade this substep to `flagged` status and block `isu_naming` until a
+   `diachronic.criteria_revision` re-close resolves the split.
 5. **Criteria**: "The utterances talk about [X]." Same pattern as diachronic.
 
 ## Instructions

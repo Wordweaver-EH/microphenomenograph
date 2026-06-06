@@ -181,6 +181,18 @@ def _validate_synchronic_theme_grouping(payload: dict) -> list[SchemaError]:
         return errors
     for i, isu in enumerate(isus):
         errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=False))
+    # AC4.3: co-presence rule — temporal_order_within_idu=true requires ≥1 ISU with flag_for_review=true
+    if flag is True:
+        any_flagged = any(
+            isinstance(isu, dict) and isu.get("flag_for_review") is True
+            for isu in isus
+        )
+        if not any_flagged:
+            errors.append(SchemaError(
+                "payload.temporal_order_within_idu",
+                "co-presence rule: temporal_order_within_idu=true requires "
+                "at least one ISU with flag_for_review=true"
+            ))
     return errors
 
 
