@@ -43,6 +43,19 @@ Instead it:
 6. Reports any lines that look malformed (contain neither a recognised speaker label
    nor appear to be continuation text)
 
+**Question-line flagging (validate-only, no content edit):** During normalize, identify
+interviewer-turn lines (lines where the speaker label is `Kevin Sheldrake:` or the
+equivalent interviewer label) that appear to be removable clarifying questions — lines
+ending with `?` or containing only a short interrogative phrase (e.g. "Why was that?",
+"Can you say more?", "What happened then?"). Flag each such line in the normalize report:
+```
+QUESTION [pNsN]: line N: interviewer question line (candidate for researcher pre-removal): "<line text>"
+```
+Do NOT remove or rewrite these lines. The raw file and normalized file remain byte-identical
+on content for question lines — the normalized file differs only by existing structural
+rules (BOM strip, whitespace, CRLF). Removal of interviewer questions is a documented
+researcher pre-step, not a pipeline operation.
+
 ## Error conditions
 
 - Header mismatch: `ERROR [pNsN]: line 1 does not match expected header format`
@@ -76,7 +89,7 @@ The orchestrator owns all three substeps (no LLM calls, no prompt artifact for a
 | Substep | Actor | Artifacts | Notes |
 |---------|-------|-----------|-------|
 | `transcript_prep.hash_raw` | orchestrator | SHA256 entry in manifest | Marks raw file read-only. SHA recorded as `study.transcripts[transcript_id].raw_sha256`. |
-| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. The raw file must already satisfy the single-line-per-utterance invariant (each utterance on exactly one physical line). The normalize step ensures the normalized derivative is aligned but never rewrites the raw. Precondition for `register_offsets` byte-range computation. |
+| `transcript_prep.normalize` | orchestrator | `transcripts/normalized/<transcript_id>.txt`, `transcripts/diff/<transcript_id>.diff` | Diff from raw → normalized is committed alongside for reviewability. The raw file must already satisfy the single-line-per-utterance invariant (each utterance on exactly one physical line). The normalize step ensures the normalized derivative is aligned but never rewrites the raw. Precondition for `register_offsets` byte-range computation. Normalize also emits `QUESTION` advisories for interviewer-question lines (flagging only; no content modification; raw remains byte-identical on question lines). |
 | `transcript_prep.register_offsets` | orchestrator | `transcripts/offsets/<transcript_id>.json` | Produces a flat-dict offset file mapping string utterance numbers to byte ranges in the raw transcript: `{"1": {"byte_start": N, "byte_end": N}, "2": {...}}`. `byte_start` = byte offset of the first character of the speaker label on that utterance line; `byte_end` = byte offset of the last character before the line ending. Assumes the raw file already satisfies the single-line-per-utterance invariant (each utterance on exactly one physical line). SHA recorded in manifest. |
 
 **Commit message format:** `mpi: orchestrator transcript_prep.<substep> <transcript_id>`

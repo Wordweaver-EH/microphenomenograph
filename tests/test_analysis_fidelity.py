@@ -9,7 +9,13 @@ Phase 2: AC3.1, AC4.1, AC4.2
   - Linkage-phrase boundary rule in mpi-analyst.md
   - Naming deferred to convergence: idu_name/moment optional at criteria_grouping/criteria_revision,
     required at idu_naming_ordering
+
+Phase 3: AC5.1, AC5.2, AC6.1
+  - Score-range validation (header scores outside 0-5 rejected with named error)
+  - Participant-count advisory (counts 5 or 13 produce advisory; 6-12 silent)
+  - Question-line flagging in normalize (validate-only; content unchanged)
 """
+import re
 import sys
 from pathlib import Path
 
@@ -401,4 +407,182 @@ class TestAC4_NamingDeferred:
         # Must mention that naming is deferred or not required at criteria_grouping
         assert "defer" in lower or "idu_naming_ordering" in content, (
             "mpi-analyst.md must state that idu_name/moment are deferred until idu_naming_ordering"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: AC5.1, AC5.2, AC6.1
+# ---------------------------------------------------------------------------
+
+_HEADER_REGEX = r'^Participant (\d+),?\s+Suggestion (\d+)(?:\s+\w+)*\s*\(Scored (\d+)/5\)'
+
+
+def _parse_and_validate_header(line: str):
+    """
+    Simulate the init skill's two-pass header validation:
+    1. Regex match (permissive — same regex as mpi-init SKILL.md)
+    2. Score range check: 0–5 inclusive
+    Returns (p, s, score) tuple on success.
+    Raises ValueError with 'invalid_score_range' in message when score out-of-range.
+    Raises ValueError with 'invalid header format' when regex does not match.
+    """
+    match = re.match(_HEADER_REGEX, line)
+    if not match:
+        raise ValueError(
+            f"invalid header format. Expected \"Participant N[,] Suggestion N (Scored N/5)[...]\", "
+            f"got: \"{line}\""
+        )
+    p, s, score = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    if score < 0 or score > 5:
+        raise ValueError(
+            f"invalid_score_range: score {score} is outside valid range 0–5. "
+            f"Expected \"Scored N/5\" where N ∈ {{0, 1, 2, 3, 4, 5}}."
+        )
+    return p, s, score
+
+
+def _emit_participant_count_advisory(count: int):
+    """
+    Simulate the init skill's participant-count advisory logic.
+    Returns advisory string if count < 6 or count > 12, else None.
+    """
+    if count < 6 or count > 12:
+        return (
+            f"NOTE: Participant count is {count} "
+            f"(recommended range: 6–12 per MPI manual). "
+            f"Analysis can proceed, but results may be less reliable "
+            f"at smaller or larger sample sizes."
+        )
+    return None
+
+
+def _is_interviewer_question(speaker_label: str, line_text: str) -> bool:
+    """
+    Simulate the normalize skill's question-detection logic.
+    Returns True if the line is an interviewer question candidate.
+    """
+    interviewer_labels = {"Kevin Sheldrake:", "KS:"}
+    if speaker_label not in interviewer_labels:
+        return False
+    return "?" in line_text
+
+
+class TestAC5_InitDataContractValidation:
+    """AC5: Init data-contract validation — score range and participant-count advisory."""
+
+    def test_AC5_1_score_7_rejected_with_named_error(self):
+        """AC5.1 Failure: Scored 7/5 rejected with invalid_score_range error."""
+        line = "Participant 1, Suggestion 1 (Scored 7/5)"
+        with pytest.raises(ValueError) as exc_info:
+            _parse_and_validate_header(line)
+        assert "invalid_score_range" in str(exc_info.value)
+
+    def test_AC5_1_score_6_rejected(self):
+        """AC5.1 Failure: Scored 6/5 also rejected."""
+        line = "Participant 2, Suggestion 1 (Scored 6/5)"
+        with pytest.raises(ValueError) as exc_info:
+            _parse_and_validate_header(line)
+        assert "invalid_score_range" in str(exc_info.value)
+
+    def test_AC5_1_score_0_accepted(self):
+        """AC5.1 boundary: Scored 0/5 accepted (minimum valid)."""
+        p, s, score = _parse_and_validate_header("Participant 3, Suggestion 1 (Scored 0/5)")
+        assert score == 0
+
+    def test_AC5_1_score_5_accepted(self):
+        """AC5.1 boundary: Scored 5/5 accepted (maximum valid)."""
+        p, s, score = _parse_and_validate_header("Participant 4, Suggestion 1 (Scored 5/5)")
+        assert score == 5
+
+    def test_AC5_2_count_5_produces_advisory(self):
+        """AC5.2 Success: participant count 5 produces 6-12 adequacy advisory."""
+        advisory = _emit_participant_count_advisory(5)
+        assert advisory is not None
+        assert "6" in advisory and "12" in advisory
+
+    def test_AC5_2_count_13_produces_advisory(self):
+        """AC5.2 Success: participant count 13 produces advisory."""
+        advisory = _emit_participant_count_advisory(13)
+        assert advisory is not None
+        assert "NOTE" in advisory
+
+    def test_AC5_2_count_6_is_silent(self):
+        """AC5.2 Success: participant count 6 produces no advisory."""
+        advisory = _emit_participant_count_advisory(6)
+        assert advisory is None
+
+    def test_AC5_2_count_12_is_silent(self):
+        """AC5.2 Success: participant count 12 produces no advisory."""
+        advisory = _emit_participant_count_advisory(12)
+        assert advisory is None
+
+    def test_AC5_2_count_9_is_silent(self):
+        """AC5.2 Success: mid-range count is silent."""
+        advisory = _emit_participant_count_advisory(9)
+        assert advisory is None
+
+    def test_AC5_1_skill_md_contains_score_range_rule(self):
+        """AC5.1 Grep: mpi-init/SKILL.md contains the score-range validation rule."""
+        content = (PLUGIN_ROOT / "skills" / "mpi-init" / "SKILL.md").read_text(encoding="utf-8")
+        assert "invalid_score_range" in content, (
+            "mpi-init/SKILL.md must document the invalid_score_range named error"
+        )
+        assert "0–5" in content or "0-5" in content, (
+            "mpi-init/SKILL.md must state the valid score range 0–5"
+        )
+
+    def test_AC5_2_skill_md_contains_participant_count_advisory(self):
+        """AC5.2 Grep: mpi-init/SKILL.md contains the participant-count advisory rule."""
+        content = (PLUGIN_ROOT / "skills" / "mpi-init" / "SKILL.md").read_text(encoding="utf-8")
+        assert "6–12" in content or "6-12" in content, (
+            "mpi-init/SKILL.md must document the 6–12 participant-count guidance"
+        )
+        assert "NOTE" in content or "advisory" in content.lower(), (
+            "mpi-init/SKILL.md must state the count check is non-blocking (advisory/note)"
+        )
+
+
+class TestAC6_QuestionFlaggingValidateOnly:
+    """AC6: Question-flagging in normalize is validate-only; content is never modified."""
+
+    def test_AC6_1_interviewer_question_detected_not_modified(self):
+        """AC6.1 Success: normalize flags interviewer-question line; content unchanged."""
+        raw_line = "Kevin Sheldrake: Why was that?"
+        speaker = "Kevin Sheldrake:"
+        text = "Why was that?"
+        is_q = _is_interviewer_question(speaker, text)
+        assert is_q, "Interviewer question line should be flagged"
+        # Content is not modified — trailing whitespace only stripped structurally
+        normalized_content = raw_line.rstrip()
+        assert "Why was that?" in normalized_content, (
+            "Question text must not be removed or rewritten during normalize"
+        )
+
+    def test_AC6_1_participant_question_not_flagged(self):
+        """AC6.1 Success: participant utterances ending with '?' are not flagged."""
+        speaker = "P1:"
+        text = "I was wondering what would happen?"
+        is_q = _is_interviewer_question(speaker, text)
+        assert not is_q, "Participant utterances must not be flagged as removable questions"
+
+    def test_AC6_1_interviewer_non_question_not_flagged(self):
+        """AC6.1 Success: interviewer non-question lines are not flagged."""
+        speaker = "Kevin Sheldrake:"
+        text = "Okay, thank you for that."
+        is_q = _is_interviewer_question(speaker, text)
+        assert not is_q, "Interviewer non-question lines must not be flagged"
+
+    def test_AC6_1_skill_md_contains_validate_only_rule(self):
+        """AC6.1 Grep: mpi-transcript-prep/SKILL.md documents question-flagging as validate-only."""
+        content = (PLUGIN_ROOT / "skills" / "mpi-transcript-prep" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        assert "QUESTION" in content, (
+            "mpi-transcript-prep/SKILL.md must document the QUESTION advisory format"
+        )
+        lower = content.lower()
+        has_not_remove = ("not" in lower and "remove" in lower)
+        has_not_rewrite = ("not" in lower and "rewrite" in lower)
+        assert has_not_remove or has_not_rewrite, (
+            "mpi-transcript-prep/SKILL.md must state question lines are NOT removed or rewritten"
         )
