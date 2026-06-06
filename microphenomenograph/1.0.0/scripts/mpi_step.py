@@ -29,6 +29,7 @@ from _mpi_atomic import atomic_write, append_jsonl, load_or_create_run_id, acqui
 from _mpi_schemas import (
     validate_units, validate_prompt_artifact,
     SUBSTEP_PREREQUISITES, LLM_SUBSTEPS, PREREQ_SCOPE_TRANSFORMS, COMPLETENESS_GATES,
+    GATES,
 )
 
 
@@ -74,6 +75,73 @@ def _git_is_nonempty_worktree(path: Path) -> bool:
     # Non-empty: has at least one file other than .git
     entries = [e for e in toplevel.iterdir() if e.name != ".git"]
     return len(entries) > 0
+
+
+# ---------------------------------------------------------------------------
+# Gate evaluation (close-enforcement-2, Phase 1)
+# ---------------------------------------------------------------------------
+
+# Sentinel return codes for _evaluate_gate
+GATE_ABORT = 1   # strict mode: abort the close
+GATE_WARN = 0    # warn mode: emit event, allow close to continue
+
+
+def _evaluate_gate(
+    gate_id: str,
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    *,
+    stage: str,
+    substep: str,
+    scope: str,
+    actor: str,
+    actor_kind: str,
+    extra_details: dict | None = None,
+) -> int:
+    """
+    Evaluate a named gate against the current close context.
+
+    - Reads `study.strict_gates` from manifest.
+    - Checks `getattr(args, f"strict_{gate_id.replace('-','_')}", False)`.
+    - If strict: prints ERROR to stderr; returns GATE_ABORT (1).
+    - If warn: emits `gate_warning` audit event with close_id + gate_id; returns GATE_WARN (0).
+
+    Only `warn_or_abort` posture gates should be passed here.
+    `downgrade` gates are handled separately in `_compute_effective_status`.
+    """
+    strict_gates = manifest.get("study", {}).get("strict_gates", []) or []
+    # Normalise gate_id for getattr: dashes → underscores
+    cli_attr = f"strict_{gate_id.replace('-', '_')}"
+    is_strict = (gate_id in strict_gates) or bool(getattr(args, cli_attr, False))
+
+    if is_strict:
+        print(f"ERROR gate_failed: {gate_id}", file=sys.stderr)
+        return GATE_ABORT
+
+    # Warn mode: emit gate_warning audit event
+    run_id = load_or_create_run_id(run_dir / ".mpi" / "run_id")
+    gate_event = {
+        "event_id": str(uuid.uuid4()),
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "trace_id": run_id,
+        "span_id": str(uuid.uuid4()),
+        "actor": {"kind": actor_kind, "name": actor},
+        "event": {"kind": "event", "action": "gate_warning", "outcome": "warning"},
+        "mpi": {
+            "stage": stage,
+            "substep": substep,
+            "scope": scope,
+            "close_id": close_id,
+            "gate_id": gate_id,
+            **(extra_details or {}),
+        },
+        "reason": f"gate {gate_id} fired (warn mode)",
+    }
+    append_jsonl(audit_path, gate_event)
+    return GATE_WARN
 
 
 # ---------------------------------------------------------------------------
@@ -1545,6 +1613,10 @@ def cmd_close(args: argparse.Namespace) -> int:
             if completeness_rc != 0:
                 return _abort("completeness_gate_unsatisfied")
 
+        # --- close-enforcement-2 Phase 1: warn_or_abort gate call site ---
+        # Phases 2–3 will wire single_event_global_synchronic and undeclared_input here.
+        # Placeholder intentionally empty for Phase 1.
+
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
             run_dir, args.stage, args.substep, args.scope, close_id,
@@ -1613,8 +1685,12 @@ def cmd_close(args: argparse.Namespace) -> int:
         stage_entry = manifest["participants"][args.participant]["stages"][args.stage]
         stage_entry.setdefault("substeps", {})
 
+        # close-enforcement-2 Phase 1: effective_status hook (Phase 4 will add downgrade logic)
+        effective_status = args.status
+        # Downgrade gates will override effective_status here in Phase 4.
+
         stage_entry["substeps"][args.substep] = {
-            "status": args.status,
+            "status": effective_status,
             "output_paths": artifacts,
             "close_id": close_id,
             "parent_head_sha": parent_head_sha,
@@ -1637,6 +1713,8 @@ def cmd_close(args: argparse.Namespace) -> int:
             manifest["study"]["dv_focuses_provenance"] = (
                 "researcher_specified" if dv_focuses_val is not None else "emergent"
             )
+            # close-enforcement-2 Phase 1: write strict_gates (defaults to [] if absent)
+            manifest["study"]["strict_gates"] = units_payload.get("strict_gates", [])
 
         # Save a copy of the old manifest text for rollback (read_text avoids decode dance)
         manifest_path = run_dir / ".mpi" / "project.json"
@@ -1993,6 +2071,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
 
+    # close-enforcement-2 Phase 1 (AC1.5): sweep gate_warning events and report as WARN
+    # These are informational and do NOT cause verify to return non-zero.
+    for ev in events:
+        if ev.get("event", {}).get("action") == "gate_warning":
+            mpi = ev.get("mpi", {})
+            gate_id = mpi.get("gate_id", "<unknown>")
+            stage = mpi.get("stage", "<unknown>")
+            substep = mpi.get("substep", "<unknown>")
+            scope = mpi.get("scope", "<unknown>")
+            print(f"WARN gate_warning: {gate_id} at {stage}.{substep} scope={scope}")
+
     print("OK all done substeps verified")
     return 0
 
@@ -2052,6 +2141,20 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Path to the MPI run directory (default: cwd).")
     p_close.add_argument("--strict-irr", action="store_true",
                          help="Block cross-participant stages if IRR is missing or low.")
+    # close-enforcement-2 Phase 1: per-gate strict flags
+    # dest names follow strict_{gate_id} pattern (underscores) for getattr lookup in _evaluate_gate
+    p_close.add_argument("--strict-single-event-global-synchronic", action="store_true",
+                         dest="strict_single_event_global_synchronic",
+                         help="Block global_synchronic close when scope covers < 2 events.")
+    p_close.add_argument("--strict-undeclared-input", action="store_true",
+                         dest="strict_undeclared_input",
+                         help="Block close when inputs_consumed is not a subset of resolved inputs.")
+    p_close.add_argument("--strict-convergence-pending", action="store_true",
+                         dest="strict_convergence_pending",
+                         help="Block close when criteria_revision has more_revision_needed.")
+    p_close.add_argument("--strict-temporal-order-pending", action="store_true",
+                         dest="strict_temporal_order_pending",
+                         help="Block close when theme_grouping_within_idu has temporal_order_within_idu=true.")
 
     # render
     p_render = sub.add_parser("render", help="Regenerate reasoning.log from audit.jsonl.")

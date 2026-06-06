@@ -528,6 +528,20 @@ def _validate_init_confirm_study_config(payload: dict) -> list[SchemaError]:
             for i, f in enumerate(dv):
                 if not isinstance(f, str):
                     errors.append(SchemaError(f"payload.dv_focuses[{i}]", "must be a string"))
+    # Optional strict_gates: list of known gate IDs
+    sg = payload.get("strict_gates")
+    if sg is not None:
+        if not isinstance(sg, list):
+            errors.append(SchemaError("payload.strict_gates", "must be a list of gate ID strings"))
+        else:
+            for i, gate_id in enumerate(sg):
+                if not isinstance(gate_id, str):
+                    errors.append(SchemaError(f"payload.strict_gates[{i}]", "must be a string gate ID"))
+                elif gate_id not in GATES:
+                    errors.append(SchemaError(
+                        f"payload.strict_gates[{i}]",
+                        f"unknown gate ID {gate_id!r}; valid IDs: {sorted(GATES.keys())}"
+                    ))
     return errors
 
 
@@ -758,6 +772,45 @@ COMPLETENESS_GATES: dict[str, dict] = {
             # Do NOT use key_prefix="global" — no participant key is literally "global".
             ("gidu", "global_synchronic", "global_synchronic"),
         ],
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Gate registry (close-enforcement-2, Phase 1)
+# ---------------------------------------------------------------------------
+# Each entry: gate_id -> {stage, description, posture}
+# posture:
+#   "warn_or_abort"  — emit gate_warning audit event; abort only when strict
+#   "downgrade"      — force substep status to "flagged"; close still succeeds
+#
+# Note: irr_below_threshold is a declarative registry entry only in Phase 1;
+# the existing _check_irr_gate continues to emit "irr_warning" untouched.
+
+GATES: dict[str, dict] = {
+    "single_event_global_synchronic": {
+        "stage": "global_synchronic",
+        "description": "Global-synchronic scope covers < 2 events",
+        "posture": "warn_or_abort",
+    },
+    "undeclared_input": {
+        "stage": None,  # all cross-participant
+        "description": "inputs_consumed contains path not in resolved set",
+        "posture": "warn_or_abort",
+    },
+    "convergence_pending": {
+        "stage": "diachronic",
+        "description": "criteria_revision closed with more_revision_needed",
+        "posture": "downgrade",
+    },
+    "temporal_order_pending": {
+        "stage": "synchronic",
+        "description": "theme_grouping_within_idu flagged temporal_order_within_idu",
+        "posture": "downgrade",
+    },
+    "irr_below_threshold": {
+        "stage": None,  # cross-participant; handled by existing _check_irr_gate
+        "description": "IRR outcome is missing or low",
+        "posture": "warn_or_abort",
     },
 }
 

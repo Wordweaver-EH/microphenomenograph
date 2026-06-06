@@ -218,7 +218,7 @@ when `study.config_provenance == "llm_proposed_user_confirmed"`).
 |---------|-------|-----------|-------|
 | `init.scan_transcripts` | orchestrator | `<manifest>.json` (initial write) | No prompt artifact. Payload includes `transcript_ids` (list) and `raw_sha256_map` (dict); manifest persistence deferred to Phase 2. |
 | `init.propose_study_config` | orchestrator (LLM optional) | `init.propose_study_config.{json,md}` + `.prompt.json` when LLM path | Skipped entirely when `study.config_provenance` is `preregistered` or `user_specified`. |
-| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` | Writes `study.event_groups` (event-to-transcript-ID mapping), `study.dv_focuses` (null unless researcher-specified), and `study.config_provenance` immutably to the manifest. The `confirm_study_config.json` payload must include `event_groups` (required) and may include `dv_focuses` (list or null) and `config_provenance` (string). |
+| `init.confirm_study_config` | orchestrator | `init.confirm_study_config.json` | Writes `study.event_groups` (event-to-transcript-ID mapping), `study.dv_focuses` (null unless researcher-specified), `study.config_provenance`, and `study.strict_gates` immutably to the manifest. The `confirm_study_config.json` payload must include `event_groups` (required) and may include `dv_focuses` (list or null), `config_provenance` (string), and `strict_gates` (optional list of gate IDs to enforce strictly; defaults to `[]` when absent; valid IDs: `single_event_global_synchronic`, `undeclared_input`, `convergence_pending`, `temporal_order_pending`, `irr_below_threshold`). |
 
 **Commit message format:** `mpi: orchestrator init.<substep> (<N>transcripts scanned)` or similar.
 

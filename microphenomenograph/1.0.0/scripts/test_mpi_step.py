@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -4925,3 +4926,303 @@ class TestDVFocusGate:
         assert rc == 0, "confirm_study_config close should succeed"
         manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
         assert manifest["study"].get("dv_focuses_provenance") == "emergent"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: close-enforcement-2 — Gate registry + manifest strictness (AC1.1–AC1.5)
+# ---------------------------------------------------------------------------
+
+class TestGateRegistry:
+    """AC1.1–AC1.5: GATES registry, warn/strict posture, CLI flags, verify sweep."""
+
+    def test_gates_dict_has_required_keys(self):
+        """GATES registry exists in _mpi_schemas and has all expected gate IDs with posture."""
+        from _mpi_schemas import GATES
+        expected_gate_ids = {
+            "single_event_global_synchronic",
+            "undeclared_input",
+            "convergence_pending",
+            "temporal_order_pending",
+            "irr_below_threshold",
+        }
+        assert set(GATES.keys()) >= expected_gate_ids, (
+            f"Missing gate IDs: {expected_gate_ids - set(GATES.keys())}"
+        )
+        for gate_id, gate_def in GATES.items():
+            assert "posture" in gate_def, f"Gate '{gate_id}' missing 'posture' field"
+            assert gate_def["posture"] in ("warn_or_abort", "downgrade"), (
+                f"Gate '{gate_id}' has invalid posture {gate_def['posture']!r}"
+            )
+            assert "description" in gate_def, f"Gate '{gate_id}' missing 'description'"
+
+    def test_warn_gate_emits_gate_warning_event_close_succeeds(self, tmp_path):
+        """AC1.1: warn-mode gate emits gate_warning audit event and returns GATE_WARN (0)."""
+        from mpi_step import _evaluate_gate, GATE_WARN
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        run_id = (run_dir / ".mpi" / "run_id").read_text().strip()
+        close_id = str(uuid.uuid4())
+
+        # Manifest with no strict_gates (warn-only mode)
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = []
+
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=False,
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={"event_count": 1},
+        )
+
+        assert rc == GATE_WARN, f"Expected GATE_WARN (0), got {rc}"
+
+        # Verify audit has gate_warning event
+        events = [json.loads(l) for l in audit_path.read_text().splitlines() if l.strip()]
+        gw_events = [e for e in events if e.get("event", {}).get("action") == "gate_warning"]
+        assert len(gw_events) == 1, f"Expected exactly 1 gate_warning event, got {len(gw_events)}"
+        gw = gw_events[0]
+        assert gw["mpi"]["close_id"] == close_id
+        assert gw["mpi"]["gate_id"] == "single_event_global_synchronic"
+
+    def test_strict_gate_in_manifest_aborts(self, tmp_path):
+        """AC1.2: gate listed in study.strict_gates causes _evaluate_gate to return GATE_ABORT."""
+        from mpi_step import _evaluate_gate, GATE_ABORT
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        # Manifest with the gate in strict_gates
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = ["single_event_global_synchronic"]
+
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=False,
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={},
+        )
+
+        assert rc != 0, f"Expected non-zero (GATE_ABORT) when gate in strict_gates, got {rc}"
+
+    def test_strict_cli_flag_beats_manifest_omission(self, tmp_path):
+        """AC1.3: --strict-<gate_id> CLI flag aborts even when manifest doesn't list the gate."""
+        from mpi_step import _evaluate_gate, GATE_ABORT
+        import argparse
+        run_dir = _init_run_dir(tmp_path)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        # Manifest does NOT list the gate
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        manifest.setdefault("study", {})
+        manifest["study"]["strict_gates"] = []
+
+        # But CLI flag IS set
+        args = argparse.Namespace(
+            strict_single_event_global_synchronic=True,  # <-- strict via CLI
+            strict_undeclared_input=False,
+            strict_convergence_pending=False,
+            strict_temporal_order_pending=False,
+            strict_irr=False,
+        )
+
+        rc = _evaluate_gate(
+            "single_event_global_synchronic",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="global_synchronic", substep="global_synchronic",
+            scope="gidu1-cat-low", actor="mpi-cross-analyst",
+            actor_kind="subagent", extra_details={},
+        )
+
+        assert rc != 0, f"Expected non-zero (GATE_ABORT) when --strict-<gate_id> set via CLI, got {rc}"
+
+    def test_strict_irr_alias_unchanged(self, tmp_path):
+        """AC1.4: --strict-irr still triggers irr_warning action (not gate_warning) — alias preserved."""
+        run_dir = TestStrictIRRGate()._setup_minimal_run_with_calibration(tmp_path, "p1s1")
+        # No IRR record → irr_warning should be emitted when strict-irr set
+
+        art_json = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.json")
+        art_md = _write_artifact(run_dir, "p1s1-generic_diachronic.idu_similarity_grouping.md", "# output")
+        prompt_art = _write_prompt_artifact(run_dir, "p1s1", "generic_diachronic", "idu_similarity_grouping")
+        units = _write_units_json(run_dir, "units.json", {
+            "analysis_type": "generic_diachronic",
+            "event": "Test Event",
+            "idu_labels": [{
+                "idu_name": "Test IDU",
+                "utterance_refs": [
+                    {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
+                ],
+            }],
+        })
+
+        rc = mpi_step.main([
+            "close",
+            "--actor", "mpi-cross-analyst",
+            "--participant", "p1s1",
+            "--stage", "generic_diachronic",
+            "--substep", "idu_similarity_grouping",
+            "--scope", "p1s1",
+            "--artifact", str(art_json),
+            "--artifact", str(art_md),
+            "--prompt-artifact", str(prompt_art),
+            "--units-json", str(units),
+            "--reason", "test strict-irr alias",
+            "--run-dir", str(run_dir),
+            "--strict-irr",
+        ])
+
+        assert rc != 0, "Expected non-zero rc with --strict-irr and no IRR record"
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        events = [json.loads(l) for l in audit_path.read_text().splitlines() if l.strip()]
+        # Must have irr_warning (existing action), NOT gate_warning
+        irr_warnings = [e for e in events if e.get("event", {}).get("action") == "irr_warning"]
+        gate_warnings = [e for e in events if e.get("event", {}).get("action") == "gate_warning"]
+        assert irr_warnings, "Must have irr_warning event (alias preserved)"
+        assert not gate_warnings, "Should NOT have gate_warning event for IRR (alias, not registry path)"
+
+    def test_cmd_verify_reports_gate_warning_events(self, tmp_path):
+        """AC1.5: cmd_verify prints WARN for gate_warning events and returns 0."""
+        import io
+        from contextlib import redirect_stdout
+        run_dir = _init_run_dir(tmp_path)
+
+        # Seed audit.jsonl with a gate_warning event (no real close needed)
+        audit_path = run_dir / ".mpi" / "audit.jsonl"
+        run_id = (run_dir / ".mpi" / "run_id").read_text().strip()
+        gate_event = {
+            "event_id": str(uuid.uuid4()),
+            "@timestamp": "2026-06-05T00:00:00Z",
+            "trace_id": run_id,
+            "span_id": str(uuid.uuid4()),
+            "actor": {"kind": "subagent", "name": "mpi-cross-analyst"},
+            "event": {"kind": "event", "action": "gate_warning", "outcome": "warning"},
+            "mpi": {
+                "stage": "global_synchronic",
+                "substep": "global_synchronic",
+                "scope": "gidu1-cat-low",
+                "close_id": "test-close-id-456",
+                "gate_id": "single_event_global_synchronic",
+            },
+            "reason": "test gate warning",
+        }
+        append_jsonl(audit_path, gate_event)
+
+        # Capture stdout to check WARN lines
+        import io
+        buf = io.StringIO()
+        import argparse
+        args = argparse.Namespace(run_dir=str(run_dir))
+        with redirect_stdout(buf):
+            rc = mpi_step.cmd_verify(args)
+
+        output = buf.getvalue()
+        assert rc == 0, f"cmd_verify should return 0 for warn-only audit log, got {rc}"
+        assert "WARN" in output, f"Expected WARN line in output, got: {output!r}"
+        assert "gate_warning" in output, f"Expected 'gate_warning' in WARN line, got: {output!r}"
+        assert "single_event_global_synchronic" in output
+
+    def test_strict_gates_written_to_manifest_at_confirm_study_config(self, tmp_path):
+        """AC1.2 setup: confirm_study_config with strict_gates in payload writes study.strict_gates."""
+        run_dir = _init_run_dir(tmp_path)
+
+        # Close scan_transcripts first
+        scan_art = _write_artifact(run_dir, "init-scan_transcripts.json")
+        scan_units = _write_units_json(run_dir, "scan_units.json", {
+            "transcript_ids": ["p1s1"],
+            "raw_sha256_map": {"p1s1": "abc..."},
+        })
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "scan_transcripts", "--scope", "run",
+            "--artifact", str(scan_art), "--units-json", str(scan_units),
+            "--reason", "scan", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "scan_transcripts should succeed"
+
+        # confirm_study_config with strict_gates
+        art_json = _write_artifact(run_dir, "init-confirm_study_config.json")
+        units = _write_units_json(run_dir, "confirm_units.json", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["single_event_global_synchronic"],
+        })
+        rc = mpi_step.main([
+            "close", "--actor", "orchestrator", "--participant", "run",
+            "--stage", "init", "--substep", "confirm_study_config", "--scope", "run",
+            "--artifact", str(art_json), "--units-json", str(units),
+            "--reason", "confirmed", "--run-dir", str(run_dir),
+        ])
+        assert rc == 0, "confirm_study_config should succeed"
+
+        manifest = json.loads((run_dir / ".mpi" / "project.json").read_text())
+        assert "strict_gates" in manifest["study"], "study.strict_gates should be written to manifest"
+        assert manifest["study"]["strict_gates"] == ["single_event_global_synchronic"]
+
+
+class TestValidateConfirmStudyConfig:
+    """AC1.2 guard: strict_gates validation in _validate_init_confirm_study_config."""
+
+    def test_strict_gates_known_id_accepted(self):
+        """Known gate IDs in strict_gates should not produce schema errors."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["single_event_global_synchronic", "undeclared_input"],
+        })
+        assert errors == [], f"Expected no errors for known gate IDs, got: {errors}"
+
+    def test_strict_gates_unknown_id_rejected(self):
+        """Unknown gate ID in strict_gates should produce a SchemaError."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": ["nonexistent_gate"],
+        })
+        assert errors, "Expected SchemaError for unknown gate ID"
+        assert any("strict_gates" in e.field for e in errors), (
+            f"Expected error field to reference strict_gates, got: {[e.field for e in errors]}"
+        )
+
+    def test_strict_gates_empty_list_accepted(self):
+        """Empty strict_gates list should be valid."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            "strict_gates": [],
+        })
+        assert errors == [], f"Expected no errors for empty strict_gates, got: {errors}"
+
+    def test_strict_gates_absent_accepted(self):
+        """Absent strict_gates field should be valid (defaults to empty)."""
+        from _mpi_schemas import validate_units
+        errors = validate_units("init", "confirm_study_config", {
+            "event_groups": {"event1": ["p1s1"]},
+            "config_provenance": "user_specified",
+            # strict_gates absent
+        })
+        assert errors == [], f"Expected no errors when strict_gates absent, got: {errors}"
