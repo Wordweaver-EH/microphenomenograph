@@ -1053,6 +1053,11 @@ GATES: dict[str, dict] = {
         "description": "weak_evidence_review has flagged items lacking acknowledged_by",
         "posture": "warn_or_abort",
     },
+    "dag_section_missing": {
+        "stage": "hypothesis",
+        "description": "candidate_drafting markdown artifact missing per-hypothesis DAG section",
+        "posture": "warn_or_abort",
+    },
 }
 
 # ---------------------------------------------------------------------------

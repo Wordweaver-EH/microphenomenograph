@@ -1,7 +1,11 @@
 """Tests for causal-extension design plan (plan 5).
 
 Phase 1: AC1.1, AC1.2, AC1.3, AC1.4, AC4.1 — causal claim schema fields.
+Phase 3: AC3.1, AC3.2, AC5.1 — DAG presence gate + rung review + contract docs.
 """
+import json
+import types
+import uuid
 import pytest
 from pathlib import Path
 import sys
@@ -302,4 +306,279 @@ class TestAC2_AgentInstructions:
         content = self._skill_content()
         assert "mermaid" in content or "Causal DAG" in content, (
             "mpi-hypothesis/SKILL.md must include a mermaid DAG block or 'Causal DAG' in output format"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: AC3.1, AC3.2, AC5.1 — DAG presence gate + rung review + docs
+# ---------------------------------------------------------------------------
+
+def _make_dag_args(**kwargs) -> types.SimpleNamespace:
+    """Build a minimal args namespace for _check_dag_section_missing_gate."""
+    defaults = {
+        "stage": "hypothesis",
+        "substep": "candidate_drafting",
+        "scope": "dv-automaticity",
+        "actor": "test-actor",
+        "actor_kind": "subagent",
+        "artifact": [],
+        "strict_dag_section_missing": False,
+    }
+    defaults.update(kwargs)
+    return types.SimpleNamespace(**defaults)
+
+
+def _make_dag_manifest(strict_gates=None) -> dict:
+    """Build a minimal manifest for DAG gate tests."""
+    study = {}
+    if strict_gates is not None:
+        study["strict_gates"] = strict_gates
+    return {"study": study}
+
+
+class TestAC3_GateAndReview:
+    """AC3: DAG presence gate and rung_appropriateness review check."""
+
+    def test_AC3_1_gate_in_registry(self):
+        """AC3.1: dag_section_missing gate is in GATES registry with warn_or_abort posture."""
+        from _mpi_schemas import GATES
+        assert "dag_section_missing" in GATES, (
+            "Expected 'dag_section_missing' gate in GATES registry"
+        )
+        gate = GATES["dag_section_missing"]
+        assert gate["posture"] == "warn_or_abort", (
+            f"Expected posture 'warn_or_abort', got {gate['posture']!r}"
+        )
+        assert gate["stage"] == "hypothesis", (
+            f"Expected stage 'hypothesis', got {gate['stage']!r}"
+        )
+
+    def test_AC3_1_dag_gate_fires_when_mermaid_absent(self, tmp_path):
+        """AC3.1 Posture (warn): missing mermaid fence emits gate_warning, rc==0."""
+        from mpi_step import _check_dag_section_missing_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        # Write a markdown artifact WITHOUT mermaid fence
+        hypotheses = tmp_path / "hypotheses"
+        hypotheses.mkdir()
+        md_path = hypotheses / "dv-automaticity.candidates.md"
+        md_path.write_text(
+            "# Candidate Hypotheses\n\n## Hypothesis 1\n\nSome text without any DAG.\n",
+            encoding="utf-8",
+        )
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        args = _make_dag_args(
+            artifact=[str(md_path)],
+            strict_dag_section_missing=False,
+        )
+        manifest = _make_dag_manifest()
+
+        rc = _check_dag_section_missing_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc == 0, f"Expected GATE_WARN (0) in warn mode, got {rc}"
+        assert audit_path.exists(), "Expected audit.jsonl to be written"
+
+        audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        events = [json.loads(line) for line in audit_lines if line.strip()]
+        gate_events = [
+            e for e in events
+            if e.get("event", {}).get("action") == "gate_warning"
+            and e.get("mpi", {}).get("gate_id") == "dag_section_missing"
+        ]
+        assert gate_events, (
+            f"Expected gate_warning event with gate_id='dag_section_missing' in audit; "
+            f"got events: {events}"
+        )
+
+    def test_AC3_1_dag_gate_passes_when_mermaid_present(self, tmp_path):
+        """AC3.1 Posture (passes): mermaid fence present → no gate event, rc==0."""
+        from mpi_step import _check_dag_section_missing_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        hypotheses = tmp_path / "hypotheses"
+        hypotheses.mkdir()
+        md_path = hypotheses / "dv-automaticity.candidates.md"
+        md_path.write_text(
+            "# Candidate Hypotheses\n\n## Hypothesis 1\n\n```mermaid\ngraph LR\n  IV --> DV\n```\n",
+            encoding="utf-8",
+        )
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        args = _make_dag_args(
+            artifact=[str(md_path)],
+            strict_dag_section_missing=False,
+        )
+        manifest = _make_dag_manifest()
+
+        rc = _check_dag_section_missing_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc == 0, f"Expected 0 when mermaid present, got {rc}"
+        # No dag_section_missing event should appear
+        if audit_path.exists():
+            audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+            events = [json.loads(line) for line in audit_lines if line.strip()]
+            gate_events = [
+                e for e in events
+                if e.get("mpi", {}).get("gate_id") == "dag_section_missing"
+            ]
+            assert not gate_events, (
+                f"Expected NO dag_section_missing gate event when mermaid present; got {gate_events}"
+            )
+
+    def test_AC3_1_dag_gate_strict_blocks_when_mermaid_absent(self, tmp_path):
+        """AC3.1 Posture (strict abort): --strict-dag-section-missing + absent mermaid → rc != 0."""
+        from mpi_step import _check_dag_section_missing_gate
+
+        mpi_dir = tmp_path / ".mpi"
+        mpi_dir.mkdir()
+        (mpi_dir / "run_id").write_text(str(uuid.uuid4()), encoding="utf-8")
+
+        hypotheses = tmp_path / "hypotheses"
+        hypotheses.mkdir()
+        md_path = hypotheses / "dv-automaticity.candidates.md"
+        md_path.write_text(
+            "# Candidate Hypotheses\n\nNo DAG section here.\n",
+            encoding="utf-8",
+        )
+
+        audit_path = tmp_path / "audit.jsonl"
+        close_id = str(uuid.uuid4())
+
+        args = _make_dag_args(
+            artifact=[str(md_path)],
+            strict_dag_section_missing=True,
+        )
+        manifest = _make_dag_manifest()
+
+        rc = _check_dag_section_missing_gate(
+            tmp_path, manifest, args, audit_path, close_id,
+            actor=args.actor,
+            actor_kind=args.actor_kind,
+        )
+
+        assert rc != 0, (
+            f"Expected non-zero return (abort) in strict mode when mermaid absent, got {rc}"
+        )
+
+    def test_AC3_2_rung_appropriateness_substantive_shape_accepted(self):
+        """AC3.2 Success: substantive rung_appropriateness shape passes the validator."""
+        from _mpi_schemas import validate_units
+
+        payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {
+                        "thin_support": False,
+                        "single_iv_level": False,
+                        "causal_language": False,
+                        "rung_appropriateness": {
+                            "flagged": True,
+                            "reason": "rung-2 language over observational interview evidence",
+                        },
+                    },
+                    "outcome": "flagged",
+                    "notes": "Rung mismatch",
+                    "acknowledged_by": "analyst-1",
+                }
+            ],
+        }
+        errors = validate_units("hypothesis", "weak_evidence_review", payload)
+        assert not errors, (
+            f"Expected no errors for substantive rung_appropriateness shape; got: {errors}"
+        )
+
+    def test_AC3_2_rung_appropriateness_stub_still_accepted(self):
+        """AC3.2 Regression (plan-4 compat): stub shape still passes the validator."""
+        from _mpi_schemas import validate_units
+
+        payload = {
+            "claim_ids": ["c1"],
+            "review_items": [
+                {
+                    "claim_id": "c1",
+                    "checks": {
+                        "thin_support": False,
+                        "single_iv_level": False,
+                        "causal_language": False,
+                        "rung_appropriateness": {"stub": True},
+                    },
+                    "outcome": "pass",
+                    "notes": "",
+                }
+            ],
+        }
+        errors = validate_units("hypothesis", "weak_evidence_review", payload)
+        assert not errors, (
+            f"Expected no errors for stub rung_appropriateness shape; got: {errors}"
+        )
+
+    def test_AC3_2_cross_analyst_md_rung_appropriateness_substantive(self):
+        """AC3.2: mpi-cross-analyst.md rung_appropriateness bullet is substantive (no stub)."""
+        content = (PLUGIN_ROOT / "agents" / "mpi-cross-analyst.md").read_text(encoding="utf-8")
+        assert "rung_appropriateness" in content, (
+            "mpi-cross-analyst.md must contain 'rung_appropriateness' in weak_evidence review"
+        )
+        # Confirm the substantive check is described
+        assert "rung" in content and ("observational" in content or "flagged" in content), (
+            "mpi-cross-analyst.md rung_appropriateness check must be substantive"
+        )
+
+
+class TestAC5_1_PluginClaudeMd:
+    """AC5.1: Plugin CLAUDE.md documents the shipped causal contract."""
+
+    PLUGIN_CLAUDE_MD = PLUGIN_ROOT / "CLAUDE.md"
+
+    def _content(self) -> str:
+        return self.PLUGIN_CLAUDE_MD.read_text(encoding="utf-8")
+
+    def test_AC5_1_plugin_claude_md_has_causal_contract(self):
+        """AC5.1: CLAUDE.md contains all required causal contract strings."""
+        content = self._content()
+
+        required_strings = [
+            ("rung", "field name 'rung' documented"),
+            ("assumptions", "field name 'assumptions' documented"),
+            ("confounders", "field name 'confounders' documented"),
+            ("testable_implications", "field name 'testable_implications' documented"),
+            ("replication_recommendation", "field name 'replication_recommendation' documented"),
+            ("dag_section_missing", "gate ID 'dag_section_missing' documented"),
+            ("latent", "DAG convention — latent nodes documented"),
+        ]
+
+        for substring, description in required_strings:
+            assert substring in content, (
+                f"Plugin CLAUDE.md missing '{substring}' ({description})"
+            )
+
+        # No-version-bump rationale
+        has_no_bump = (
+            "no plugin version bump" in content
+            or "no version bump" in content
+            or "unreleased" in content
+        )
+        assert has_no_bump, (
+            "Plugin CLAUDE.md must document no-version-bump rationale "
+            "('no plugin version bump', 'no version bump', or 'unreleased')"
         )

@@ -37,6 +37,21 @@ The `--strict-irr` gate maps each cross-participant stage to its upstream IRR st
 
 Hypothesis generation produces **candidate mechanism hypotheses, not causal estimates**. Every artifact carries a verbatim disclaimer. Each claim carries `{supports, contradicts, ambiguous, n_transcripts, n_iv_levels_covered, uncertainty_language, negative_cases}` with `raw_span_refs` on every support/contradict/ambiguous entry.
 
+**Causal contract (causal-extension, plan 5 — all 3 phases landed).** Every `candidate_drafting` claim also carries four required causal fields:
+
+- `rung` (int 1|2|3): Pearl ladder rung — 1 = association, 2 = intervention, 3 = counterfactual. Schema-enforced; any value outside {1, 2, 3} is rejected.
+- `assumptions` (list of strings): causal assumptions licensing a higher-rung framing. Required to be non-empty when `rung >= 2` (DoWhy identify-discipline analogue); may be empty `[]` at rung 1. Schema-enforced.
+- `confounders` (non-empty list of `{variable, mechanism}` objects): always required, always non-empty. Always includes the common-method-variance (CMV) latent factor: IV score and DV experience description are both self-reports from the same participant in the same session. Schema-enforced shape.
+- `testable_implications` (non-empty list of strings): stated in DAGitty conditional-independence notation `X _||_ Y | Z` — what a second participant set would need to show if the mechanism is real.
+
+Top-level artifact field: `replication_recommendation` (string; discharges manual §1.5 replication requirement — states what a second independent participant set would need to show). Required; schema-enforced.
+
+**DAG convention.** Each candidate hypothesis in the markdown artifact includes one mermaid DAG: IV → mechanism components → DV focus, with confounders as explicit latent nodes carrying two directed arrows into IV and DV (no `<->` — mermaid has no bidirected edge). Latent nodes are marked with a distinct mermaid class (`classDef latent` or `:::latent`). DAG presence is validated at close time via the `dag_section_missing` gate (warn by default; abort with `--strict-dag-section-missing` or `study.strict_gates: ["dag_section_missing"]`). DAG syntax is not validated.
+
+**`rung_appropriateness`** in `weak_evidence_review` is substantive: a claim coded as rung ≥ 2 over observational interview evidence (no experimental manipulation) is flagged as `{"flagged": true, "reason": "..."}`.
+
+**No plugin version bump.** These fields extend the contract within an unreleased plugin — the plugin directory is pinned at `microphenomenograph/1.0.0/` only because it has not been released. These are schema additions within the same unreleased version.
+
 ## Substep DAG
 
 | Stage | Substeps | Iteration | Actor |

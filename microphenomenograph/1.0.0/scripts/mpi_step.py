@@ -1428,6 +1428,43 @@ def _check_weak_evidence_unreviewed_gate(
     return 0
 
 
+def _check_dag_section_missing_gate(
+    run_dir: Path,
+    manifest: dict,
+    args,
+    audit_path: Path,
+    close_id: str,
+    actor: str,
+    actor_kind: str,
+) -> int:
+    """AC3.1: Warn (or abort) when a hypothesis.candidate_drafting markdown artifact
+    is missing the per-hypothesis DAG section (mermaid marker absent).
+
+    Fires only for hypothesis.candidate_drafting closes.
+    Returns 0 (GATE_WARN or gate skipped) or 1 (GATE_ABORT in strict mode).
+    """
+    # Locate the .md artifact among args.artifact
+    md_path = None
+    for art in getattr(args, "artifact", []) or []:
+        if str(art).endswith(".md"):
+            md_path = Path(art)
+            break
+    if md_path is None or not md_path.exists():
+        return 0  # No markdown artifact — skip gate (artifact validation handles presence)
+
+    content = md_path.read_text(encoding="utf-8")
+    # Presence check: look for the mermaid code fence marker
+    if "```mermaid" not in content:
+        return _evaluate_gate(
+            "dag_section_missing",
+            run_dir, manifest, args, audit_path, close_id,
+            stage="hypothesis", substep="candidate_drafting",
+            scope=getattr(args, "scope", "unknown"),
+            actor=actor, actor_kind=actor_kind,
+        )
+    return 0
+
+
 def _check_completeness_gate(
     run_dir: Path,
     manifest: dict,
@@ -1849,6 +1886,16 @@ def cmd_close(args: argparse.Namespace) -> int:
             )
             if weu_rc != 0:
                 return _abort("weak_evidence_unreviewed")
+
+        # AC3.1: dag_section_missing gate — warn/abort when candidate_drafting markdown lacks DAG
+        if args.stage == "hypothesis" and args.substep == "candidate_drafting":
+            dag_rc = _check_dag_section_missing_gate(
+                run_dir, manifest, args, audit_path, close_id,
+                actor=args.actor,
+                actor_kind=getattr(args, "actor_kind", "subagent"),
+            )
+            if dag_rc != 0:
+                return _abort("dag_section_missing")
 
         # --- Task 4: Acquire substep reservation (AC20.7) ---
         reservation_rc = _acquire_substep_reservation(
@@ -2520,6 +2567,10 @@ def build_parser() -> argparse.ArgumentParser:
                          dest="strict_weak_evidence_unreviewed",
                          help="Block hypothesis.weak_evidence_review close when flagged items "
                               "lack acknowledged_by.")
+    p_close.add_argument("--strict-dag-section-missing", action="store_true",
+                         dest="strict_dag_section_missing",
+                         help="Block hypothesis.candidate_drafting close when markdown "
+                              "artifact is missing per-hypothesis mermaid DAG section.")
     # NOTE: convergence_pending and temporal_order_pending are downgrade-posture gates:
     # _compute_effective_status always downgrades the close to 'flagged', which blocks
     # downstream substeps unconditionally. They take no --strict-* flag — downgrade is
