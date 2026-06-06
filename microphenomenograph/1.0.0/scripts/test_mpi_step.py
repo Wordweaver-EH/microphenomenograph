@@ -3084,6 +3084,7 @@ class TestStrictIRRGate:
                 "confidence": 4,
                 "flag_for_review": False,
                 "isu_second_level_of_abstraction": "Level 2",
+                "source_generic_idu": "Test IDU",  # required: must match payload.generic_idu
                 "utterance_refs": [
                     {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
                 ],
@@ -3142,6 +3143,7 @@ class TestStrictIRRGate:
                 "confidence": 4,
                 "flag_for_review": False,
                 "isu_second_level_of_abstraction": "Level 2",
+                "source_generic_idu": "Test IDU",  # required: must match payload.generic_idu
                 "utterance_refs": [
                     {"transcript_id": "p1s1", "utterance_number": 1, "byte_start": 0, "byte_end": 10, "raw_excerpt": "test"}
                 ],

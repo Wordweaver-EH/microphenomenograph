@@ -85,19 +85,37 @@ Output format:
 ...
 ```
 
+**Pattern JSON fields (required for `generic_diachronic.pattern_identification`):** Each
+pattern entry in your JSON output MUST include:
+
+- `common_idus`: non-empty list — IDU labels that appear in ≥ 2 participants for this
+  pattern (invariant elements — the core structural similarity that defines the pattern).
+- `optional_idus`: list (may be empty) — IDU labels appearing in some but not all
+  participants for this pattern (optional elements — variations within the pattern).
+- `covered_participant_keys`: non-empty list of participant key strings (e.g.
+  `["p1s1", "p3s1"]`) — the participants whose IDUs contributed to this pattern.
+- `utterance_refs`: non-empty array of span references tracing back to source transcripts.
+
+**Merge evaluation criterion (optimum small set):** When two candidate patterns are
+structurally similar (share the same experiential core), merge them into one pattern
+rather than listing them separately. Add a `merge_rationale` field explaining why the
+merge was appropriate. When the total pattern count for a score category exceeds 5, add a
+`high_count_justification` field explaining why the patterns are genuinely distinct rather
+than variants of a smaller set. The goal is the optimum small set of patterns that
+captures the data — prefer fewer, crisper patterns over many overlapping ones.
+
 ### Generic synchronic
 
 Same as generic diachronic but operating on `pNsN-synchronic.md` outputs, grouping ISUs
 across participants by score category.
 
-**ISU grouping rule**: ISUs are grouped **by experiential similarity regardless of which
-IDU group they came from**. Synchronic outputs nest ISUs inside `isu_groups` (one group
-per IDU); when comparing across participants, flatten all ISUs from all IDU groups and
-group them by semantic similarity. If two ISUs from different IDU groups describe the same
-structural experience (e.g., "feeling watched" appearing in an "initial thoughts" IDU for
-one participant and a "shift in attention" IDU for another), they may still form a common
-ISU pattern. Document the IDU-group provenance in the source citation so the reader can
-trace the original context.
+**ISU grouping rule (within-IDU scope)**: ISUs are grouped **strictly within the target
+generic IDU** (`payload.generic_idu`). Do NOT flatten ISUs from other IDU groups into this
+analysis — cross-IDU synthesis belongs to global synchronic, not here. Each ISU in your
+JSON output MUST include a `source_generic_idu` field (string) equal to the scope's
+generic IDU identifier (`payload.generic_idu`); the schema rejects any ISU where
+`source_generic_idu` is absent or mismatched. Document the source participant and
+suggestion in the citation for each ISU to enable cross-check with the original transcript.
 
 ### Global synchronic
 

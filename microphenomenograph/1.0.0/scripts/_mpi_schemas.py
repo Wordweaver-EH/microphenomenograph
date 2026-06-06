@@ -237,6 +237,50 @@ def _validate_generic_diachronic_pattern_identification(payload: dict) -> list[S
         for i, pat in enumerate(patterns):
             if isinstance(pat, dict):
                 errors.extend(_check_utterance_refs(pat, f"payload.patterns[{i}]"))
+                # AC2.1: common_idus required and non-empty (invariant IDU elements)
+                common = pat.get("common_idus")
+                if common is None:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].common_idus",
+                        "required field missing (non-empty list of common IDU labels — "
+                        "IDUs appearing in ≥ 2 participants for this pattern)"
+                    ))
+                elif not isinstance(common, list) or len(common) == 0:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].common_idus",
+                        "must be a non-empty list of common IDU labels"
+                    ))
+                # AC2.2: optional_idus required (may be empty — invariant patterns representable)
+                if "optional_idus" not in pat:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].optional_idus",
+                        "required field missing (list of optional IDU labels, may be empty)"
+                    ))
+                elif not isinstance(pat["optional_idus"], list):
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].optional_idus",
+                        "must be a list (may be empty)"
+                    ))
+                # AC2.1: covered_participant_keys required, non-empty list of strings
+                cpk = pat.get("covered_participant_keys")
+                if cpk is None:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].covered_participant_keys",
+                        "required field missing (non-empty list of participant key strings, "
+                        "e.g. [\"p1s1\", \"p3s1\"])"
+                    ))
+                elif not isinstance(cpk, list) or len(cpk) == 0:
+                    errors.append(SchemaError(
+                        f"payload.patterns[{i}].covered_participant_keys",
+                        "must be a non-empty list of participant key strings"
+                    ))
+                else:
+                    for j, k in enumerate(cpk):
+                        if not isinstance(k, str):
+                            errors.append(SchemaError(
+                                f"payload.patterns[{i}].covered_participant_keys[{j}]",
+                                "must be a string participant key"
+                            ))
             else:
                 errors.append(SchemaError(f"payload.patterns[{i}]", f"must be an object, got {type(pat).__name__}"))
     return errors
@@ -274,10 +318,25 @@ def _validate_generic_synchronic_worksheet_assembly(payload: dict) -> list[Schem
 def _validate_generic_synchronic_isu_second_level(payload: dict) -> list[SchemaError]:
     errors = _require_keys(payload, ["event", "iv_category", "generic_idu", "isus"], "payload")
     isus = payload.get("isus", [])
+    generic_idu = payload.get("generic_idu")
     if isinstance(isus, list):
         for i, isu in enumerate(isus):
             if isinstance(isu, dict):
                 errors.extend(_validate_isu(isu, f"payload.isus[{i}]", require_second_level=True))
+                # AC1.1: source_generic_idu required and must match payload.generic_idu
+                if "source_generic_idu" not in isu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_generic_idu",
+                        "required field missing — must equal payload.generic_idu "
+                        "(within-IDU grouping: ISUs are grouped within the target generic IDU only)"
+                    ))
+                elif generic_idu is not None and isu["source_generic_idu"] != generic_idu:
+                    errors.append(SchemaError(
+                        f"payload.isus[{i}].source_generic_idu",
+                        f"must equal payload.generic_idu ({generic_idu!r}), "
+                        f"got {isu['source_generic_idu']!r} — "
+                        "cross-IDU synthesis belongs to global synchronic, not here"
+                    ))
             else:
                 errors.append(SchemaError(f"payload.isus[{i}]", f"must be an object, got {type(isu).__name__}"))
     return errors
